@@ -54,7 +54,7 @@ struct Channel
   int id = 0;
   std::string uuid; // used to build the live-stream proxy URL
   std::string name;
-  std::string logoUrl;
+  int logoId = -1; // -1 means no logo; pass to GetChannelLogoUrl()
   int channelNumber = 0;
   int groupId = -1;
   std::string groupName;
@@ -115,7 +115,8 @@ public:
   bool GetXmlTvGuide(std::string& xmlOut, std::string& error);
 
   std::string GetLiveStreamUrl(const Channel& channel) const;
-  std::string GetChannelLogoUrl(int channelId) const;
+  // logoId is a Logo object's own id (Channel::logoId), not the channel's id.
+  std::string GetChannelLogoUrl(int logoId) const;
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   std::string GetRecordingStreamUrl(int recordingId) const;

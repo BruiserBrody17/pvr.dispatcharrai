@@ -240,7 +240,8 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
     channel.SetIsRadio(false);
     channel.SetChannelNumber(static_cast<unsigned int>(ch.channelNumber));
     channel.SetChannelName(ch.name);
-    channel.SetIconPath(ch.logoUrl.empty() ? m_client.GetChannelLogoUrl(ch.id) : ch.logoUrl);
+    if (ch.logoId >= 0)
+      channel.SetIconPath(m_client.GetChannelLogoUrl(ch.logoId));
     channel.SetIsHidden(false);
     results.Add(channel);
   }

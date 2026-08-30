@@ -250,13 +250,14 @@ bool DispatcharrClient::GetChannels(std::vector<Channel>& out, std::string& erro
   {
     Channel ch;
     ch.id = item.value("id", 0);
-    // Field name assumed as "uuid" (confirmed to exist on channels in some
-    // form -- it's what appears in /proxy/ts/stream/{uuid} URLs -- but the
-    // exact JSON key wasn't independently verified).
     ch.uuid = item.value("uuid", "");
     ch.name = item.value("name", "");
     ch.channelNumber = item.value("channel_number", item.value("channel_num", 0));
-    ch.logoUrl = item.value("logo_url", "");
+    // Channels only carry a logo_id (an FK to a separate Logo object);
+    // there's no logo_url field directly on the channel (that belongs to
+    // the underlying Stream model). Resolve the actual image via
+    // GetChannelLogoUrl(logoId), not a direct URL field.
+    ch.logoId = item.value("logo_id", -1);
     // Channel group may be a nested object or a bare id depending on the
     // serializer; handle both.
     if (item.contains("channel_group") && item["channel_group"].is_object())
@@ -361,9 +362,9 @@ std::string DispatcharrClient::GetLiveStreamUrl(const Channel& channel) const
   return BaseUrl() + "/proxy/ts/stream/" + channel.uuid;
 }
 
-std::string DispatcharrClient::GetChannelLogoUrl(int channelId) const
+std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const
 {
-  return BaseUrl() + kLogosPath + std::to_string(channelId) + "/cache/";
+  return BaseUrl() + kLogosPath + std::to_string(logoId) + "/cache/";
 }
 
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
