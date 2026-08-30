@@ -15,22 +15,22 @@ constexpr int kAccessDeniedLogThrottle = 1; // placeholder for future rate-limit
 dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
 {
   Config config;
-  config.host = kodi::GetSettingString("host", "127.0.0.1");
-  config.port = kodi::GetSettingInt("port", 9191);
-  config.useHttps = kodi::GetSettingBoolean("use_https", false);
-  config.username = kodi::GetSettingString("username", "");
-  config.password = kodi::GetSettingString("password", "");
-  config.verifySsl = kodi::GetSettingBoolean("verify_ssl", true);
-  config.timeoutSeconds = kodi::GetSettingInt("timeout", 30);
-  config.debugLogging = kodi::GetSettingBoolean("debug_logging", false);
+  config.host = kodi::addon::GetSettingString("host", "127.0.0.1");
+  config.port = kodi::addon::GetSettingInt("port", 9191);
+  config.useHttps = kodi::addon::GetSettingBoolean("use_https", false);
+  config.username = kodi::addon::GetSettingString("username", "");
+  config.password = kodi::addon::GetSettingString("password", "");
+  config.verifySsl = kodi::addon::GetSettingBoolean("verify_ssl", true);
+  config.timeoutSeconds = kodi::addon::GetSettingInt("timeout", 30);
+  config.debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
   return config;
 }
 
 PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     : CInstancePVRClient(instance), m_client(LoadConfigFromSettings())
 {
-  m_channelRefreshHours = kodi::GetSettingInt("channel_refresh_hours", 12);
-  m_epgRefreshHours = kodi::GetSettingInt("epg_refresh_hours", 4);
+  m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
+  m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
 
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
@@ -79,8 +79,8 @@ PVR_ERROR PVRDispatcharr::GetBackendVersion(std::string& version)
 
 PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
 {
-  connection = kodi::GetSettingString("host", "127.0.0.1") + ":" +
-               std::to_string(kodi::GetSettingInt("port", 9191));
+  connection = kodi::addon::GetSettingString("host", "127.0.0.1") + ":" +
+               std::to_string(kodi::addon::GetSettingInt("port", 9191));
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -246,7 +246,6 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
 }
 
 PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
-                                                      PVR_SOURCE source,
                                                       std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   std::lock_guard<std::mutex> lock(m_dataMutex);
