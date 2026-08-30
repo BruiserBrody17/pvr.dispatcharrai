@@ -47,11 +47,12 @@ struct Config
   bool verifySsl = true;
   int timeoutSeconds = 30;
   bool debugLogging = false;
-  // Delay before handing Kodi a new channel's stream URL, to give
-  // Dispatcharr's proxy (or the upstream provider) time to release the
-  // previous channel's connection before the next one is requested. See
-  // docs/API_NOTES.md's channel-switching notes for why this exists.
-  int channelSwitchDelaySeconds = 2;
+  // Optional delay before handing Kodi a new channel's stream URL. Added
+  // while diagnosing a channel-switching failure that turned out to be an
+  // unrelated IPv6/DNS issue (see docs/API_NOTES.md) -- a delay didn't fix
+  // that, so this defaults to off. Left available in case a genuinely
+  // different Dispatcharr/provider setup needs a moment between switches.
+  int channelSwitchDelaySeconds = 0;
 };
 
 struct Channel

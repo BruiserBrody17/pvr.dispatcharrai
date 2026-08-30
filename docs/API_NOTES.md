@@ -49,48 +49,59 @@ this correctly either way, so no change was needed there.
 defensively as a fallback, but the flat/bare forms above are what a real
 instance actually returns.
 
-## Streamer-role accounts and upstream provider limits
+## Channel switching fails after the first channel (root cause: IPv6)
 
-The M3U/Xtream account backing your channels (visible at
-`GET /api/m3u/accounts/`) carries its own `max_streams` concurrent-connection
-cap, enforced by the *upstream* IPTV provider, not just Dispatcharr. Rapid,
-automated-looking channel switching (tested: ~18 distinct channel requests
-within about a minute) triggered widespread timeouts/503s from the upstream
-provider even though Dispatcharr's own `/proxy/ts/status` reported zero
-active channels throughout -- i.e. the failures were the *provider*
-throttling/flagging the account, not Dispatcharr holding a stale connection
-open. If you see one channel play fine and the next one fail, try reproducing
-it at a normal (non-rapid) channel-change pace before assuming it's an addon
-or Dispatcharr bug.
+**If channel N+1 never plays after channel N worked, and this repeats for
+every subsequent switch (not just once), check whether your Dispatcharr
+host resolves to both an IPv4 and an IPv6 address, and whether the IPv6
+route is actually reachable.** This was root-caused (not guessed) against a
+real deployment and is almost certainly the first thing to check before
+suspecting the addon, Dispatcharr, or the upstream IPTV provider.
 
-**Update, confirmed against a real user's `kodi.log`:** a normal (non-rapid,
-one-time) channel switch *did* fail -- Kodi's own `CCurlFile` timed out after
-30s trying to open the new channel's `/proxy/ts/stream/{uuid}` URL. Critically,
-that exact URL was tested independently moments later and streamed real,
-sustained data immediately (27MB in 15s) -- so the channel itself wasn't dead;
-the failure was specific to the moment of switching away from the previous
-channel. This is consistent with Dispatcharr's proxy (or the upstream
-provider) needing a brief window to release the old connection before the new
-one succeeds.
+What was actually observed, via Kodi's own `debug.setextraloglevel=64`
+(`LOGCURL`) trace: opening the *first* channel, curl tried the host's IPv6
+address, that failed/timed out, and after several retries across ~15s it
+fell back to IPv4 and succeeded. Opening the *second* channel to the same
+host, curl tried IPv6 **only** -- it never fell back to IPv4 at all, and sat
+timed out for the full 30s Kodi gives it. This repeated identically for every
+subsequent switch, including switching back to a channel that had played
+fine moments earlier -- i.e. this has nothing to do with which channel, or
+even that a switch is happening at all; it's specifically about Kodi's own
+HTTP connection handling to that *host* misbehaving after the first request.
 
-As a first, low-risk mitigation (before the bigger architecture change below),
-`GetChannelStreamProperties()` now waits `channel_switch_delay_seconds`
-(default 2, a settings.xml `livetv` category option, 0 disables it) before
-handing Kodi the new URL, giving that release window a chance to pass without
-the addon needing to know anything about Dispatcharr's session state. If this
-turns out not to be enough, or the delay needs to be very long to help, that's
-itself evidence pointing at the heavier fix below rather than just a bigger
-number.
+In the deployment this was diagnosed against, the Dispatcharr host's IP was
+a Gluetun (VPN client) container's LAN IP -- Gluetun commonly blocks IPv6
+outright as a leak-prevention measure, so the AAAA record pointed at an
+address nothing could ever actually reach, even though DNS kept advertising
+it. **The fix was entirely DNS-side: remove/disable the AAAA record for the
+Dispatcharr hostname (or otherwise ensure it only resolves to an address
+that's genuinely reachable over IPv6, or doesn't advertise IPv6 at all).**
+Confirmed: switching straight to the plain IPv4 address in the addon's Host
+setting fixed it immediately, before the DNS change was made.
 
-If it turns out Dispatcharr itself *is* holding a channel's upstream slot
-open after Kodi stops watching it (e.g. because Kodi's own disconnect isn't
-detected promptly), the `/proxy/ts/stop/{channel_id}` endpoint above is the
-one to call proactively -- but that requires the addon to switch from the
-current stream-URL-passthrough model (`GetChannelStreamProperties()` only)
-to also implementing `OpenLiveStream()`/`CloseLiveStream()` with
-`PVRCapabilities::SetHandlesInputStream(true)`, which hands stream I/O
-lifecycle to the addon instead of Kodi's own player. That's a real
-architecture change, not a one-line fix -- try the delay above first.
+This is *not* something this addon's code can reliably route around --
+Kodi's `CCurlFile`/libcurl URL options (see `xbmc/filesystem/CurlFile.cpp`)
+don't expose a way to force IPv4-only resolution, and having the addon
+resolve the hostname to a hardcoded IPv4 address itself for the stream URL
+would break certificate validation for anyone using HTTPS. If you hit this
+and can't fix the DNS/network layer, using the bare IPv4 address in the
+addon's Host setting instead of a hostname is the reliable workaround.
+
+Two mitigations were tried and ruled out before finding this, kept here so
+they aren't re-attempted:
+- **A fixed delay before switching** (a `channel_switch_delay_seconds`
+  setting was added, default 2s) -- didn't help even at 10+ seconds, which
+  is what proved this wasn't a timing race with Dispatcharr's proxy
+  releasing the previous connection.
+- **`|Connection=close` on the stream URL** (a real Kodi/`CurlFile` URL
+  option, confirmed applied in the log) -- didn't help either, which is what
+  proved this wasn't ordinary HTTP keep-alive/connection-pool reuse.
+
+Also ruled out: Dispatcharr/Unraid worker capacity (rapid channel zapping
+through Dispatcharr's own web UI against the same instance worked
+perfectly), and a dead/rate-limited channel (the exact failing URL streamed
+real data fine when requested independently, and switching *back* to the
+first, previously-working channel failed identically).
 
 ## Still unconfirmed (verify before relying on in production)
 

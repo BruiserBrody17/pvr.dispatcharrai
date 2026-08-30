@@ -90,7 +90,7 @@ msgid "Delay before switching channels (seconds)"
 msgstr ""
 
 msgctxt "#30026"
-msgid "Some Dispatcharr/provider setups need a moment to release the previous channel's connection before a new one is requested. Raise this if switching channels fails or times out; set to 0 to disable."
+msgid "Off (0) by default. If switching channels fails or times out, first check whether your Dispatcharr host resolves to an unreachable IPv6 address -- that's the far more common cause. Only raise this if a specific Dispatcharr/provider setup genuinely needs a moment between switches."
 msgstr ""
 
 msgctxt "#30030"

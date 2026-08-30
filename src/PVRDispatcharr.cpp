@@ -24,7 +24,7 @@ dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
   config.verifySsl = kodi::addon::GetSettingBoolean("verify_ssl", true);
   config.timeoutSeconds = kodi::addon::GetSettingInt("timeout", 30);
   config.debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
-  config.channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 2);
+  config.channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   return config;
 }
 
@@ -33,7 +33,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
-  m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 2);
+  m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
 
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
@@ -263,12 +263,14 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
     streamUrl = m_client.GetLiveStreamUrl(*ch);
   }
 
-  // Some Dispatcharr/upstream-provider setups need a moment to release the
-  // previous channel's connection before a new one is requested -- without
-  // this, switching channels can silently time out even though the new
-  // channel works fine moments later (see docs/API_NOTES.md). This runs
-  // with m_dataMutex already released so it doesn't block other addon
-  // calls in the meantime.
+  // Off (0) by default. Added while diagnosing a "channel N+1 never plays"
+  // failure on the theory that Dispatcharr's proxy needed a moment to
+  // release the previous connection -- it didn't help (the real cause was
+  // an unreachable IPv6 route to the Dispatcharr host, see
+  // docs/API_NOTES.md), so don't expect this alone to fix that class of
+  // symptom. Left available as a settings.xml option in case a genuinely
+  // different setup needs it. Runs with m_dataMutex already released so it
+  // doesn't block other addon calls in the meantime.
   if (m_channelSwitchDelaySeconds > 0)
     std::this_thread::sleep_for(std::chrono::seconds(m_channelSwitchDelaySeconds));
 
