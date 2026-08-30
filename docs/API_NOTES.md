@@ -117,6 +117,34 @@ further improvement path has been identified without a backend change
 (e.g. Dispatcharr transcoding catch-up to a seek-friendly container/format,
 or exposing a proper index), which is out of scope for this addon.
 
+### Live TV pause/rewind ("timeshift")
+
+Requested as "timeshifting with the live TV buffer held on the Dispatcharr
+side, similar to how tvheadend does timeshifting with Kodi." Confirmed
+Dispatcharr has no equivalent to TVHeadend's server-side rolling live
+buffer -- there's nothing in its API for a continuous, always-recording,
+seekable live buffer per channel. That rules out a true server-side
+implementation matching TVHeadend's model.
+
+What's implemented instead, gated behind the `enable_live_timeshift`
+setting (off by default): `GetChannelStreamProperties()` optionally routes
+live channel playback through `inputstream.ffmpegdirect`'s `stream_mode:
+timeshift`. Confirmed via ffmpegdirect's own README this is exactly what
+that mode is for -- unlike the catch-up case above, this isn't a
+mismatch: timeshift mode is explicitly designed to add pause/rewind to a
+plain, continuously-arriving live stream with no backend cooperation
+required at all, by recording it to a local on-disk buffer as it plays.
+That's a materially different architecture than TVHeadend's -- the buffer
+lives on the Kodi device's own storage (size/path/retention controlled by
+ffmpegdirect's own addon settings), not on the Dispatcharr server, so it
+doesn't persist across a Kodi restart and isn't shared between devices --
+but it delivers the same pause/rewind/fast-forward gesture the user
+actually interacts with.
+
+Requires `inputstream.ffmpegdirect` to be installed; if it isn't and the
+setting is on, live channel playback fails outright (not just timeshift),
+which is why the setting defaults to off and the in-app help says so.
+
 ### Confirmed channel JSON fields (`GET /api/channels/channels/`)
 
 The response is a **bare JSON array**, not paginated/wrapped in
