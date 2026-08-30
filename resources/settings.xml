@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings version="1">
+  <section id="pvr.dispatcharr">
+
+    <category id="connection" label="30000">
+      <group id="1">
+        <setting id="host" type="string" label="30001" help="30002">
+          <level>0</level>
+          <default>127.0.0.1</default>
+          <constraints>
+            <allowempty>false</allowempty>
+          </constraints>
+          <control type="edit" format="string" />
+        </setting>
+        <setting id="port" type="integer" label="30003" help="30004">
+          <level>0</level>
+          <default>9191</default>
+          <constraints>
+            <minimum>1</minimum>
+            <maximum>65535</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
+        <setting id="use_https" type="boolean" label="30005" help="30006">
+          <level>0</level>
+          <default>false</default>
+          <control type="toggle" />
+        </setting>
+        <setting id="username" type="string" label="30007" help="30008">
+          <level>0</level>
+          <default></default>
+          <control type="edit" format="string" />
+        </setting>
+        <setting id="password" type="string" label="30009" help="30010">
+          <level>0</level>
+          <default></default>
+          <control type="edit" format="string">
+            <hidden>true</hidden>
+          </control>
+        </setting>
+        <setting id="verify_ssl" type="boolean" label="30011" help="30012">
+          <level>1</level>
+          <default>true</default>
+          <control type="toggle" />
+          <dependencies>
+            <dependency type="enable" setting="use_https">true</dependency>
+          </dependencies>
+        </setting>
+        <setting id="timeout" type="integer" label="30013" help="30014">
+          <level>1</level>
+          <default>30</default>
+          <constraints>
+            <minimum>5</minimum>
+            <maximum>180</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
+      </group>
+    </category>
+
+    <category id="livetv" label="30020">
+      <group id="1">
+        <setting id="epg_refresh_hours" type="integer" label="30021" help="30022">
+          <level>0</level>
+          <default>4</default>
+          <constraints>
+            <minimum>1</minimum>
+            <maximum>24</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
+        <setting id="channel_refresh_hours" type="integer" label="30023" help="30024">
+          <level>0</level>
+          <default>12</default>
+          <constraints>
+            <minimum>1</minimum>
+            <maximum>72</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
+      </group>
+    </category>
+
+    <category id="advanced" label="30030">
+      <group id="1">
+        <setting id="debug_logging" type="boolean" label="30031" help="30032">
+          <level>2</level>
+          <default>false</default>
+          <control type="toggle" />
+        </setting>
+      </group>
+    </category>
+
+  </section>
+</settings>

@@ -1,0 +1,10 @@
+build/
+dist/
+*.so
+*.dll
+*.dylib
+CMakeFiles/
+CMakeCache.txt
+.vs/
+.vscode/
+*.user

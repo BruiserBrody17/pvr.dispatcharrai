@@ -1,0 +1,98 @@
+# Kodi Media Center language file
+# Addon Name: Dispatcharr PVR Client
+# Addon id: pvr.dispatcharr
+# Addon Provider: your-name-here
+msgid ""
+msgstr ""
+
+msgctxt "#30000"
+msgid "Connection"
+msgstr ""
+
+msgctxt "#30001"
+msgid "Dispatcharr host / IP address"
+msgstr ""
+
+msgctxt "#30002"
+msgid "Hostname or IP address of your Dispatcharr server, without http:// or a port."
+msgstr ""
+
+msgctxt "#30003"
+msgid "Port"
+msgstr ""
+
+msgctxt "#30004"
+msgid "Dispatcharr's web/API port (default 9191)."
+msgstr ""
+
+msgctxt "#30005"
+msgid "Use HTTPS"
+msgstr ""
+
+msgctxt "#30006"
+msgid "Enable if Dispatcharr is served over HTTPS (e.g. behind a reverse proxy)."
+msgstr ""
+
+msgctxt "#30007"
+msgid "Username"
+msgstr ""
+
+msgctxt "#30008"
+msgid "Dispatcharr account username used to obtain an API token."
+msgstr ""
+
+msgctxt "#30009"
+msgid "Password"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Dispatcharr account password used to obtain an API token."
+msgstr ""
+
+msgctxt "#30011"
+msgid "Verify SSL certificate"
+msgstr ""
+
+msgctxt "#30012"
+msgid "Disable only if you use a self-signed certificate you trust."
+msgstr ""
+
+msgctxt "#30013"
+msgid "Connection timeout (seconds)"
+msgstr ""
+
+msgctxt "#30014"
+msgid "How long to wait for Dispatcharr to respond before failing a request."
+msgstr ""
+
+msgctxt "#30020"
+msgid "Live TV / EPG"
+msgstr ""
+
+msgctxt "#30021"
+msgid "EPG refresh interval (hours)"
+msgstr ""
+
+msgctxt "#30022"
+msgid "How often to re-download the XMLTV guide from Dispatcharr."
+msgstr ""
+
+msgctxt "#30023"
+msgid "Channel list refresh interval (hours)"
+msgstr ""
+
+msgctxt "#30024"
+msgid "How often to re-fetch the channel and group list from Dispatcharr."
+msgstr ""
+
+msgctxt "#30030"
+msgid "Advanced"
+msgstr ""
+
+msgctxt "#30031"
+msgid "Enable verbose debug logging"
+msgstr ""
+
+msgctxt "#30032"
+msgid "Logs full request/response details to the Kodi log. Leave off for normal use."
+msgstr ""

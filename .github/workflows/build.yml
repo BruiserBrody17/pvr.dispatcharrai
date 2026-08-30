@@ -1,0 +1,96 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  KODI_BRANCH: Omega # match whatever Kodi major version you're targeting
+
+jobs:
+  build-unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out addon source
+        uses: actions/checkout@v4
+        with:
+          path: addons/pvr.dispatcharr
+
+      - name: Check out Kodi (for the binary-addons build harness)
+        uses: actions/checkout@v4
+        with:
+          repository: xbmc/xbmc
+          ref: ${{ env.KODI_BRANCH }}
+          path: kodi-source
+          fetch-depth: 1
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libcurl4-openssl-dev pkg-config
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake curl pkg-config
+
+      - name: Build addon via Kodi binary-addons harness
+        run: |
+          cd kodi-source
+          make -j"$(getconf _NPROCESSORS_ONLN)" -C tools/depends/target/binary-addons \
+            ADDONS="pvr.dispatcharr" \
+            ADDON_SRC_PREFIX="${{ github.workspace }}/addons" \
+            EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=${{ github.workspace }}/dist" \
+            PACKAGE=1
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvr.dispatcharr-${{ matrix.os }}
+          path: dist/*.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out addon source
+        uses: actions/checkout@v4
+        with:
+          path: addons/pvr.dispatcharr
+
+      - name: Check out Kodi
+        uses: actions/checkout@v4
+        with:
+          repository: xbmc/xbmc
+          ref: ${{ env.KODI_BRANCH }}
+          path: kodi-source
+          fetch-depth: 1
+
+      # NOTE: Kodi's Windows build normally goes through the scripts under
+      # kodi-source/tools/buildsteps/windows rather than a plain `make`
+      # invocation. This step is a best-effort starting point -- check
+      # those scripts against your checked-out Kodi branch and adjust if
+      # this job fails; it's the one part of this workflow not validated
+      # end-to-end.
+      - name: Build addon (CMake, MSVC)
+        shell: pwsh
+        run: |
+          cmake -S addons/pvr.dispatcharr -B build `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DADDONS_TO_BUILD=pvr.dispatcharr `
+            -DADDON_SRC_PREFIX="${{ github.workspace }}/addons" `
+            -DPACKAGE_ZIP=ON `
+            -DPACKAGE_DIR="${{ github.workspace }}/dist"
+          cmake --build build --config Release
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvr.dispatcharr-windows
+          path: dist/*.zip
