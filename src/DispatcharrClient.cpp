@@ -535,17 +535,31 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
     r.isUpcoming = r.startTime > now;
 
     // Dispatcharr's Recording object has no title/subtitle/description
-    // fields of its own (confirmed against the live schema); the closest
-    // equivalent, ProgramData (EPG program search results), uses
-    // title/sub_title/description, so custom_properties is read on that
-    // same convention as a best effort -- not independently confirmed
-    // against a real populated recording, see DispatcharrClient.h.
+    // fields of its own. Confirmed against a real recording: when created
+    // without an explicit custom_properties, Dispatcharr auto-populates it
+    // from the EPG programme that was airing, nested under
+    // custom_properties.program.{title,sub_title,description} (alongside
+    // status/file_url/etc. -- see CreateOneTimeRecording() for why this
+    // addon no longer sends its own custom_properties on create, to avoid
+    // stomping on that auto-enrichment). Also checks a flat
+    // custom_properties.title as a fallback, in case something else wrote
+    // one directly there.
     const json& custom = item.contains("custom_properties") ? item["custom_properties"] : json();
     if (custom.is_object())
     {
-      r.title = FieldOr<std::string>(custom, "title", "");
-      r.subtitle = FieldOr<std::string>(custom, "sub_title", "");
-      r.description = FieldOr<std::string>(custom, "description", "");
+      const json& program = custom.contains("program") ? custom["program"] : json();
+      if (program.is_object())
+      {
+        r.title = FieldOr<std::string>(program, "title", "");
+        r.subtitle = FieldOr<std::string>(program, "sub_title", "");
+        r.description = FieldOr<std::string>(program, "description", "");
+      }
+      if (r.title.empty())
+        r.title = FieldOr<std::string>(custom, "title", "");
+      if (r.subtitle.empty())
+        r.subtitle = FieldOr<std::string>(custom, "sub_title", "");
+      if (r.description.empty())
+        r.description = FieldOr<std::string>(custom, "description", "");
     }
     if (r.title.empty())
       r.title = "Recording " + std::to_string(r.id);
@@ -609,24 +623,30 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
 }
 
 bool DispatcharrClient::CreateOneTimeRecording(
-    int channelId, time_t start, time_t end, const std::string& title, std::string& error)
+    int channelId, time_t start, time_t end, const std::string& /*title*/, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
 
-  // Confirmed against the live Recording schema: channel/start_time/end_time
-  // are the only real fields besides the server-assigned id/task_id.
-  // There is no title/name field -- Dispatcharr's Recording object doesn't
-  // carry one at all (see GetRecordings() above), so the best this can do
-  // is stash it in custom_properties on the same convention used to read
-  // it back; not confirmed the server actually honors that key on write.
+  // Confirmed against a real recording: channel/start_time/end_time are the
+  // only fields this needs to send. Deliberately NOT sending its own
+  // custom_properties (e.g. {"title": title}) -- confirmed that Dispatcharr
+  // auto-populates custom_properties.program.{title,sub_title,description}
+  // (plus status/file paths/poster logo) from whatever EPG programme was
+  // actually airing on this channel at this time, and sending an explicit
+  // custom_properties on create *replaces* that entirely rather than
+  // merging, which would throw away the richer data for what's normally an
+  // exact match anyway (Kodi's "record from guide" title already came from
+  // that same EPG programme). `title` is unused here as a result; a
+  // one-time recording with no matching EPG programme (a fully manual time
+  // range) will fall back to GetRecordings()'s "Recording <id>" default
+  // instead of carrying the typed title, which is an accepted trade-off in
+  // favor of the far more common EPG-matched case having full metadata.
   json body = {
       {"channel", channelId},
       {"start_time", IsoFromTime(start)},
       {"end_time", IsoFromTime(end)},
   };
-  if (!title.empty())
-    body["custom_properties"] = json{{"title", title}};
   json response;
   return Request("POST", kRecordingsPath, body, response, error);
 }

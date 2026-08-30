@@ -224,26 +224,52 @@ perfectly), and a dead/rate-limited channel (the exact failing URL streamed
 real data fine when requested independently, and switching *back* to the
 first, previously-working channel failed identically).
 
+## Recordings/timers: confirmed end-to-end against real data
+
+Once the account's permissions were raised (see the permissions note
+below), a real recording and two real series rules were created, listed,
+and deleted -- both directly over the API and through Kodi's own PVR
+manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
+
+- A `Recording` created with **no** `custom_properties` gets auto-enriched
+  by Dispatcharr itself from whatever EPG programme was actually airing,
+  nested as `custom_properties.program.{title,sub_title,description}`
+  (alongside `status`, `file_url`/`output_file_url` pointing at an
+  in-progress HLS playlist, `file_name`/`file_path` for the eventual MKV,
+  and `poster_logo_id`). Sending your own `custom_properties` on create
+  **replaces** this entirely rather than merging with it -- confirmed by
+  comparing a recording created with an explicit `custom_properties.title`
+  (which got exactly that flat object back, nothing else) against one
+  created with none (which got the full auto-populated object above).
+  `CreateOneTimeRecording()` no longer sends its own `custom_properties`
+  as a result, and `GetRecordings()` reads the nested `program.*` fields
+  first, falling back to flat `custom_properties.title` etc. for anything
+  that did set them directly.
+- A series rule has **no numeric id field at all** -- a real one is just
+  `{mode, title, tvg_id, channel_id, title_mode, description,
+  description_mode}`. `GetTimers()` previously used `rule.id` (always 0)
+  to build each series timer's Kodi `ClientIndex`, which would collide for
+  any second series rule; now hashes `(title, tvgId)` instead -- confirmed
+  with two simultaneous rules that they now show as distinct timers.
+- `DeleteSeriesRule()`'s title+tvg_id query-param delete and
+  `DeleteRecording()`'s path-id delete were both confirmed to actually
+  remove the item server-side (checked directly against the API after
+  deleting through Kodi), not just update Kodi's local view of it.
+
 ## Still unconfirmed (verify before relying on in production)
 
-- The exact key names Dispatcharr expects/returns inside a `Recording`'s
-  `custom_properties` for title/subtitle/description. `GetRecordings()`
-  reads `title`/`sub_title`/`description` and `CreateOneTimeRecording()`
-  writes `{"title": ...}` there, both by analogy with `ProgramData`'s field
-  names elsewhere in this API, not from a populated example.
-- The exact shape of one item inside a series-rules list response
-  (`{"rules": [...]}`  is confirmed, but the instance available had zero
-  rules configured, so an individual rule object was never seen). Assumed
-  to mirror the confirmed `SeriesRuleRequest` create fields
-  (`title`, `channel_id`, `tvg_id`, ...).
-- **Recording/series-rule creation returned "You do not have permission to
-  perform this action" for the account used to verify this** (same
-  account that can log in, browse channels, and stream fine) -- this looks
-  like the same restricted/streamer-role tier noted above for login, just
-  gating a different set of endpoints. If timers fail to create even after
-  the field-name fixes above, check the Dispatcharr user's role/permissions
-  before assuming it's another addon bug -- an API key from a
-  full-permission account may be required (see the login note above).
+- Whether a one-time recording that doesn't match any real EPG programme
+  (a fully manual/custom time range with nothing airing to auto-enrich
+  from) gets *any* usable title, or falls back to this addon's
+  `"Recording <id>"` default -- only the common EPG-matched case (which
+  does get a real title via the auto-enrichment above) was tested.
+- The account used to verify this (`claude`) initially got "You do not
+  have permission to perform this action" trying to create a recording or
+  series rule -- same account that could log in, browse channels, and
+  stream fine. Raising that account's role in Dispatcharr's admin UI
+  resolved it. If you hit the same error, that's a Dispatcharr-side
+  permissions setting, not an addon bug -- check the account's role before
+  assuming otherwise.
 
 ## How to verify quickly
 
