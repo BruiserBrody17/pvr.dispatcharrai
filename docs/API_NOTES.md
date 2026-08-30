@@ -72,27 +72,40 @@ which estimates byte-position-from-time via internal PCR/bitrate sampling, a
 well-known source of imprecise/flaky seeking for this content type in
 general, independent of the server.
 
-The fix applied: `GetEPGTagStreamProperties()` now routes catch-up playback
-through the separate `inputstream.ffmpegdirect` addon (real Kodi addon,
-official repository -- not something this addon bundles or replaces),
-which has its own, more robust seek handling. Specifically **`stream_mode:
-timeshift`**, not `catchup`: ffmpegdirect's `catchup` mode is built around
-reconstructing a *different* URL per seek via a format string (for
-providers whose catch-up API needs a new request per time offset), which
-doesn't fit here -- our catch-up URL is a single session-bound URL that
-already supports normal Range-based seeking (confirmed above), and using
-`catchup` mode would force embedding a JWT directly in the URL instead
-(ffmpegdirect can't call back into this addon to refresh a session
-mid-playback), reintroducing exactly the token-expiry-mid-playback problem
-the session-based flow was chosen to avoid. `timeshift` mode is described
-in ffmpegdirect's own docs as a local buffer over one already-seekable URL,
-which is what we actually have.
+**Tried and reverted:** routing catch-up playback through the separate
+`inputstream.ffmpegdirect` addon's `stream_mode: timeshift`, on the theory
+that its seek handling would be more robust than Kodi's generic MPEG-TS
+seeking. Confirmed live against a real install that this doesn't just fail
+to help -- it breaks seeking entirely (no seeking at all, worse than the
+original flakiness). Root-caused by reading ffmpegdirect's actual source
+(`github.com/xbmc/inputstream.ffmpegdirect`, branch `Piers`):
 
-This requires the user to separately install `inputstream.ffmpegdirect`
-(Settings -> Add-ons -> Install from repository -> VideoPlayer InputStream);
-if it's not installed, `PVR_STREAM_PROPERTY_INPUTSTREAM` pointing at a
-missing addon would fail to open the stream at all, which is why it's
-gated behind the `use_ffmpegdirect_catchup` setting (default on).
+- `stream_mode: timeshift` (`src/stream/TimeshiftBuffer.cpp`) seeks only
+  within a local, segmented recording that ffmpegdirect itself
+  progressively downloads from what it assumes is a *live*, continuously
+  arriving source. Our catch-up URL is a single, already-complete archived
+  file, not a live source -- there is nothing for it to progressively
+  record, so its seek model doesn't apply.
+- `stream_mode: catchup` (`src/stream/FFmpegCatchupStream.cpp`,
+  `SeekCatchupStream()`) seeks by reconstructing a *new* URL for the exact
+  wall-clock time being sought to, via a `catchup_url_format_string`. This
+  requires the backend to support starting playback at an arbitrary
+  in-programme timestamp. Dispatcharr's catch-up API does not support
+  this: its `start` parameter only selects *which* archived programme to
+  fetch, never a time offset within it -- in-programme position is meant
+  to be handled entirely via HTTP Range on the byte stream.
+
+Neither of ffmpegdirect's specialized modes matches Dispatcharr's actual
+catch-up URL shape (one complete, Range-seekable file per programme), so
+the addon now plays the catch-up URL directly via
+`PVR_STREAM_PROPERTY_STREAMURL` -- the same mechanism as live channels --
+plus `PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE` (a plain Kodi-core flag,
+unrelated to ffmpegdirect, that just nudges Kodi's own UI to treat the
+session more like live TV). Seeking precision on raw MPEG-TS via Kodi's
+built-in PCR/bitrate-based estimation remains inherently approximate; no
+further improvement path has been identified without a backend change
+(e.g. Dispatcharr transcoding catch-up to a seek-friendly container/format,
+or exposing a proper index), which is out of scope for this addon.
 
 ### Confirmed channel JSON fields (`GET /api/channels/channels/`)
 
