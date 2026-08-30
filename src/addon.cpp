@@ -12,7 +12,7 @@ public:
   {
     if (instance.IsType(ADDON_INSTANCE_PVR))
     {
-      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr: creating PVR client instance");
+      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: creating PVR client instance");
       hdl = new PVRDispatcharr(instance);
       return ADDON_STATUS_OK;
     }

@@ -1,7 +1,7 @@
 # Kodi Media Center language file
 # Addon Name: Dispatcharr PVR Client
-# Addon id: pvr.dispatcharr
-# Addon Provider: your-name-here
+# Addon id: pvr.dispatcharrai
+# Addon Provider: BruiserBrody17
 msgid ""
 msgstr ""
 

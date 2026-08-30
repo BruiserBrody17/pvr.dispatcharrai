@@ -1,4 +1,4 @@
-# Building pvr.dispatcharr
+# Building pvr.dispatcharrai
 
 Kodi binary addons aren't built standalone in the usual CMake sense --
 they're built through Kodi's own addon build harness so the resulting
@@ -23,16 +23,16 @@ automates the Windows/macOS/Linux steps below on every push.
    ```
 2. Clone this addon next to it (any path):
    ```bash
-   git clone https://github.com/YOUR-GITHUB-USER/pvr.dispatcharr.git addons/pvr.dispatcharr
+   git clone https://github.com/BruiserBrody17/pvr.dispatcharrai.git addons/pvr.dispatcharrai
    ```
-3. Register the addon with the harness. `pvr.dispatcharr` isn't in Kodi's
+3. Register the addon with the harness. `pvr.dispatcharrai` isn't in Kodi's
    official addon manifests, so `ADDON_SRC_PREFIX` alone won't find it --
    the harness needs an explicit definition file pointing at the local
    checkout via a `file://` URL:
    ```bash
-   mkdir -p addon-defs/pvr.dispatcharr
-   echo "pvr.dispatcharr file://$(pwd)/addons/pvr.dispatcharr" \
-     > addon-defs/pvr.dispatcharr/pvr.dispatcharr.txt
+   mkdir -p addon-defs/pvr.dispatcharrai
+   echo "pvr.dispatcharrai file://$(pwd)/addons/pvr.dispatcharrai" \
+     > addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
    ```
 4. Run the addon build harness. `PREFIX` is required even for a native
    (non-cross-compiling) build -- point it at any writable install
@@ -40,7 +40,7 @@ automates the Windows/macOS/Linux steps below on every push.
    ```bash
    cd kodi-source
    make -j$(nproc) -C tools/depends/target/binary-addons \
-     ADDONS="pvr.dispatcharr" \
+     ADDONS="pvr.dispatcharrai" \
      ADDONS_DEFINITION_DIR="$(pwd)/../addon-defs" \
      PREFIX="$(pwd)/../install" \
      EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=$(pwd)/../dist" \
@@ -86,7 +86,7 @@ There are two realistic paths, in order of how "supported" they are:
    uses for your device's SoC (Amlogic ng, for the N2+), matching their
    exact GCC version and the Kodi commit their release is built from, then
    copy the resulting `.so` and a rendered `addon.xml` into
-   `/storage/.kodi/addons/pvr.dispatcharr/` over SSH and restart Kodi. This
+   `/storage/.kodi/addons/pvr.dispatcharrai/` over SSH and restart Kodi. This
    is what enthusiasts typically do for out-of-tree PVR addons on
    LibreELEC/CoreELEC when a package doesn't exist yet -- there's an open
    CoreELEC forum thread asking about exactly this for Dispatcharr, with no

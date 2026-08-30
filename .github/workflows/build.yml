@@ -21,7 +21,7 @@ jobs:
       - name: Check out addon source
         uses: actions/checkout@v4
         with:
-          path: addons/pvr.dispatcharr
+          path: addons/pvr.dispatcharrai
 
       - name: Check out Kodi (for the binary-addons build harness)
         uses: actions/checkout@v4
@@ -43,15 +43,15 @@ jobs:
 
       - name: Register addon with the build harness
         run: |
-          mkdir -p addon-defs/pvr.dispatcharr
-          echo "pvr.dispatcharr file://${{ github.workspace }}/addons/pvr.dispatcharr" \
-            > addon-defs/pvr.dispatcharr/pvr.dispatcharr.txt
+          mkdir -p addon-defs/pvr.dispatcharrai
+          echo "pvr.dispatcharrai file://${{ github.workspace }}/addons/pvr.dispatcharrai" \
+            > addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
 
       - name: Build addon via Kodi binary-addons harness
         run: |
           cd kodi-source
           make -j"$(getconf _NPROCESSORS_ONLN)" -C tools/depends/target/binary-addons \
-            ADDONS="pvr.dispatcharr" \
+            ADDONS="pvr.dispatcharrai" \
             ADDONS_DEFINITION_DIR="${{ github.workspace }}/addon-defs" \
             PREFIX="${{ github.workspace }}/install" \
             EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=${{ github.workspace }}/dist" \
@@ -60,7 +60,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pvr.dispatcharr-${{ matrix.os }}
+          name: pvr.dispatcharrai-${{ matrix.os }}
           path: dist/*.zip
 
   build-windows:
@@ -69,7 +69,7 @@ jobs:
       - name: Check out addon source
         uses: actions/checkout@v4
         with:
-          path: addons/pvr.dispatcharr
+          path: addons/pvr.dispatcharrai
 
       - name: Check out Kodi
         uses: actions/checkout@v4
@@ -88,9 +88,9 @@ jobs:
       - name: Build addon (CMake, MSVC)
         shell: pwsh
         run: |
-          cmake -S addons/pvr.dispatcharr -B build `
+          cmake -S addons/pvr.dispatcharrai -B build `
             -G "Visual Studio 17 2022" -A x64 `
-            -DADDONS_TO_BUILD=pvr.dispatcharr `
+            -DADDONS_TO_BUILD=pvr.dispatcharrai `
             -DADDON_SRC_PREFIX="${{ github.workspace }}/addons" `
             -DPACKAGE_ZIP=ON `
             -DPACKAGE_DIR="${{ github.workspace }}/dist"
@@ -99,5 +99,5 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pvr.dispatcharr-windows
+          name: pvr.dispatcharrai-windows
           path: dist/*.zip

@@ -35,7 +35,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: initial login failed: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: initial login failed: %s", error.c_str());
   }
 }
 
@@ -105,7 +105,7 @@ void PVRDispatcharr::EnsureChannelsLoaded()
 
   if (!ok)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to load channels: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load channels: %s", error.c_str());
     return;
   }
 
@@ -126,14 +126,14 @@ void PVRDispatcharr::EnsureEpgLoaded()
   std::string xml, error;
   if (!m_client.GetXmlTvGuide(xml, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to fetch XMLTV guide: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to fetch XMLTV guide: %s", error.c_str());
     return;
   }
 
   std::unordered_map<std::string, std::vector<EpgEntry>> parsed;
   if (!XmlTvParser::Parse(xml, parsed, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to parse XMLTV guide: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to parse XMLTV guide: %s", error.c_str());
     return;
   }
 
@@ -338,7 +338,7 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   std::string error;
   if (!m_client.GetRecordings(recordings, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to load recordings: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load recordings: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
 
@@ -373,7 +373,7 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
   std::string error;
   if (!m_client.DeleteRecording(id, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to delete recording %d: %s", id, error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete recording %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerRecordingUpdate();
@@ -483,7 +483,7 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
 
   if (!ok)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to create timer: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to create timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerTimerUpdate();
@@ -498,7 +498,7 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
   std::string error;
   if (!m_client.DeleteTimerRule(id, isSeries, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to delete timer %d: %s", id, error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete timer %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerTimerUpdate();

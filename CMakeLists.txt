@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(pvr.dispatcharr)
+project(pvr.dispatcharrai)
 
 # ---------------------------------------------------------------------------
 # This follows the standard out-of-tree Kodi binary-addon layout: it expects
@@ -36,7 +36,7 @@ FetchContent_MakeAvailable(pugixml)
 
 # BUILD_SHARED_LIBS is a CACHE variable, so the OFF forced above for pugixml
 # would otherwise also apply to build_addon()'s own add_library() call below,
-# silently producing a static pvr.dispatcharr.a instead of the shared object
+# silently producing a static pvr.dispatcharrai.a instead of the shared object
 # Kodi actually loads.
 set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 
@@ -65,6 +65,6 @@ set(DEPLIBS
     pugixml::pugixml
 )
 
-build_addon(pvr.dispatcharr DISPATCHARR DEPLIBS)
+build_addon(pvr.dispatcharrai DISPATCHARR DEPLIBS)
 
 include(CPack)
