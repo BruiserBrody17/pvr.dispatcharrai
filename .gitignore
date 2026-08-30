@@ -8,3 +8,4 @@ CMakeCache.txt
 .vs/
 .vscode/
 *.user
+.claude/

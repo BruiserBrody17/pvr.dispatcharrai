@@ -21,24 +21,38 @@ automates the Windows/macOS/Linux steps below on every push.
    ```bash
    git clone --branch Omega --depth 1 https://github.com/xbmc/xbmc.git kodi-source
    ```
-2. Clone this addon next to it (any path; `ADDON_SRC_PREFIX` below points at
-   its parent directory):
+2. Clone this addon next to it (any path):
    ```bash
    git clone https://github.com/YOUR-GITHUB-USER/pvr.dispatcharr.git addons/pvr.dispatcharr
    ```
-3. Run the addon build harness:
+3. Register the addon with the harness. `pvr.dispatcharr` isn't in Kodi's
+   official addon manifests, so `ADDON_SRC_PREFIX` alone won't find it --
+   the harness needs an explicit definition file pointing at the local
+   checkout via a `file://` URL:
+   ```bash
+   mkdir -p addon-defs/pvr.dispatcharr
+   echo "pvr.dispatcharr file://$(pwd)/addons/pvr.dispatcharr" \
+     > addon-defs/pvr.dispatcharr/pvr.dispatcharr.txt
+   ```
+4. Run the addon build harness. `PREFIX` is required even for a native
+   (non-cross-compiling) build -- point it at any writable install
+   destination:
    ```bash
    cd kodi-source
    make -j$(nproc) -C tools/depends/target/binary-addons \
      ADDONS="pvr.dispatcharr" \
-     ADDON_SRC_PREFIX="$(pwd)/../addons" \
+     ADDONS_DEFINITION_DIR="$(pwd)/../addon-defs" \
+     PREFIX="$(pwd)/../install" \
      EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=$(pwd)/../dist" \
      PACKAGE=1
    ```
    On Windows, use Kodi's documented CMake/Visual Studio flow instead of
    `make`; on macOS, the same `make` invocation works from a shell with
-   Xcode command line tools installed.
-4. The resulting zip in `../dist` is what you install via Kodi's
+   Xcode command line tools installed. If a prior run failed partway
+   through, delete `tools/depends/target/binary-addons/.installed-native`
+   first -- the harness touches that marker even after a failed configure,
+   which otherwise makes it skip reconfiguring on the next run.
+5. The resulting zip in `../dist` is what you install via Kodi's
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
 
