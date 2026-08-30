@@ -43,7 +43,7 @@ automates the Windows/macOS/Linux steps below on every push.
      ADDONS="pvr.dispatcharrai" \
      ADDONS_DEFINITION_DIR="$(pwd)/../addon-defs" \
      PREFIX="$(pwd)/../install" \
-     EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=$(pwd)/../dist" \
+     EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON" \
      PACKAGE=1
    ```
    On macOS, this same `make` invocation works from a shell with Xcode
@@ -53,7 +53,17 @@ automates the Windows/macOS/Linux steps below on every push.
    `tools/depends/target/binary-addons/.installed-native` first -- the
    harness touches that marker even after a failed configure, which
    otherwise makes it skip reconfiguring on the next run.
-5. The resulting zip in `../dist` is what you install via Kodi's
+5. `-DPACKAGE_DIR` looks like it should redirect where CPack writes the
+   zip, but doesn't actually take effect for this harness (confirmed:
+   verified against a real run, CPack still wrote it deep inside the
+   addon's own ExternalProject build tree regardless of that flag) --
+   `PACKAGE_ZIP=ON` alone is what makes CPack build it at all, so find it
+   afterward instead of trusting `PACKAGE_DIR`:
+   ```bash
+   find tools/depends/target/binary-addons -name 'addon-pvr.dispatcharrai-*.zip'
+   ```
+   That zip (named e.g. `addon-pvr.dispatcharrai-0.1.0-osx-arm64.zip`) is
+   what you install via Kodi's
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
 
