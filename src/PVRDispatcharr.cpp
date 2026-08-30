@@ -605,9 +605,16 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
     for (const auto& rule : rules)
     {
       kodi::addon::PVRTimer timer;
-      // Offset series-rule ids away from recording ids so client indices
-      // stay unique across both sources.
-      timer.SetClientIndex(static_cast<unsigned int>(rule.id) | 0x40000000);
+      // Series rules have no numeric id at all in Dispatcharr's API
+      // (confirmed against a real rule: {mode, title, tvg_id, channel_id,
+      // title_mode, description, description_mode} -- nothing else), so
+      // rule.id is always 0 and can't be used here -- every series rule
+      // would collide on the same ClientIndex. Hash the (title, tvgId)
+      // pair instead, the same identity DeleteSeriesRule() uses, masked
+      // into the lower 30 bits so the series-rule flag bit above it is
+      // never disturbed.
+      std::size_t h = std::hash<std::string>()(rule.title + '\x1f' + rule.tvgId);
+      timer.SetClientIndex((static_cast<unsigned int>(h) & 0x3FFFFFFFu) | 0x40000000);
       timer.SetTimerType(kTimerTypeSeries);
       timer.SetTitle(rule.title);
       timer.SetClientChannelUid(rule.channelId);
