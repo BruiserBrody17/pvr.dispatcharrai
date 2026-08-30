@@ -393,12 +393,14 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, playbackUrl);
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
   properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
-  // Lets Kodi's own UI treat this more like live TV (its OSD, programme
-  // skipping) rather than a static VOD file. Plain Kodi-core PVR property,
-  // unrelated to inputstream.ffmpegdirect -- see below for why that isn't
-  // used here.
-  properties.emplace_back(PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE, "true");
 
+  // PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE was tried here too (a plain
+  // Kodi-core flag, unrelated to ffmpegdirect) to make the OSD feel more
+  // like live TV. Reverted: setting it makes Kodi re-route playback through
+  // GetChannelStreamProperties() -- the *live-channel* path -- instead of
+  // just using the catch-up URL returned here, which isn't what a static,
+  // already-complete archived file needs and broke seeking further.
+  //
   // inputstream.ffmpegdirect was tried here (both "timeshift" and "catchup"
   // stream_mode) to address unreliable seeking, then reverted after
   // confirming via its actual source (src/stream/TimeshiftBuffer.cpp,
