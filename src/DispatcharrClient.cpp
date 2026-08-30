@@ -388,7 +388,18 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error)
 
 std::string DispatcharrClient::GetLiveStreamUrl(const Channel& channel) const
 {
-  return BaseUrl() + "/proxy/ts/stream/" + channel.uuid;
+  // Kodi's own web player (browser HTTP client) can rapidly switch channels
+  // against the same Dispatcharr instance with zero issue, but Kodi's
+  // CCurlFile times out opening a second channel's stream immediately after
+  // the first, with no trace of the request ever reaching Dispatcharr at
+  // all -- confirmed with a real user's server log. That points at
+  // something in Kodi's own HTTP connection handling (likely reusing/
+  // pooling the still-closing previous connection to the same host:port)
+  // rather than anything server-side. `|Connection=close` is a Kodi/
+  // CCurlFile URL option (see xbmc/filesystem/CurlFile.cpp's protocol
+  // option handling) that adds a literal `Connection: close` request
+  // header, telling it not to persist this connection for reuse.
+  return BaseUrl() + "/proxy/ts/stream/" + channel.uuid + "|Connection=close";
 }
 
 std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const
