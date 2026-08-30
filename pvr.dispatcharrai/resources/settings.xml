@@ -29,11 +29,17 @@
         <setting id="username" type="string" label="30007" help="30008">
           <level>0</level>
           <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
           <control type="edit" format="string" />
         </setting>
         <setting id="password" type="string" label="30009" help="30010">
           <level>0</level>
           <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
           <control type="edit" format="string">
             <hidden>true</hidden>
           </control>
