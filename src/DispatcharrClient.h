@@ -61,10 +61,15 @@ struct Channel
   std::string uuid; // used to build the live-stream proxy URL
   std::string name;
   int logoId = -1; // -1 means no logo; pass to GetChannelLogoUrl()
-  int channelNumber = 0;
+  int channelNumber = 0; // also what the XMLTV guide's <channel id="..."> uses, not tvgId
   int groupId = -1;
   std::string groupName;
-  std::string tvgId; // links this channel to <channel id="..."> in XMLTV
+  std::string tvgId;
+  // Catch-up/archive playback, backed by the upstream provider's own
+  // archive (Xtream "tv_archive"), not a generic Dispatcharr-side rolling
+  // timeshift buffer for every channel -- see docs/API_NOTES.md.
+  bool catchupEnabled = false;
+  int catchupDays = 0;
 };
 
 struct ChannelGroup
@@ -123,6 +128,20 @@ public:
   std::string GetLiveStreamUrl(const Channel& channel) const;
   // logoId is a Logo object's own id (Channel::logoId), not the channel's id.
   std::string GetChannelLogoUrl(int logoId) const;
+
+  // Creates a catch-up (archived-programme) playback session via
+  // POST /api/catchup/sessions/ and returns a fully-qualified, session-bound
+  // URL that plays and seeks without needing any further auth for the life
+  // of the session (a 10-minute *sliding* idle window, refreshed by each
+  // range/seek request -- i.e. it doesn't expire mid-playback the way a
+  // short-lived JWT embedded directly in the URL would). Only meaningful
+  // for a channel with Channel::catchupEnabled set; programmeStart must be
+  // the EPG entry's own start time, not when the viewer pressed play.
+  bool CreateCatchupSession(const std::string& channelUuid,
+                            time_t programmeStart,
+                            int durationMinutes,
+                            std::string& playbackUrlOut,
+                            std::string& error);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   std::string GetRecordingStreamUrl(int recordingId) const;

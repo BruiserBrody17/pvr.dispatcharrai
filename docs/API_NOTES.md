@@ -27,6 +27,37 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 | Recording playback | GET | `/api/channels/recordings/{id}/file/` (anonymous, Range-seekable) |
 | Series rule evaluation | POST | `/api/channels/series-rules/evaluate/` |
 | Series rules exist | -- | `/api/channels/series-rules/` (CRUD base confirmed to exist) |
+| Catch-up session | POST | `/api/catchup/sessions/` -- body `{channel_uuid, start (ISO-8601), duration (minutes, optional)}`; response's `playback_url` is a **relative path**, prepend `BaseUrl()`. Confirmed end-to-end against a real instance: creates a session-bound URL that streams real MPEG-TS data immediately with no further auth. Per Dispatcharr's own docs, the session stays valid via a 10-minute *sliding* idle window (refreshed by each range/seek request), so unlike embedding a JWT directly in the URL (`GET /proxy/catchup/{uuid}?start=...&token=...`, also confirmed working but not used here), it won't expire mid-playback of a long programme. |
+
+## Catch-up ("timeshift") playback
+
+Dispatcharr has a real catch-up/archive feature, exposed via
+`GetEPGTagStreamProperties()`/`IsEPGTagPlayable()` on the guide's past
+programmes (Kodi's normal "play from EPG" mechanism, same category as
+recordings -- **not** `OpenLiveStream()`/`CloseLiveStream()`, no
+`SetHandlesInputStream` capability needed). Important to understand what this
+actually is, since it's easy to conflate with TVHeadend-style timeshifting:
+
+- **It's per-channel and per-programme, not a continuous rolling buffer.**
+  A channel supports it only if `Channel::catchupEnabled` (`is_catchup` in
+  the API) is true and `catchupDays` (`catchup_days`) is nonzero -- both
+  driven by whether the *upstream IPTV provider* offers catch-up/archive for
+  that specific channel (the Xtream Codes `tv_archive` flag), not something
+  Dispatcharr generates itself for every channel.
+- **You pick a specific past (or currently-airing) EPG entry from the guide
+  and it plays from that programme's start**, with normal seek/rewind
+  *within that one programme* (the catch-up endpoint supports HTTP Range,
+  confirmed with a real `206` on a ranged request). It is not "press
+  rewind while watching live and seamlessly scroll back" the way TVHeadend's
+  HTSP-based timeshift buffer works -- Dispatcharr has no equivalent concept
+  of a generic rolling per-channel live buffer, and this addon's live
+  playback (`GetChannelStreamProperties()`) is still plain URL passthrough
+  with no addon-managed stream lifecycle.
+- `IsEPGTagPlayable()` only reports true once the programme has actually
+  started (`GetStartTime() <= now`) and is still within the channel's
+  `catchupDays` retention window -- there's no way to query the provider's
+  *actual* current archive depth per programme, so this is a best-effort
+  window check, not a guarantee the archive still has that exact programme.
 
 ### Confirmed channel JSON fields (`GET /api/channels/channels/`)
 

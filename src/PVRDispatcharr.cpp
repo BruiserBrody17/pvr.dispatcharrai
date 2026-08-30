@@ -3,6 +3,7 @@
 #include <kodi/AddonBase.h>
 
 #include <algorithm>
+#include <ctime>
 #include <functional>
 #include <thread>
 #include <unordered_set>
@@ -346,6 +347,52 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
       tag.SetEpisodeNumber(entry.episodeNumber);
     results.Add(tag);
   }
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& isPlayable)
+{
+  isPlayable = false;
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  const Channel* ch = FindChannelByUid(static_cast<int>(tag.GetUniqueChannelId()));
+  if (!ch || !ch->catchupEnabled || ch->catchupDays <= 0)
+    return PVR_ERROR_NO_ERROR;
+
+  time_t now = time(nullptr);
+  if (tag.GetStartTime() > now)
+    return PVR_ERROR_NO_ERROR; // hasn't aired yet
+
+  time_t oldestAllowed = now - static_cast<time_t>(ch->catchupDays) * 24 * 60 * 60;
+  if (tag.GetStartTime() < oldestAllowed)
+    return PVR_ERROR_NO_ERROR; // outside the provider's archive retention window
+
+  isPlayable = true;
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
+    const kodi::addon::PVREPGTag& tag, std::vector<kodi::addon::PVRStreamProperty>& properties)
+{
+  std::string channelUuid;
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    const Channel* ch = FindChannelByUid(static_cast<int>(tag.GetUniqueChannelId()));
+    if (!ch)
+      return PVR_ERROR_INVALID_PARAMETERS;
+    channelUuid = ch->uuid;
+  }
+
+  int durationMinutes = static_cast<int>((tag.GetEndTime() - tag.GetStartTime()) / 60);
+  std::string playbackUrl, error;
+  if (!m_client.CreateCatchupSession(channelUuid, tag.GetStartTime(), durationMinutes, playbackUrl, error))
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to create catch-up session: %s", error.c_str());
+    return PVR_ERROR_FAILED;
+  }
+
+  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, playbackUrl);
+  properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
+  properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
   return PVR_ERROR_NO_ERROR;
 }
 
