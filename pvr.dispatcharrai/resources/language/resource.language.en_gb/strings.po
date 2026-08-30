@@ -85,6 +85,14 @@ msgctxt "#30024"
 msgid "How often to re-fetch the channel and group list from Dispatcharr."
 msgstr ""
 
+msgctxt "#30025"
+msgid "Delay before switching channels (seconds)"
+msgstr ""
+
+msgctxt "#30026"
+msgid "Some Dispatcharr/provider setups need a moment to release the previous channel's connection before a new one is requested. Raise this if switching channels fails or times out; set to 0 to disable."
+msgstr ""
+
 msgctxt "#30030"
 msgid "Advanced"
 msgstr ""

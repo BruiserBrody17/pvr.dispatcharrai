@@ -63,6 +63,25 @@ open. If you see one channel play fine and the next one fail, try reproducing
 it at a normal (non-rapid) channel-change pace before assuming it's an addon
 or Dispatcharr bug.
 
+**Update, confirmed against a real user's `kodi.log`:** a normal (non-rapid,
+one-time) channel switch *did* fail -- Kodi's own `CCurlFile` timed out after
+30s trying to open the new channel's `/proxy/ts/stream/{uuid}` URL. Critically,
+that exact URL was tested independently moments later and streamed real,
+sustained data immediately (27MB in 15s) -- so the channel itself wasn't dead;
+the failure was specific to the moment of switching away from the previous
+channel. This is consistent with Dispatcharr's proxy (or the upstream
+provider) needing a brief window to release the old connection before the new
+one succeeds.
+
+As a first, low-risk mitigation (before the bigger architecture change below),
+`GetChannelStreamProperties()` now waits `channel_switch_delay_seconds`
+(default 2, a settings.xml `livetv` category option, 0 disables it) before
+handing Kodi the new URL, giving that release window a chance to pass without
+the addon needing to know anything about Dispatcharr's session state. If this
+turns out not to be enough, or the delay needs to be very long to help, that's
+itself evidence pointing at the heavier fix below rather than just a bigger
+number.
+
 If it turns out Dispatcharr itself *is* holding a channel's upstream slot
 open after Kodi stops watching it (e.g. because Kodi's own disconnect isn't
 detected promptly), the `/proxy/ts/stop/{channel_id}` endpoint above is the
@@ -71,9 +90,7 @@ current stream-URL-passthrough model (`GetChannelStreamProperties()` only)
 to also implementing `OpenLiveStream()`/`CloseLiveStream()` with
 `PVRCapabilities::SetHandlesInputStream(true)`, which hands stream I/O
 lifecycle to the addon instead of Kodi's own player. That's a real
-architecture change, not a one-line fix, and wasn't warranted by what was
-actually observed above -- revisit only if a *non-rapid*, single channel
-switch is confirmed to reliably fail.
+architecture change, not a one-line fix -- try the delay above first.
 
 ## Still unconfirmed (verify before relying on in production)
 

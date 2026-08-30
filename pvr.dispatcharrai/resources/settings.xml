@@ -84,6 +84,15 @@
           </constraints>
           <control type="edit" format="integer" />
         </setting>
+        <setting id="channel_switch_delay_seconds" type="integer" label="30025" help="30026">
+          <level>1</level>
+          <default>2</default>
+          <constraints>
+            <minimum>0</minimum>
+            <maximum>10</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
       </group>
     </category>
 

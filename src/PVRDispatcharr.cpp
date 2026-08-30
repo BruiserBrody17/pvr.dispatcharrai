@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <thread>
 
 using namespace dispatcharr;
 
@@ -23,6 +24,7 @@ dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
   config.verifySsl = kodi::addon::GetSettingBoolean("verify_ssl", true);
   config.timeoutSeconds = kodi::addon::GetSettingInt("timeout", 30);
   config.debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
+  config.channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 2);
   return config;
 }
 
@@ -31,6 +33,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
+  m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 2);
 
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
@@ -251,12 +254,25 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
 PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
                                                       std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
-  std::lock_guard<std::mutex> lock(m_dataMutex);
-  const Channel* ch = FindChannelByUid(static_cast<int>(channel.GetUniqueId()));
-  if (!ch)
-    return PVR_ERROR_INVALID_PARAMETERS;
+  std::string streamUrl;
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    const Channel* ch = FindChannelByUid(static_cast<int>(channel.GetUniqueId()));
+    if (!ch)
+      return PVR_ERROR_INVALID_PARAMETERS;
+    streamUrl = m_client.GetLiveStreamUrl(*ch);
+  }
 
-  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, m_client.GetLiveStreamUrl(*ch));
+  // Some Dispatcharr/upstream-provider setups need a moment to release the
+  // previous channel's connection before a new one is requested -- without
+  // this, switching channels can silently time out even though the new
+  // channel works fine moments later (see docs/API_NOTES.md). This runs
+  // with m_dataMutex already released so it doesn't block other addon
+  // calls in the meantime.
+  if (m_channelSwitchDelaySeconds > 0)
+    std::this_thread::sleep_for(std::chrono::seconds(m_channelSwitchDelaySeconds));
+
+  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
   // Dispatcharr's default proxy output is MPEG-TS; if you've configured an
   // HLS stream profile in Dispatcharr, override this in settings and adapt
