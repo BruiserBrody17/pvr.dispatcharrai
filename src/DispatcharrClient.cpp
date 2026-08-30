@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 
@@ -35,6 +36,11 @@ constexpr const char* kEpgOutputPath = "/output/epg";
 constexpr const char* kRecordingsPath = "/api/channels/recordings/";       // assumed CRUD base
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";   // confirmed to exist
 constexpr const char* kLogosPath = "/api/channels/logos/";
+// Confirmed against a live instance: creates a session-bound catch-up
+// (archived programme) playback URL that stays valid via a sliding idle
+// window for as long as it's actively used, rather than embedding a
+// short-lived JWT directly in the stream URL.
+constexpr const char* kCatchupSessionsPath = "/api/catchup/sessions/";
 
 size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
 {
@@ -304,6 +310,9 @@ bool DispatcharrClient::GetChannels(std::vector<Channel>& out, std::string& erro
     else
       ch.tvgId = FieldOr<std::string>(item, "tvg_id", "");
 
+    ch.catchupEnabled = FieldOr(item, "is_catchup", false);
+    ch.catchupDays = FieldOr(item, "catchup_days", 0);
+
     out.push_back(std::move(ch));
   }
   return true;
@@ -402,6 +411,42 @@ std::string DispatcharrClient::GetLiveStreamUrl(const Channel& channel) const
 std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const
 {
   return BaseUrl() + kLogosPath + std::to_string(logoId) + "/cache/";
+}
+
+bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid,
+                                             time_t programmeStart,
+                                             int durationMinutes,
+                                             std::string& playbackUrlOut,
+                                             std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json body = {
+      {"channel_uuid", channelUuid},
+      {"start", IsoFromTime(programmeStart)},
+  };
+  if (durationMinutes > 0)
+    body["duration"] = std::min(durationMinutes, 480); // API-enforced max
+
+  json response;
+  if (!Request("POST", kCatchupSessionsPath, body, response, error))
+    return false;
+
+  std::string playbackUrl = FieldOr<std::string>(response, "playback_url", "");
+  if (playbackUrl.empty())
+  {
+    error = "Catch-up session response did not contain a playback_url";
+    return false;
+  }
+
+  // Confirmed against a live instance: playback_url is a relative path
+  // (e.g. "/proxy/catchup/{uuid}?session_id=..."), not a full URL.
+  if (playbackUrl.rfind("http://", 0) != 0 && playbackUrl.rfind("https://", 0) != 0)
+    playbackUrl = BaseUrl() + playbackUrl;
+
+  playbackUrlOut = std::move(playbackUrl);
+  return true;
 }
 
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
