@@ -3,7 +3,7 @@
     id="pvr.dispatcharr"
     version="0.1.0"
     name="Dispatcharr PVR Client"
-    provider-name="your-name-here">
+    provider-name="BruiserBrody17">
   <requires>@ADDON_DEPENDS@</requires>
   <extension
       point="kodi.pvrclient"
@@ -18,7 +18,7 @@
     </description>
     <platform>@PLATFORM@</platform>
     <license>GPL-2.0-or-later</license>
-    <source>https://github.com/YOUR-GITHUB-USER/pvr.dispatcharr</source>
+    <source>https://github.com/BruiserBrody17/pvr.dispatcharrai</source>
     <assets>
       <icon>resources/icon.png</icon>
     </assets>
