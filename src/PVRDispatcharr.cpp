@@ -160,7 +160,7 @@ void PVRDispatcharr::EnsureEpgLoaded()
   }
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
-  m_epgByTvgId = std::move(parsed);
+  m_epgByChannelNumber = std::move(parsed);
   m_epgLoadedAt = now;
 }
 
@@ -314,11 +314,13 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
   const Channel* ch = FindChannelByUid(channelUid);
-  if (!ch || ch->tvgId.empty())
+  if (!ch || ch->channelNumber <= 0)
     return PVR_ERROR_NO_ERROR;
 
-  auto it = m_epgByTvgId.find(ch->tvgId);
-  if (it == m_epgByTvgId.end())
+  // Confirmed against a live instance: Dispatcharr's XMLTV export keys
+  // <channel id="..."> by channel_number, not tvg_id (see XmlTvParser.h).
+  auto it = m_epgByChannelNumber.find(std::to_string(ch->channelNumber));
+  if (it == m_epgByChannelNumber.end())
     return PVR_ERROR_NO_ERROR;
 
   for (const auto& entry : it->second)
