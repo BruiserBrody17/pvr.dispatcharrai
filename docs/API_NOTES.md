@@ -24,9 +24,13 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 | XMLTV guide | GET | `/output/epg` -- **its `<channel id="...">` is the channel's `channel_number`, not `tvg_id`** (confirmed: USA Network, `channel_number` 2632 and `tvg_id` "USANetwork.us", appears in the XMLTV as `<channel id="2632">`; checked against two other channels too). This addon originally matched EPG programmes to channels by `tvg_id`, which never matched anything -- see `XmlTvParser.h`. |
 | Live stream | GET | `/proxy/ts/stream/{channel_uuid}` -- confirmed via a real instance that a channel's `uuid` field is accepted here (a wrong identifier would 404 immediately; instead it attempted to reach the upstream source and only failed there) |
 | Stream session management | GET/POST | `/proxy/ts/status`, `/proxy/ts/status/{channel_id}`, `POST /proxy/ts/stop/{channel_id}`, `POST /proxy/ts/change_stream/{channel_id}`, `POST /proxy/ts/next_stream/{channel_id}` -- exist and look relevant to channel-switching reliability, but this addon doesn't currently call any of them (see the "channel switching" note below) |
+| Recordings list/create | GET/POST | `/api/channels/recordings/` -- **bare array** on GET, not `{results:[...]}`. `Recording` has only `id`, `start_time`, `end_time`, `task_id`, `custom_properties`, `channel` -- **no title/subtitle/description/duration/in-progress fields at all.** Those are derived: duration from `end_time - start_time`, in-progress from `start_time <= now < end_time`, and title/subtitle/description read (best-effort, unconfirmed key names) from `custom_properties` on the same `title`/`sub_title`/`description` convention `ProgramData` uses elsewhere in this API. |
+| Recording delete | DELETE | `/api/channels/recordings/{id}/` |
 | Recording playback | GET | `/api/channels/recordings/{id}/file/` (anonymous, Range-seekable) |
-| Series rule evaluation | POST | `/api/channels/series-rules/evaluate/` |
-| Series rules exist | -- | `/api/channels/series-rules/` (CRUD base confirmed to exist) |
+| Series rule evaluation | POST | `/api/channels/series-rules/evaluate/` -- body `{tvg_id}`, both optional |
+| Series rules list | GET | `/api/channels/series-rules/` -- returns **`{"rules": [...]}`**, not a bare array or `{results:[...]}`. Confirmed live (empty instance); exact per-item field names inside `rules` are still unconfirmed -- no populated rule was available to inspect (see permissions note below). |
+| Series rule create | POST | `/api/channels/series-rules/` -- body is `{title, tvg_id?, channel_id?, mode?, title_mode?, description?, description_mode?, untagged_is_new?, epg_source_id?}`. **Not** `{channel, title_pattern}** -- confirmed against the live `SeriesRuleRequest` schema. `channel_id`/`tvg_id` are both optional (channel_id "defaults to lowest-numbered channel for the EPG" if omitted). |
+| Series rule delete | DELETE | `/api/channels/series-rules/?title=...&tvg_id=...&epg_source_id=...` (query params) -- confirmed against the live schema. **There is no `/api/channels/series-rules/{id}/` route**; series rules have no path-addressable id at all. |
 | Catch-up session | POST | `/api/catchup/sessions/` -- body `{channel_uuid, start (ISO-8601), duration (minutes, optional)}`; response's `playback_url` is a **relative path**, prepend `BaseUrl()`. Confirmed end-to-end against a real instance: creates a session-bound URL that streams real MPEG-TS data immediately with no further auth. Per Dispatcharr's own docs, the session stays valid via a 10-minute *sliding* idle window (refreshed by each range/seek request), so unlike embedding a JWT directly in the URL (`GET /proxy/catchup/{uuid}?start=...&token=...`, also confirmed working but not used here), it won't expire mid-playback of a long programme. |
 
 ## Catch-up ("timeshift") playback
@@ -222,16 +226,24 @@ first, previously-working channel failed identically).
 
 ## Still unconfirmed (verify before relying on in production)
 
-- `POST /api/channels/recordings/` -- one-time recording creation. The
-  request body in `DispatcharrClient::CreateOneTimeRecording()`
-  (`channel`, `start_time`, `end_time`, `name`) is a best guess; check the
-  live schema for the recordings endpoint and fix the field names in that
-  one function if they differ.
-- `POST /api/channels/series-rules/` -- series rule creation. Body fields
-  (`channel`, `tvg_id`, `title_pattern`) are likewise a best guess.
-- `Recording.startTime` is currently left at `0` -- the response almost
-  certainly includes an ISO-8601 timestamp field (name unconfirmed); add a
-  small date parser and wire it up in `DispatcharrClient::GetRecordings()`.
+- The exact key names Dispatcharr expects/returns inside a `Recording`'s
+  `custom_properties` for title/subtitle/description. `GetRecordings()`
+  reads `title`/`sub_title`/`description` and `CreateOneTimeRecording()`
+  writes `{"title": ...}` there, both by analogy with `ProgramData`'s field
+  names elsewhere in this API, not from a populated example.
+- The exact shape of one item inside a series-rules list response
+  (`{"rules": [...]}`  is confirmed, but the instance available had zero
+  rules configured, so an individual rule object was never seen). Assumed
+  to mirror the confirmed `SeriesRuleRequest` create fields
+  (`title`, `channel_id`, `tvg_id`, ...).
+- **Recording/series-rule creation returned "You do not have permission to
+  perform this action" for the account used to verify this** (same
+  account that can log in, browse channels, and stream fine) -- this looks
+  like the same restricted/streamer-role tier noted above for login, just
+  gating a different set of endpoints. If timers fail to create even after
+  the field-name fixes above, check the Dispatcharr user's role/permissions
+  before assuming it's another addon bug -- an API key from a
+  full-permission account may be required (see the login note above).
 
 ## How to verify quickly
 

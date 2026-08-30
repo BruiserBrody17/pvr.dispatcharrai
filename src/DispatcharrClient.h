@@ -4,28 +4,46 @@
 // (NOT the Xtream Codes compatibility layer) so that DVR actions taken in
 // Kodi map directly onto Dispatcharr's own recording engine.
 //
-// Confirmed against Dispatcharr's public GitHub issues/release notes and
-// docs at the time this was written:
-//   POST {base}/api/accounts/token/            -> {access, refresh} JWT
-//   POST {base}/api/accounts/token/refresh/     -> {access}
-//   GET  {base}/api/channels/channels/          -> paginated channel list
-//   GET  {base}/api/channels/streams/           -> paginated stream list
-//   GET  {base}/api/channels/logos/{id}/cache/  -> channel logo image
-//   GET  {base}/output/epg                      -> full XMLTV guide document
-//   GET  {base}/proxy/ts/stream/{channel_uuid}  -> live MPEG-TS stream
-//   GET  {base}/api/channels/recordings/{id}/file/  -> recording playback
-//                                                       (Range-seekable, no auth)
-//   POST {base}/api/channels/series-rules/evaluate/ -> evaluate series rules
+// Confirmed against a live instance's own OpenAPI schema (GET /api/schema/)
+// at the time this was written:
+//   POST   {base}/api/accounts/token/                -> {access, refresh} JWT
+//   POST   {base}/api/accounts/token/refresh/         -> {access}
+//   GET    {base}/api/channels/channels/              -> paginated channel list
+//   GET    {base}/api/channels/streams/               -> paginated stream list
+//   GET    {base}/api/channels/logos/{id}/cache/      -> channel logo image
+//   GET    {base}/output/epg                          -> full XMLTV guide document
+//   GET    {base}/proxy/ts/stream/{channel_uuid}      -> live MPEG-TS stream
+//   GET    {base}/api/channels/recordings/            -> bare array of Recording
+//                                                         {id, start_time, end_time,
+//                                                         task_id, custom_properties,
+//                                                         channel} -- NOT title/
+//                                                         subtitle/description/
+//                                                         duration/in_progress, see
+//                                                         GetRecordings() below
+//   POST   {base}/api/channels/recordings/            -> create; body is
+//                                                         {channel, start_time, end_time,
+//                                                         custom_properties?} -- no
+//                                                         title/name field exists
+//   DELETE {base}/api/channels/recordings/{id}/       -> delete one recording
+//   GET    {base}/api/channels/recordings/{id}/file/  -> recording playback
+//                                                         (Range-seekable, no auth)
+//   GET    {base}/api/channels/series-rules/          -> {"rules": [...]}, NOT a bare
+//                                                         array or {results: [...]}
+//   POST   {base}/api/channels/series-rules/          -> body is {title, tvg_id?,
+//                                                         channel_id?, mode?,
+//                                                         title_mode?, ...} -- NOT
+//                                                         {channel, title_pattern}
+//   DELETE {base}/api/channels/series-rules/?title=&tvg_id=&epg_source_id=
+//                                                      -> deletes by query params,
+//                                                         NOT /{id}/ -- series rules
+//                                                         have no path-addressable id
+//   POST   {base}/api/channels/series-rules/evaluate/ -> evaluate series rules
 //
-// NOT independently confirmed against a live Swagger document (Dispatcharr's
-// schema has changed across recent releases) and should be checked against
-// http://<your-server>:9191/swagger/ before relying on them in production:
-//   - Exact create/list/delete routes and payload shape under
-//     /api/channels/recordings/ and /api/channels/series-rules/
-//   - Whether pagination wraps list responses in {results: [...]} (typical
-//     Django REST Framework default, assumed here) or returns a bare array
-//
-// See docs/API_NOTES.md for how to verify/update these against your instance.
+// NOT independently confirmed (the schema shows no example values and the
+// account used to develop this lacked permission to create a live
+// recording/series rule to inspect one): the exact key names inside a
+// Recording's custom_properties, and the exact shape of an item inside a
+// series-rules list response. See docs/API_NOTES.md.
 
 #include <chrono>
 #include <mutex>
@@ -81,13 +99,20 @@ struct ChannelGroup
 struct Recording
 {
   int id = 0;
+  // Dispatcharr's Recording object itself carries no title/subtitle/
+  // description fields at all (confirmed against its live OpenAPI schema:
+  // just id, start_time, end_time, task_id, custom_properties, channel) --
+  // these are read out of custom_properties on a best-effort basis, see
+  // DispatcharrClient.cpp.
   std::string title;
   std::string subtitle;
   std::string description;
   time_t startTime = 0;
+  time_t endTime = 0;
   int durationSeconds = 0;
   int channelId = 0;
-  bool isInProgress = false;
+  bool isInProgress = false; // startTime <= now < endTime
+  bool isUpcoming = false;   // now < startTime (scheduled, not yet started)
 };
 
 // A scheduled recording: either a one-off (isSeries == false) or a
@@ -157,7 +182,10 @@ public:
                         const std::string& tvgId,
                         const std::string& titlePattern,
                         std::string& error);
-  bool DeleteTimerRule(int ruleId, bool isSeries, std::string& error);
+  // Series rules have no numeric id in Dispatcharr's API at all -- they're
+  // deleted by DELETE /api/channels/series-rules/?title=...&tvg_id=...
+  // (confirmed against the live OpenAPI schema), not by path id.
+  bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error);
 
 private:
   std::string BaseUrl() const;
