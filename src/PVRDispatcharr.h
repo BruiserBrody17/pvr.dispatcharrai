@@ -76,7 +76,9 @@ private:
   std::mutex m_dataMutex;
   std::vector<dispatcharr::Channel> m_channels;
   std::vector<dispatcharr::ChannelGroup> m_groups;
-  std::unordered_map<std::string, std::vector<dispatcharr::EpgEntry>> m_epgByTvgId;
+  // Keyed by the XMLTV <channel id="..."> value, which is the channel's
+  // channel_number (not tvg_id -- see XmlTvParser.h).
+  std::unordered_map<std::string, std::vector<dispatcharr::EpgEntry>> m_epgByChannelNumber;
 
   std::chrono::steady_clock::time_point m_channelsLoadedAt{};
   std::chrono::steady_clock::time_point m_epgLoadedAt{};

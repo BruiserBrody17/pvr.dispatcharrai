@@ -133,8 +133,8 @@ bool XmlTvParser::Parse(const std::string& xmlContent,
   for (pugi::xml_node programme : tv.children("programme"))
   {
     EpgEntry entry;
-    entry.channelTvgId = programme.attribute("channel").as_string();
-    if (entry.channelTvgId.empty())
+    entry.channelXmltvId = programme.attribute("channel").as_string();
+    if (entry.channelXmltvId.empty())
       continue;
 
     entry.startTime = ParseXmlTvTime(programme.attribute("start").as_string());
@@ -156,7 +156,7 @@ bool XmlTvParser::Parse(const std::string& xmlContent,
       }
     }
 
-    out[entry.channelTvgId].push_back(std::move(entry));
+    out[entry.channelXmltvId].push_back(std::move(entry));
   }
 
   return true;
