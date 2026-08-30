@@ -28,8 +28,11 @@ This is a first working scaffold, not a finished addon. Implemented:
 - Catch-up/archive playback ("play from guide") for channels whose upstream
   provider supports it, via Dispatcharr's catch-up session API -- see
   `docs/API_NOTES.md` for exactly what this does and doesn't cover (it's
-  per-programme catch-up, not a TVHeadend-style continuous live-timeshift
-  buffer)
+  per-programme catch-up, not a continuous live-timeshift buffer)
+- Optional live TV pause/rewind ("timeshift"), via the separate
+  `inputstream.ffmpegdirect` addon (`enable_live_timeshift` setting, off by
+  default) -- buffered to local disk on the Kodi device, not held
+  server-side by Dispatcharr; see `docs/API_NOTES.md`
 
 Not yet implemented / worth hardening next:
 

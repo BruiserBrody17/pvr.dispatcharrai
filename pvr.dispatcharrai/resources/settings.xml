@@ -93,6 +93,11 @@
           </constraints>
           <control type="edit" format="integer" />
         </setting>
+        <setting id="enable_live_timeshift" type="boolean" label="30027" help="30028">
+          <level>0</level>
+          <default>false</default>
+          <control type="toggle" />
+        </setting>
       </group>
     </category>
 

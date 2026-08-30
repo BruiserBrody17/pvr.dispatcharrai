@@ -92,4 +92,5 @@ private:
   int m_channelRefreshHours = 12;
   int m_epgRefreshHours = 4;
   int m_channelSwitchDelaySeconds = 0;
+  bool m_enableLiveTimeshift = false;
 };

@@ -36,6 +36,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
+  m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
 
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
@@ -298,6 +299,28 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   // HLS stream profile in Dispatcharr, override this in settings and adapt
   // GetLiveStreamUrl() accordingly.
   properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
+
+  // Live pause/rewind ("timeshift"), delegated entirely to the separate
+  // inputstream.ffmpegdirect addon rather than implemented here. Unlike the
+  // catch-up case (see GetEPGTagStreamProperties() below for why that one
+  // was reverted), this is exactly what ffmpegdirect's stream_mode:
+  // timeshift is built for: a genuinely live, continuously arriving source
+  // with no native pause/rewind of its own. It works independent of any
+  // Dispatcharr-side support -- Dispatcharr has no concept matching
+  // TVHeadend's server-side rolling live buffer, so this buffer instead
+  // lives as a local recording on-disk on the Kodi device itself (managed
+  // entirely by ffmpegdirect's own settings: buffer path, length limit,
+  // etc.), not on the Dispatcharr server. See docs/API_NOTES.md.
+  //
+  // Off by default: requires inputstream.ffmpegdirect to actually be
+  // installed, and unlike the catch-up case, getting this wrong here would
+  // break live channel playback entirely, not just catch-up.
+  if (m_enableLiveTimeshift)
+  {
+    properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
+    properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
+    properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+  }
   return PVR_ERROR_NO_ERROR;
 }
 
