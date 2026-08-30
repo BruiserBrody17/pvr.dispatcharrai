@@ -56,6 +56,30 @@ std::string IsoFromTime(time_t t)
   return std::string(buf);
 }
 
+// nlohmann::json's item.value(key, default) only substitutes the default
+// when the key is *absent* -- if the key is present but explicitly JSON
+// null (which Django REST Framework serializers commonly emit for empty
+// nullable fields, e.g. a channel with no logo), converting it to a
+// non-null-supporting type like int throws an uncaught type_error that
+// aborts whatever's parsing the response (confirmed against a real
+// instance: ~0.4% of a 9360-channel list had an explicit `"logo_id": null`).
+// This wraps every field read so a null or wrong-typed value degrades to
+// the default instead of throwing.
+template <typename T>
+T FieldOr(const json& item, const char* key, T defaultValue)
+{
+  if (!item.contains(key) || item[key].is_null())
+    return defaultValue;
+  try
+  {
+    return item[key].template get<T>();
+  }
+  catch (const json::exception&)
+  {
+    return defaultValue;
+  }
+}
+
 } // namespace
 
 DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config)) {}
@@ -188,8 +212,8 @@ bool DispatcharrClient::Login(std::string& error)
     return false;
   }
 
-  m_accessToken = response.value("access", "");
-  m_refreshToken = response.value("refresh", m_refreshToken);
+  m_accessToken = FieldOr<std::string>(response, "access", "");
+  m_refreshToken = FieldOr<std::string>(response, "refresh", m_refreshToken);
   // SimpleJWT's default access-token lifetime is short (often 5 minutes);
   // we don't decode the JWT to read its real `exp`, we just re-authenticate
   // reactively on the next 401 (see Request()). This timestamp is kept only
@@ -215,7 +239,7 @@ bool DispatcharrClient::RefreshAccessToken(std::string& error)
     error = "Refresh response did not contain an access token";
     return false;
   }
-  m_accessToken = response.value("access", "");
+  m_accessToken = FieldOr<std::string>(response, "access", "");
   m_accessTokenExpiry = std::chrono::steady_clock::now() + std::chrono::minutes(4);
   return true;
 }
@@ -253,31 +277,32 @@ bool DispatcharrClient::GetChannels(std::vector<Channel>& out, std::string& erro
   for (const auto& item : list)
   {
     Channel ch;
-    ch.id = item.value("id", 0);
-    ch.uuid = item.value("uuid", "");
-    ch.name = item.value("name", "");
-    ch.channelNumber = item.value("channel_number", item.value("channel_num", 0));
+    ch.id = FieldOr(item, "id", 0);
+    ch.uuid = FieldOr<std::string>(item, "uuid", "");
+    ch.name = FieldOr<std::string>(item, "name", "");
+    ch.channelNumber = FieldOr(item, "channel_number", FieldOr(item, "channel_num", 0));
     // Channels only carry a logo_id (an FK to a separate Logo object);
     // there's no logo_url field directly on the channel (that belongs to
     // the underlying Stream model). Resolve the actual image via
-    // GetChannelLogoUrl(logoId), not a direct URL field.
-    ch.logoId = item.value("logo_id", -1);
+    // GetChannelLogoUrl(logoId), not a direct URL field. logo_id is
+    // explicitly null (not absent) for channels with no logo.
+    ch.logoId = FieldOr(item, "logo_id", -1);
     // Channel group may be a nested object or a bare id depending on the
     // serializer; handle both.
     if (item.contains("channel_group") && item["channel_group"].is_object())
     {
-      ch.groupId = item["channel_group"].value("id", -1);
-      ch.groupName = item["channel_group"].value("name", "");
+      ch.groupId = FieldOr(item["channel_group"], "id", -1);
+      ch.groupName = FieldOr<std::string>(item["channel_group"], "name", "");
     }
     else
     {
-      ch.groupId = item.value("channel_group", item.value("channel_group_id", -1));
+      ch.groupId = FieldOr(item, "channel_group", FieldOr(item, "channel_group_id", -1));
     }
     // EPG linkage: try a nested epg_data object first, then a flat field.
     if (item.contains("epg_data") && item["epg_data"].is_object())
-      ch.tvgId = item["epg_data"].value("tvg_id", "");
+      ch.tvgId = FieldOr<std::string>(item["epg_data"], "tvg_id", "");
     else
-      ch.tvgId = item.value("tvg_id", "");
+      ch.tvgId = FieldOr<std::string>(item, "tvg_id", "");
 
     out.push_back(std::move(ch));
   }
@@ -314,8 +339,8 @@ bool DispatcharrClient::GetChannelGroups(std::vector<ChannelGroup>& out, std::st
   for (const auto& item : list)
   {
     ChannelGroup g;
-    g.id = item.value("id", 0);
-    g.name = item.value("name", "");
+    g.id = FieldOr(item, "id", 0);
+    g.name = FieldOr<std::string>(item, "name", "");
     out.push_back(std::move(g));
   }
   return true;
@@ -391,17 +416,17 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
   for (const auto& item : list)
   {
     Recording r;
-    r.id = item.value("id", 0);
-    r.title = item.value("title", item.value("name", ""));
-    r.subtitle = item.value("subtitle", "");
-    r.description = item.value("description", item.value("summary", ""));
-    r.channelId = item.value("channel", item.value("channel_id", 0));
-    r.isInProgress = item.value("in_progress", item.value("is_recording", false));
+    r.id = FieldOr(item, "id", 0);
+    r.title = FieldOr(item, "title", FieldOr<std::string>(item, "name", ""));
+    r.subtitle = FieldOr<std::string>(item, "subtitle", "");
+    r.description = FieldOr(item, "description", FieldOr<std::string>(item, "summary", ""));
+    r.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
+    r.isInProgress = FieldOr(item, "in_progress", FieldOr(item, "is_recording", false));
     // start_time is assumed ISO-8601; a full implementation should parse
     // this properly (e.g. with a small strptime wrapper) rather than
     // leaving it at 0 -- left as a follow-up, see docs/API_NOTES.md.
     r.startTime = 0;
-    r.durationSeconds = item.value("duration", 0);
+    r.durationSeconds = FieldOr(item, "duration", 0);
     out.push_back(std::move(r));
   }
   return true;
@@ -441,11 +466,11 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
   for (const auto& item : list)
   {
     TimerRule t;
-    t.id = item.value("id", 0);
-    t.channelId = item.value("channel", item.value("channel_id", 0));
-    t.tvgId = item.value("tvg_id", "");
-    t.title = item.value("title", item.value("title_pattern", ""));
-    t.titlePattern = item.value("title_pattern", "");
+    t.id = FieldOr(item, "id", 0);
+    t.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
+    t.tvgId = FieldOr<std::string>(item, "tvg_id", "");
+    t.title = FieldOr(item, "title", FieldOr<std::string>(item, "title_pattern", ""));
+    t.titlePattern = FieldOr<std::string>(item, "title_pattern", "");
     t.isSeries = true;
     out.push_back(std::move(t));
   }
