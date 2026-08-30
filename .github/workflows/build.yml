@@ -79,22 +79,51 @@ jobs:
           path: kodi-source
           fetch-depth: 1
 
-      # NOTE: Kodi's Windows build normally goes through the scripts under
-      # kodi-source/tools/buildsteps/windows rather than a plain `make`
-      # invocation. This step is a best-effort starting point -- check
-      # those scripts against your checked-out Kodi branch and adjust if
-      # this job fails; it's the one part of this workflow not validated
-      # end-to-end.
+      - name: Register addon with the build harness
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path addon-defs/pvr.dispatcharrai | Out-Null
+          "pvr.dispatcharrai file:///${{ github.workspace }}/addons/pvr.dispatcharrai" |
+            Out-File -Encoding ascii addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
+
+      # Windows has no system libcurl, unlike Linux/macOS. Kodi's own
+      # cmake/addons/depends/windows project fetches prebuilt archives listed
+      # as <lib-id> <url> under its prebuilt/ subdirectory and installs them
+      # into ADDON_DEPENDS_PATH -- point that at the same depends directory
+      # the main addon build will look in by default (<BUILD_DIR>/depends),
+      # so a single, unmodified find_package(Kodi)/find_package(CURL) picks
+      # both up together. curl here also needs OpenSSL and zlib to link
+      # (verified by actually running this build -- CURLConfig.cmake pulls
+      # them in transitively).
+      - name: Fetch prebuilt curl/OpenSSL/zlib for Windows
+        shell: pwsh
+        run: |
+          $depends = "${{ github.workspace }}/build/build/depends"
+          $prebuilt = "kodi-source/cmake/addons/depends/windows/prebuilt"
+          "curl http://mirrors.kodi.tv/build-deps/win32/curl-7.67.0-x64-v141-20200105.7z" |
+            Out-File -Encoding ascii "$prebuilt/curl.txt"
+          "openssl http://mirrors.kodi.tv/build-deps/win32/openssl-1.1.1q-x64-v142-20221017.7z" |
+            Out-File -Encoding ascii "$prebuilt/openssl.txt"
+          "zlib http://mirrors.kodi.tv/build-deps/win32/zlib-1.2.11-x64-v141-20200105.7z" |
+            Out-File -Encoding ascii "$prebuilt/zlib.txt"
+          cmake -S kodi-source/cmake/addons/depends/windows -B deps-build -G "Visual Studio 17 2022" -A x64 "-DADDON_DEPENDS_PATH=$depends"
+          cmake --build deps-build --config Release
+          # Remove the registrations before the main build: the generic addon-depends
+          # scan below (add_addon_depends) also globs this same prebuilt/ directory,
+          # and having both declare a target of the same name is a hard configure error.
+          Remove-Item "$prebuilt/curl.txt", "$prebuilt/openssl.txt", "$prebuilt/zlib.txt"
+
       - name: Build addon (CMake, MSVC)
         shell: pwsh
         run: |
-          cmake -S addons/pvr.dispatcharrai -B build `
-            -G "Visual Studio 17 2022" -A x64 `
-            -DADDONS_TO_BUILD=pvr.dispatcharrai `
-            -DADDON_SRC_PREFIX="${{ github.workspace }}/addons" `
-            -DPACKAGE_ZIP=ON `
-            -DPACKAGE_DIR="${{ github.workspace }}/dist"
-          cmake --build build --config Release
+          cmake -S kodi-source/cmake/addons -B build -G "Visual Studio 17 2022" -A x64 `
+            "-DADDONS_TO_BUILD=pvr.dispatcharrai" `
+            "-DADDONS_DEFINITION_DIR=${{ github.workspace }}/addon-defs" `
+            "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install" `
+            "-DPACKAGE_ZIP=ON" `
+            "-DPACKAGE_DIR=${{ github.workspace }}/dist" `
+            "-DBUILD_DIR=${{ github.workspace }}/build/build"
+          cmake --build build --config Release --target package-pvr.dispatcharrai
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

@@ -13,7 +13,7 @@ sandbox doesn't have -- do the actual build with **Claude Code** or your own
 machine/CI. The GitHub Actions workflow in `.github/workflows/build.yml`
 automates the Windows/macOS/Linux steps below on every push.
 
-## Windows / macOS / Linux (x86_64)
+## Linux / macOS (x86_64)
 
 1. Clone a Kodi source tree matching your target Kodi major version (e.g.
    the `Omega` branch for Kodi 21.x, since that's roughly what CoreELEC on
@@ -46,15 +46,79 @@ automates the Windows/macOS/Linux steps below on every push.
      EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=$(pwd)/../dist" \
      PACKAGE=1
    ```
-   On Windows, use Kodi's documented CMake/Visual Studio flow instead of
-   `make`; on macOS, the same `make` invocation works from a shell with
-   Xcode command line tools installed. If a prior run failed partway
-   through, delete `tools/depends/target/binary-addons/.installed-native`
-   first -- the harness touches that marker even after a failed configure,
-   which otherwise makes it skip reconfiguring on the next run.
+   On macOS, this same `make` invocation works from a shell with Xcode
+   command line tools installed; see the next section for Windows, which
+   doesn't have `make` and needs a couple of extra dependency steps. If a
+   prior run failed partway through, delete
+   `tools/depends/target/binary-addons/.installed-native` first -- the
+   harness touches that marker even after a failed configure, which
+   otherwise makes it skip reconfiguring on the next run.
 5. The resulting zip in `../dist` is what you install via Kodi's
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
+
+## Windows (x86_64)
+
+Windows has no `make` and no system libcurl, so this doesn't go through
+`tools/depends/target/binary-addons` -- instead it invokes the same
+underlying `cmake/addons` project that Makefile wraps, directly, with the
+Visual Studio generator. `.github/workflows/build.yml` automates all of
+this; the steps below are what that workflow actually runs; every step here
+was verified against a real build, not just written from Kodi's docs.
+
+1. Clone Kodi and this addon exactly as in steps 1-2 above (Omega branch,
+   this repo checked out under `addons/pvr.dispatcharrai`), and register the
+   addon exactly as in step 3.
+2. Fetch curl and its own dependencies. Windows has no system libcurl, and
+   the prebuilt curl Kodi's own dependency mirror serves needs OpenSSL and
+   zlib to link against (confirmed by actually running this build -- curl's
+   own `CURLConfig.cmake` pulls both in transitively). Point
+   `ADDON_DEPENDS_PATH` at the *same* depends directory the main addon build
+   will look in by default (`<BUILD_DIR>/depends`), so one `find_package`
+   picks up both Kodi's own generated config and these:
+   ```powershell
+   $depends = "$pwd\build\build\depends"
+   $prebuilt = "kodi-source\cmake\addons\depends\windows\prebuilt"
+   "curl http://mirrors.kodi.tv/build-deps/win32/curl-7.67.0-x64-v141-20200105.7z" `
+     | Out-File -Encoding ascii "$prebuilt\curl.txt"
+   "openssl http://mirrors.kodi.tv/build-deps/win32/openssl-1.1.1q-x64-v142-20221017.7z" `
+     | Out-File -Encoding ascii "$prebuilt\openssl.txt"
+   "zlib http://mirrors.kodi.tv/build-deps/win32/zlib-1.2.11-x64-v141-20200105.7z" `
+     | Out-File -Encoding ascii "$prebuilt\zlib.txt"
+   cmake -S kodi-source\cmake\addons\depends\windows -B deps-build -G "Visual Studio 17 2022" -A x64 "-DADDON_DEPENDS_PATH=$depends"
+   cmake --build deps-build --config Release
+   ```
+   Then delete the three `.txt` files you just created. The main build's own
+   generic dependency scan (`add_addon_depends`) also globs this same
+   `prebuilt/` directory, and having both declare a same-named CMake target
+   is a hard configure error -- the files have done their job once the real
+   `.lib`/`.dll` files are sitting in `$depends`.
+3. Configure and build the addon itself. Quote every `-D` argument as one
+   token (`"-DFOO=bar"`, not `-DFOO=bar` split across a line continuation) --
+   PowerShell's backtick line continuation can otherwise truncate a value at
+   the first `.` it contains, which silently turns `pvr.dispatcharrai` into
+   just `pvr`:
+   ```powershell
+   cmake -S kodi-source\cmake\addons -B build -G "Visual Studio 17 2022" -A x64 `
+     "-DADDONS_TO_BUILD=pvr.dispatcharrai" `
+     "-DADDONS_DEFINITION_DIR=$pwd\addon-defs" `
+     "-DCMAKE_INSTALL_PREFIX=$pwd\install" `
+     "-DPACKAGE_ZIP=ON" `
+     "-DPACKAGE_DIR=$pwd\dist" `
+     "-DBUILD_DIR=$pwd\build\build"
+   cmake --build build --config Release --target package-pvr.dispatcharrai
+   ```
+   Don't pass a custom `-DCMAKE_PREFIX_PATH` here even if you're tempted to
+   point it at a separate curl install location: `cmake/addons/CMakeLists.txt`
+   builds that variable's final value via an *unquoted* `${CMAKE_PREFIX_PATH}`
+   expansion, which silently drops every entry but the first when it's a
+   multi-item list. Installing curl straight into the default depends path
+   in step 2, and leaving `CMAKE_PREFIX_PATH` alone here, sidesteps that bug
+   entirely.
+4. The resulting zip in `dist` bundles `libcurl.dll` and `zlib.dll` alongside
+   `pvr.dispatcharrai.dll` (see `CMakeLists.txt`'s `DISPATCHARR_ADDITIONAL_BINARY`),
+   since a standalone Windows install can't assume those are already present
+   the way Kodi's own bundled curl, or Linux's system libcurl, would be.
 
 ## CoreELEC on an ODROID N2+ (aarch64 / Amlogic S922X)
 

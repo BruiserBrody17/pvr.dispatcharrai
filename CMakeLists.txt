@@ -11,6 +11,13 @@ project(pvr.dispatcharrai)
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}")
 
 find_package(Kodi REQUIRED)
+
+# Skip FindCURL's config-mode delegation: some prebuilt curl packages (e.g.
+# Kodi's own Windows dependency) ship a CURLConfig.cmake whose transitive
+# link dependencies (nghttp2) bake in an absolute path from the machine that
+# built the package, which doesn't exist here. Plain module-mode find_path/
+# find_library discovery avoids that.
+set(CURL_NO_CURL_CMAKE ON)
 find_package(CURL REQUIRED)
 
 include(FetchContent)
@@ -59,11 +66,34 @@ set(DISPATCHARR_HEADERS
     src/XmlTvParser.h
 )
 
+# Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
+# isn't reliably populated when CURL is found via a CURLConfig.cmake package
+# (e.g. the prebuilt Windows dependency), so prefer the target when available.
+if(TARGET CURL::libcurl)
+  set(CURL_DEPLIB CURL::libcurl)
+else()
+  set(CURL_DEPLIB ${CURL_LIBRARIES})
+endif()
+
 set(DEPLIBS
-    ${CURL_LIBRARIES}
+    ${CURL_DEPLIB}
     nlohmann_json::nlohmann_json
     pugixml::pugixml
 )
+
+# Unlike Linux (system libcurl.so, resolved against whatever the user's distro
+# already has) and Kodi's own Windows build (which bundles libcurl.dll itself,
+# so it may already be present), a standalone Windows addon zip can't assume
+# the runtime DLLs this was linked against are already on the target machine.
+# Ship the exact ones from the same dependency tree Kodi's own headers came
+# from, so the addon loads regardless of what the host Kodi install carries.
+if(WIN32)
+  get_filename_component(DISPATCHARR_DEPENDS_ROOT "${KODI_INCLUDE_DIR}/../.." ABSOLUTE)
+  set(DISPATCHARR_ADDITIONAL_BINARY
+      ${DISPATCHARR_DEPENDS_ROOT}/bin/libcurl.dll
+      ${DISPATCHARR_DEPENDS_ROOT}/bin/zlib.dll
+  )
+endif()
 
 build_addon(pvr.dispatcharrai DISPATCHARR DEPLIBS)
 
