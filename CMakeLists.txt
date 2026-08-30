@@ -34,6 +34,12 @@ FetchContent_Declare(
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(pugixml)
 
+# BUILD_SHARED_LIBS is a CACHE variable, so the OFF forced above for pugixml
+# would otherwise also apply to build_addon()'s own add_library() call below,
+# silently producing a static pvr.dispatcharr.a instead of the shared object
+# Kodi actually loads.
+set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+
 include_directories(
   ${KODI_INCLUDE_DIR}/.. # KODI_INCLUDE_DIR already ends in "kodi", but addon sources
                          # #include <kodi/...>; pvr.hts's CMakeLists does the same.
