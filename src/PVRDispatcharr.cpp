@@ -37,6 +37,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
+  m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
@@ -320,6 +321,13 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
     properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
     properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
     properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+  }
+  if (m_debugLogging)
+  {
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: GetChannelStreamProperties: returning %zu properties",
+              properties.size());
+    for (const auto& p : properties)
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai:   prop %s = %s", p.GetName().c_str(), p.GetValue().c_str());
   }
   return PVR_ERROR_NO_ERROR;
 }
