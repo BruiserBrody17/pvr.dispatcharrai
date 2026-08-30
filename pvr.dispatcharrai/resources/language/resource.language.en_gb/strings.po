@@ -93,6 +93,14 @@ msgctxt "#30026"
 msgid "Off (0) by default. If switching channels fails or times out, first check whether your Dispatcharr host resolves to an unreachable IPv6 address -- that's the far more common cause. Only raise this if a specific Dispatcharr/provider setup genuinely needs a moment between switches."
 msgstr ""
 
+msgctxt "#30027"
+msgid "Use inputstream.ffmpegdirect for catch-up playback"
+msgstr ""
+
+msgctxt "#30028"
+msgid "Gives more reliable seeking when playing a past programme from the guide, and makes it behave more like live TV. Requires the separate inputstream.ffmpegdirect addon (Kodi's official repository) to be installed -- turn this off if you don't have it, or catch-up playback won't start."
+msgstr ""
+
 msgctxt "#30030"
 msgid "Advanced"
 msgstr ""

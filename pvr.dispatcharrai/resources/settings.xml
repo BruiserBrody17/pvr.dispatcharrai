@@ -93,6 +93,11 @@
           </constraints>
           <control type="edit" format="integer" />
         </setting>
+        <setting id="use_ffmpegdirect_catchup" type="boolean" label="30027" help="30028">
+          <level>0</level>
+          <default>true</default>
+          <control type="toggle" />
+        </setting>
       </group>
     </category>
 
