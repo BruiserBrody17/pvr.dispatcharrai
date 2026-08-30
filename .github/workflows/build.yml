@@ -54,8 +54,19 @@ jobs:
             ADDONS="pvr.dispatcharrai" \
             ADDONS_DEFINITION_DIR="${{ github.workspace }}/addon-defs" \
             PREFIX="${{ github.workspace }}/install" \
-            EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON -DPACKAGE_DIR=${{ github.workspace }}/dist" \
+            EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON" \
             PACKAGE=1
+
+      # -DPACKAGE_DIR doesn't actually redirect CPack's output for this
+      # harness (confirmed: the run log shows CPack still writing the zip
+      # deep inside the addon's own ExternalProject build tree regardless)
+      # -- PACKAGE_ZIP=ON alone is enough to make CPack build it, so just
+      # find it afterward rather than depending on an unhonored variable.
+      - name: Collect built zip
+        run: |
+          mkdir -p dist
+          find kodi-source/tools/depends/target/binary-addons -name 'addon-pvr.dispatcharrai-*.zip' -exec cp {} dist/ \;
+          ls -la dist
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
