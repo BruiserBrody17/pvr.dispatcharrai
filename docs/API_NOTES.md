@@ -96,12 +96,22 @@ original flakiness). Root-caused by reading ffmpegdirect's actual source
   to be handled entirely via HTTP Range on the byte stream.
 
 Neither of ffmpegdirect's specialized modes matches Dispatcharr's actual
-catch-up URL shape (one complete, Range-seekable file per programme), so
-the addon now plays the catch-up URL directly via
-`PVR_STREAM_PROPERTY_STREAMURL` -- the same mechanism as live channels --
-plus `PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE` (a plain Kodi-core flag,
-unrelated to ffmpegdirect, that just nudges Kodi's own UI to treat the
-session more like live TV). Seeking precision on raw MPEG-TS via Kodi's
+catch-up URL shape (one complete, Range-seekable file per programme).
+
+Also tried and reverted alongside it: `PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE`
+(a plain Kodi-core flag, unrelated to ffmpegdirect) to make the OSD feel
+more like live TV. Per Kodi's own PVR client header
+(`xbmc/pvr/addons/PVRClient.h`), setting it makes Kodi call back into
+`GetChannelStreamProperties()` -- the *live-channel* path -- instead of
+just using the catch-up URL returned from `GetEPGTagStreamProperties()`.
+That's the live-channel code path, not built for a static archived file,
+and made seeking worse, not better. Confirmed by removing it: seeking
+returned to the original (flaky-but-present) behavior.
+
+So the addon now plays the catch-up URL directly via
+`PVR_STREAM_PROPERTY_STREAMURL` -- exactly the same three properties as
+the original catch-up implementation, before either of these two attempts
+at improving seek reliability. Seeking precision on raw MPEG-TS via Kodi's
 built-in PCR/bitrate-based estimation remains inherently approximate; no
 further improvement path has been identified without a backend change
 (e.g. Dispatcharr transcoding catch-up to a seek-friendly container/format,
