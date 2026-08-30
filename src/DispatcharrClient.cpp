@@ -25,8 +25,12 @@ namespace
 constexpr const char* kTokenPath = "/api/accounts/token/";
 constexpr const char* kTokenRefreshPath = "/api/accounts/token/refresh/";
 constexpr const char* kChannelsPath = "/api/channels/channels/";
-constexpr const char* kChannelGroupsPath = "/api/channels/channel-groups/"; // assumed
-constexpr const char* kChannelGroupsPathFallback = "/api/channels/groups/"; // assumed alternate
+// Confirmed against a live instance's own OpenAPI schema (GET /api/schema/).
+// The old primary guess, /api/channels/channel-groups/, doesn't exist at all
+// -- Dispatcharr's SPA catches unmatched routes and serves index.html for it,
+// which returned HTTP 200 but wasn't JSON, so it always failed to parse.
+constexpr const char* kChannelGroupsPath = "/api/channels/groups/";
+constexpr const char* kChannelGroupsPathFallback = "/api/channels/channel-groups/"; // pre-confirmation guess, kept as a fallback in case older Dispatcharr versions differ
 constexpr const char* kEpgOutputPath = "/output/epg";
 constexpr const char* kRecordingsPath = "/api/channels/recordings/";       // assumed CRUD base
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";   // confirmed to exist
