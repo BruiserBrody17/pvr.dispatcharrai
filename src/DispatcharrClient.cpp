@@ -26,6 +26,7 @@ constexpr const char* kTokenPath = "/api/accounts/token/";
 constexpr const char* kTokenRefreshPath = "/api/accounts/token/refresh/";
 constexpr const char* kChannelsPath = "/api/channels/channels/";
 constexpr const char* kChannelGroupsPath = "/api/channels/channel-groups/"; // assumed
+constexpr const char* kChannelGroupsPathFallback = "/api/channels/groups/"; // assumed alternate
 constexpr const char* kEpgOutputPath = "/output/epg";
 constexpr const char* kRecordingsPath = "/api/channels/recordings/";       // assumed CRUD base
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";   // confirmed to exist
@@ -283,9 +284,19 @@ bool DispatcharrClient::GetChannelGroups(std::vector<ChannelGroup>& out, std::st
   if (!EnsureAuthenticated(error))
     return false;
 
+  // Neither path was independently confirmed against a live Swagger doc
+  // (see docs/API_NOTES.md); try the primary one and fall back to the
+  // alternate on failure rather than guessing wrong and going silent.
   json response;
   if (!Request("GET", kChannelGroupsPath, json(), response, error))
-    return false;
+  {
+    std::string fallbackError;
+    if (!Request("GET", kChannelGroupsPathFallback, json(), response, fallbackError))
+    {
+      error += " / " + fallbackError;
+      return false;
+    }
+  }
 
   const json& list = response.contains("results") ? response["results"] : response;
   if (!list.is_array())

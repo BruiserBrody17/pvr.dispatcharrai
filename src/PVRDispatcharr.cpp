@@ -100,14 +100,16 @@ void PVRDispatcharr::EnsureChannelsLoaded()
   std::vector<ChannelGroup> groups;
   std::string error;
   bool ok = m_client.GetChannels(channels, error);
-  if (ok)
-    ok = m_client.GetChannelGroups(groups, error) || true; // groups are best-effort
-
   if (!ok)
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load channels: %s", error.c_str());
     return;
   }
+
+  // Groups are best-effort: a channel list is still useful without them.
+  std::string groupsError;
+  if (!m_client.GetChannelGroups(groups, groupsError))
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load channel groups: %s", groupsError.c_str());
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_channels = std::move(channels);
