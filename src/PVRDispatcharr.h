@@ -47,6 +47,13 @@ public:
                              time_t start,
                              time_t end,
                              kodi::addon::PVREPGTagsResultSet& results) override;
+  // "Play from guide" for a past/currently-airing programme, backed by
+  // Dispatcharr's catch-up/archive feature (see docs/API_NOTES.md) --
+  // per-channel and dependent on the upstream provider's own archive, not
+  // a continuous rolling live-timeshift buffer for every channel.
+  PVR_ERROR IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bool& isPlayable) override;
+  PVR_ERROR GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
+                                      std::vector<kodi::addon::PVRStreamProperty>& properties) override;
 
   // --- Recordings ---
   PVR_ERROR GetRecordingsAmount(bool deleted, int& amount) override;

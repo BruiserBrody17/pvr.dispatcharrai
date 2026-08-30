@@ -25,6 +25,11 @@ This is a first working scaffold, not a finished addon. Implemented:
 - Recording listing, playback, and deletion
 - One-time and series timers, backed by Dispatcharr's recording and
   series-rule endpoints
+- Catch-up/archive playback ("play from guide") for channels whose upstream
+  provider supports it, via Dispatcharr's catch-up session API -- see
+  `docs/API_NOTES.md` for exactly what this does and doesn't cover (it's
+  per-programme catch-up, not a TVHeadend-style continuous live-timeshift
+  buffer)
 
 Not yet implemented / worth hardening next:
 
