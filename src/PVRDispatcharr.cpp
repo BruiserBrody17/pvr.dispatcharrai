@@ -36,6 +36,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
+  m_useFfmpegDirectForCatchup = kodi::addon::GetSettingBoolean("use_ffmpegdirect_catchup", true);
 
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
@@ -393,6 +394,36 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, playbackUrl);
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
   properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
+
+  // Kodi's own generic MPEG-TS-over-HTTP seeking (plain byte-range requests
+  // through CCurlFile/FFmpeg) estimates byte-position-from-time via internal
+  // PCR/bitrate sampling, which is a known source of unreliable seeking --
+  // confirmed this isn't a Dispatcharr-side issue (its catch-up endpoint
+  // handles arbitrary Range requests correctly and consistently, verified
+  // against a real instance). inputstream.ffmpegdirect replaces Kodi's seek
+  // handling with logic built for exactly this. "timeshift" mode (a local
+  // buffer over one already-seekable URL) is the right fit here, not
+  // "catchup" mode -- that one's built around reconstructing a *different*
+  // URL per seek via a format string, which would force falling back to
+  // embedding a JWT directly in the URL (since ffmpegdirect can't call back
+  // into this addon to refresh our session), reintroducing the mid-playback
+  // token-expiry risk the session-based flow above specifically avoids.
+  //
+  // Requires the separate inputstream.ffmpegdirect addon to actually be
+  // installed (Kodi's official repository); if it isn't, this property
+  // would just fail to open the stream at all, so it's opt-out-able.
+  if (m_useFfmpegDirectForCatchup)
+  {
+    properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
+    properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
+    properties.emplace_back("inputstream.ffmpegdirect.default_url", playbackUrl);
+    properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "false");
+    // Lets Kodi's own UI treat this more like live TV (its OSD, programme
+    // skipping) rather than a static VOD file -- a step toward the live-TV
+    // rewind experience without needing the addon to manage stream I/O itself.
+    properties.emplace_back(PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE, "true");
+    properties.emplace_back("inputstream.ffmpegdirect.playback_as_live", "true");
+  }
   return PVR_ERROR_NO_ERROR;
 }
 

@@ -59,6 +59,41 @@ actually is, since it's easy to conflate with TVHeadend-style timeshifting:
   *actual* current archive depth per programme, so this is a best-effort
   window check, not a guarantee the archive still has that exact programme.
 
+### Seeking reliability during catch-up playback
+
+Reported as unreliable in practice. Isolated the cause by testing the raw
+HTTP mechanics directly against a live instance: the catch-up endpoint's
+`Accept-Ranges`/`Content-Range` handling is correct and fast at every offset
+tried (six different large offsets across a 2.5GB archive file, all `206`,
+all under 2s, verified the returned bytes actually differ between offsets).
+So the unreliability isn't Dispatcharr's HTTP layer -- it's Kodi's own
+generic MPEG-TS-over-HTTP seeking (plain `CCurlFile` + FFmpeg demuxer),
+which estimates byte-position-from-time via internal PCR/bitrate sampling, a
+well-known source of imprecise/flaky seeking for this content type in
+general, independent of the server.
+
+The fix applied: `GetEPGTagStreamProperties()` now routes catch-up playback
+through the separate `inputstream.ffmpegdirect` addon (real Kodi addon,
+official repository -- not something this addon bundles or replaces),
+which has its own, more robust seek handling. Specifically **`stream_mode:
+timeshift`**, not `catchup`: ffmpegdirect's `catchup` mode is built around
+reconstructing a *different* URL per seek via a format string (for
+providers whose catch-up API needs a new request per time offset), which
+doesn't fit here -- our catch-up URL is a single session-bound URL that
+already supports normal Range-based seeking (confirmed above), and using
+`catchup` mode would force embedding a JWT directly in the URL instead
+(ffmpegdirect can't call back into this addon to refresh a session
+mid-playback), reintroducing exactly the token-expiry-mid-playback problem
+the session-based flow was chosen to avoid. `timeshift` mode is described
+in ffmpegdirect's own docs as a local buffer over one already-seekable URL,
+which is what we actually have.
+
+This requires the user to separately install `inputstream.ffmpegdirect`
+(Settings -> Add-ons -> Install from repository -> VideoPlayer InputStream);
+if it's not installed, `PVR_STREAM_PROPERTY_INPUTSTREAM` pointing at a
+missing addon would fail to open the stream at all, which is why it's
+gated behind the `use_ffmpegdirect_catchup` setting (default on).
+
 ### Confirmed channel JSON fields (`GET /api/channels/channels/`)
 
 The response is a **bare JSON array**, not paginated/wrapped in
