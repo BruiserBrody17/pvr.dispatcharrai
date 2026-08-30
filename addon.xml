@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon
+    id="pvr.dispatcharr"
+    version="0.1.0"
+    name="Dispatcharr PVR Client"
+    provider-name="your-name-here">
+  <requires>@ADDON_DEPENDS@</requires>
+  <extension
+      point="kodi.pvrclient"
+      library_@PLATFORM@="@LIBRARY_FILENAME@"/>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Kodi Live TV and DVR client for Dispatcharr</summary>
+    <description lang="en_GB">
+      Connects Kodi's Live TV / PVR features directly to a self-hosted
+      Dispatcharr instance: live channels, EPG, and DVR (scheduled and
+      series recordings) using Dispatcharr's own backend, not a
+      third-party compatibility layer.
+    </description>
+    <platform>@PLATFORM@</platform>
+    <license>GPL-2.0-or-later</license>
+    <source>https://github.com/YOUR-GITHUB-USER/pvr.dispatcharr</source>
+    <assets>
+      <icon>resources/icon.png</icon>
+    </assets>
+  </extension>
+</addon>
