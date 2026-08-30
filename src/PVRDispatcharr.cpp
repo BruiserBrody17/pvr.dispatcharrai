@@ -473,8 +473,9 @@ PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
   std::string error;
   if (!m_client.GetRecordings(recordings, error))
     return PVR_ERROR_SERVER_ERROR;
-  amount = static_cast<int>(std::count_if(recordings.begin(), recordings.end(),
-                                          [](const Recording& r) { return !r.isInProgress; }));
+  amount = static_cast<int>(
+      std::count_if(recordings.begin(), recordings.end(),
+                    [](const Recording& r) { return !r.isInProgress && !r.isUpcoming; }));
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -493,6 +494,11 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
 
   for (const auto& rec : recordings)
   {
+    // Scheduled and in-progress recordings are surfaced via GetTimers()
+    // instead; only fully-finished ones belong here (must match
+    // GetRecordingsAmount()'s filter above).
+    if (rec.isInProgress || rec.isUpcoming)
+      continue;
     kodi::addon::PVRRecording recording;
     recording.SetRecordingId(std::to_string(rec.id));
     recording.SetTitle(rec.title);
@@ -562,8 +568,9 @@ PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
   std::string error;
   m_client.GetRecordings(recordings, error);
   m_client.GetTimerRules(rules, error);
-  int scheduled = static_cast<int>(
-      std::count_if(recordings.begin(), recordings.end(), [](const Recording& r) { return r.isInProgress; }));
+  int scheduled = static_cast<int>(std::count_if(
+      recordings.begin(), recordings.end(),
+      [](const Recording& r) { return r.isInProgress || r.isUpcoming; }));
   amount = scheduled + static_cast<int>(rules.size());
   return PVR_ERROR_NO_ERROR;
 }
@@ -577,16 +584,17 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   {
     for (const auto& rec : recordings)
     {
-      if (!rec.isInProgress)
-        continue; // completed recordings are surfaced via GetRecordings(), not as timers
+      // Completed recordings are surfaced via GetRecordings(), not as timers.
+      if (!rec.isInProgress && !rec.isUpcoming)
+        continue;
       kodi::addon::PVRTimer timer;
       timer.SetClientIndex(static_cast<unsigned int>(rec.id));
       timer.SetTimerType(kTimerTypeOneTime);
       timer.SetTitle(rec.title);
       timer.SetClientChannelUid(rec.channelId);
       timer.SetStartTime(rec.startTime);
-      timer.SetEndTime(rec.startTime + rec.durationSeconds);
-      timer.SetState(PVR_TIMER_STATE_RECORDING);
+      timer.SetEndTime(rec.endTime);
+      timer.SetState(rec.isInProgress ? PVR_TIMER_STATE_RECORDING : PVR_TIMER_STATE_SCHEDULED);
       results.Add(timer);
     }
   }
@@ -642,12 +650,27 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
 PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete)
 {
   bool isSeries = (timer.GetClientIndex() & 0x40000000) != 0;
-  int id = static_cast<int>(timer.GetClientIndex() & ~0x40000000u);
-
   std::string error;
-  if (!m_client.DeleteTimerRule(id, isSeries, error))
+  bool ok;
+  if (isSeries)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete timer %d: %s", id, error.c_str());
+    // Series rules have no numeric id in Dispatcharr's API -- they're
+    // deleted by title + tvg_id, the same identity AddTimer() used to
+    // create them (see CreateSeriesRule() above).
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
+    std::string tvgId = ch ? ch->tvgId : "";
+    ok = m_client.DeleteSeriesRule(timer.GetTitle(), tvgId, error);
+  }
+  else
+  {
+    int id = static_cast<int>(timer.GetClientIndex() & ~0x40000000u);
+    ok = m_client.DeleteRecording(id, error);
+  }
+
+  if (!ok)
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerTimerUpdate();

@@ -33,8 +33,10 @@ constexpr const char* kChannelsPath = "/api/channels/channels/";
 constexpr const char* kChannelGroupsPath = "/api/channels/groups/";
 constexpr const char* kChannelGroupsPathFallback = "/api/channels/channel-groups/"; // pre-confirmation guess, kept as a fallback in case older Dispatcharr versions differ
 constexpr const char* kEpgOutputPath = "/output/epg";
-constexpr const char* kRecordingsPath = "/api/channels/recordings/";       // assumed CRUD base
-constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";   // confirmed to exist
+// Both confirmed against a live instance's own OpenAPI schema -- see the
+// endpoint/payload notes in DispatcharrClient.h.
+constexpr const char* kRecordingsPath = "/api/channels/recordings/";
+constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";
 constexpr const char* kLogosPath = "/api/channels/logos/";
 // Confirmed against a live instance: creates a session-bound catch-up
 // (archived programme) playback URL that stays valid via a sliding idle
@@ -60,6 +62,59 @@ std::string IsoFromTime(time_t t)
 #endif
   std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmVal);
   return std::string(buf);
+}
+
+// Portable timegm(): interprets a struct tm as UTC and returns a time_t,
+// without touching the process-wide TZ setting (unlike mktime()).
+time_t PortableTimeGm(struct tm* tmVal)
+{
+#if defined(_WIN32)
+  return _mkgmtime(tmVal);
+#else
+  return timegm(tmVal);
+#endif
+}
+
+// Parses the "YYYY-MM-DDTHH:MM:SS" prefix of a Dispatcharr date-time field
+// (e.g. "2026-08-30T10:55:01Z" or "...+00:00"); any trailing fractional
+// seconds/offset is ignored, consistent with every timestamp elsewhere in
+// this API being UTC-normalized already (see IsoFromTime() above).
+time_t TimeFromIso(const std::string& isoStr)
+{
+  if (isoStr.size() < 19)
+    return 0;
+
+  struct tm tmVal{};
+  try
+  {
+    tmVal.tm_year = std::stoi(isoStr.substr(0, 4)) - 1900;
+    tmVal.tm_mon = std::stoi(isoStr.substr(5, 2)) - 1;
+    tmVal.tm_mday = std::stoi(isoStr.substr(8, 2));
+    tmVal.tm_hour = std::stoi(isoStr.substr(11, 2));
+    tmVal.tm_min = std::stoi(isoStr.substr(14, 2));
+    tmVal.tm_sec = std::stoi(isoStr.substr(17, 2));
+  }
+  catch (const std::exception&)
+  {
+    return 0;
+  }
+  return PortableTimeGm(&tmVal);
+}
+
+// URL-encodes a query parameter value (titles/tvg_ids can contain spaces,
+// '&', etc.). curl_easy_escape needs a handle but doesn't use it for
+// anything beyond the escape itself, so a scratch one is fine here.
+std::string UrlEncode(const std::string& value)
+{
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return value;
+  char* escaped = curl_easy_escape(curl, value.c_str(), static_cast<int>(value.size()));
+  std::string result = escaped ? escaped : value;
+  if (escaped)
+    curl_free(escaped);
+  curl_easy_cleanup(curl);
+  return result;
 }
 
 // nlohmann::json's item.value(key, default) only substitutes the default
@@ -465,21 +520,35 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
     return false;
   }
 
+  time_t now = time(nullptr);
   out.clear();
   for (const auto& item : list)
   {
     Recording r;
     r.id = FieldOr(item, "id", 0);
-    r.title = FieldOr(item, "title", FieldOr<std::string>(item, "name", ""));
-    r.subtitle = FieldOr<std::string>(item, "subtitle", "");
-    r.description = FieldOr(item, "description", FieldOr<std::string>(item, "summary", ""));
     r.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
-    r.isInProgress = FieldOr(item, "in_progress", FieldOr(item, "is_recording", false));
-    // start_time is assumed ISO-8601; a full implementation should parse
-    // this properly (e.g. with a small strptime wrapper) rather than
-    // leaving it at 0 -- left as a follow-up, see docs/API_NOTES.md.
-    r.startTime = 0;
-    r.durationSeconds = FieldOr(item, "duration", 0);
+    r.startTime = TimeFromIso(FieldOr<std::string>(item, "start_time", ""));
+    r.endTime = TimeFromIso(FieldOr<std::string>(item, "end_time", ""));
+    r.durationSeconds =
+        (r.endTime > r.startTime) ? static_cast<int>(r.endTime - r.startTime) : 0;
+    r.isInProgress = r.startTime > 0 && r.startTime <= now && now < r.endTime;
+    r.isUpcoming = r.startTime > now;
+
+    // Dispatcharr's Recording object has no title/subtitle/description
+    // fields of its own (confirmed against the live schema); the closest
+    // equivalent, ProgramData (EPG program search results), uses
+    // title/sub_title/description, so custom_properties is read on that
+    // same convention as a best effort -- not independently confirmed
+    // against a real populated recording, see DispatcharrClient.h.
+    const json& custom = item.contains("custom_properties") ? item["custom_properties"] : json();
+    if (custom.is_object())
+    {
+      r.title = FieldOr<std::string>(custom, "title", "");
+      r.subtitle = FieldOr<std::string>(custom, "sub_title", "");
+      r.description = FieldOr<std::string>(custom, "description", "");
+    }
+    if (r.title.empty())
+      r.title = "Recording " + std::to_string(r.id);
     out.push_back(std::move(r));
   }
   return true;
@@ -508,7 +577,11 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
   if (!Request("GET", kSeriesRulesPath, json(), response, error))
     return false;
 
-  const json& list = response.contains("results") ? response["results"] : response;
+  // Confirmed against a live instance: the response is {"rules": [...]},
+  // not a bare array and not the usual DRF {"results": [...]} wrapper.
+  const json& list = response.contains("rules")     ? response["rules"]
+                      : response.contains("results") ? response["results"]
+                                                      : response;
   if (!list.is_array())
   {
     error = "Unexpected series-rules response shape";
@@ -519,11 +592,16 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
   for (const auto& item : list)
   {
     TimerRule t;
+    // Exact per-rule field names aren't confirmed (the account available
+    // while developing this lacked permission to create a series rule to
+    // inspect one) -- "title"/"channel_id" match the confirmed
+    // SeriesRuleRequest create payload, kept alongside the older assumed
+    // names as fallbacks in case the list response shape differs.
     t.id = FieldOr(item, "id", 0);
-    t.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
+    t.channelId = FieldOr(item, "channel_id", FieldOr(item, "channel", 0));
     t.tvgId = FieldOr<std::string>(item, "tvg_id", "");
     t.title = FieldOr(item, "title", FieldOr<std::string>(item, "title_pattern", ""));
-    t.titlePattern = FieldOr<std::string>(item, "title_pattern", "");
+    t.titlePattern = FieldOr<std::string>(item, "title_pattern", t.title);
     t.isSeries = true;
     out.push_back(std::move(t));
   }
@@ -536,15 +614,19 @@ bool DispatcharrClient::CreateOneTimeRecording(
   if (!EnsureAuthenticated(error))
     return false;
 
-  // Payload shape is a best-effort guess based on Django REST Framework
-  // conventions and public issue reports; verify field names against your
-  // instance's /swagger/ before relying on this (see docs/API_NOTES.md).
+  // Confirmed against the live Recording schema: channel/start_time/end_time
+  // are the only real fields besides the server-assigned id/task_id.
+  // There is no title/name field -- Dispatcharr's Recording object doesn't
+  // carry one at all (see GetRecordings() above), so the best this can do
+  // is stash it in custom_properties on the same convention used to read
+  // it back; not confirmed the server actually honors that key on write.
   json body = {
       {"channel", channelId},
       {"start_time", IsoFromTime(start)},
       {"end_time", IsoFromTime(end)},
-      {"name", title},
   };
+  if (!title.empty())
+    body["custom_properties"] = json{{"title", title}};
   json response;
   return Request("POST", kRecordingsPath, body, response, error);
 }
@@ -555,11 +637,17 @@ bool DispatcharrClient::CreateSeriesRule(
   if (!EnsureAuthenticated(error))
     return false;
 
+  // Confirmed against the live SeriesRuleRequest schema: "title" and
+  // "channel_id" (not "title_pattern"/"channel"). tvg_id is genuinely
+  // optional ("omit to match across all channels") so it's only sent when
+  // non-empty rather than risking an empty string being read as an
+  // explicit "match only channels with a blank tvg_id" filter.
   json body = {
-      {"channel", channelId},
-      {"tvg_id", tvgId},
-      {"title_pattern", titlePattern},
+      {"channel_id", channelId},
+      {"title", titlePattern},
   };
+  if (!tvgId.empty())
+    body["tvg_id"] = tvgId;
   json response;
   if (!Request("POST", kSeriesRulesPath, body, response, error))
     return false;
@@ -575,13 +663,18 @@ bool DispatcharrClient::CreateSeriesRule(
   return true;
 }
 
-bool DispatcharrClient::DeleteTimerRule(int ruleId, bool isSeries, std::string& error)
+bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::string& tvgId,
+                                         std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
+  // Confirmed against the live schema: series rules are deleted by
+  // title + tvg_id query params, not a path id -- there is no
+  // /api/channels/series-rules/{id}/ route.
+  std::string path = std::string(kSeriesRulesPath) + "?title=" + UrlEncode(title);
+  if (!tvgId.empty())
+    path += "&tvg_id=" + UrlEncode(tvgId);
   json response;
-  const char* base = isSeries ? kSeriesRulesPath : kRecordingsPath;
-  std::string path = std::string(base) + std::to_string(ruleId) + "/";
   return Request("DELETE", path, json(), response, error);
 }
 
