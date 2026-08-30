@@ -35,7 +35,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(pugixml)
 
 include_directories(
-  ${KODI_INCLUDE_DIR}
+  ${KODI_INCLUDE_DIR}/.. # KODI_INCLUDE_DIR already ends in "kodi", but addon sources
+                         # #include <kodi/...>; pvr.hts's CMakeLists does the same.
   ${CURL_INCLUDE_DIRS}
 )
 
