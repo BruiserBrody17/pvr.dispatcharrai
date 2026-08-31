@@ -152,6 +152,7 @@ struct TimerRule
   time_t startTime = 0;
   time_t endTime = 0;
   bool isSeries = false;
+  bool recordNewOnly = false; // Dispatcharr's mode == "new" vs "all"
 };
 
 // Thin, synchronous REST client. Callers (PVRDispatcharr) are responsible
@@ -231,9 +232,14 @@ public:
                                time_t end,
                                const std::string& title,
                                std::string& error);
+  // recordNewOnly maps to Dispatcharr's SeriesRuleRequest.mode ("new" vs
+  // the server default "all") -- confirmed against the live schema: "all"
+  // records every matching episode including reruns, "new" only
+  // first-run ones.
   bool CreateSeriesRule(int channelId,
                         const std::string& tvgId,
                         const std::string& titlePattern,
+                        bool recordNewOnly,
                         std::string& error);
   // Series rules have no numeric id in Dispatcharr's API at all -- they're
   // deleted by DELETE /api/channels/series-rules/?title=...&tvg_id=...
