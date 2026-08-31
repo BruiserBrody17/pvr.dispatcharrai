@@ -287,6 +287,27 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   recording by the time `AddTimer()` returns. Confirmed by waiting 90+
   seconds after creating a recording with the old code -- it never
   appeared until a full restart. Now calls both triggers.
+- **A completed recording still showed as "Recording &lt;id&gt;" instead
+  of its real title, indefinitely -- even after the recording finished.**
+  Confirmed directly against the server for a real, fully-completed
+  recording: `custom_properties.program.title` was correct there the
+  whole time. The problem is on Kodi's side: Dispatcharr only populates
+  `custom_properties` a moment *after* a recording actually starts (right
+  at creation it's `{}`), but nothing prompts Kodi to look at a *already
+  known* recording's metadata again once it's cached it -- confirmed
+  nothing else about the recording being displayed differently at any
+  point in its life re-triggers a refetch, so whatever `GetRecordings()`
+  returned on Kodi's very first look (our `"Recording <id>"` fallback,
+  since enrichment hadn't happened yet) stuck around forever, completed
+  recording or not. The `TriggerRecordingUpdate()` call in `AddTimer()`
+  fired immediately, before that enrichment window, which is exactly
+  what caused Kodi's first look to be too early. Fixed with a second,
+  delayed (5s) `TriggerRecordingUpdate()` call for one-time recordings,
+  giving Dispatcharr time to populate the title before Kodi's next
+  fetch. If you already have a recording stuck showing "Recording
+  &lt;id&gt;" from before this fix, its title is genuinely correct
+  server-side already -- a plain Kodi restart will pick it up, no need
+  to touch anything on Dispatcharr's side.
 - **A recording that *did* show up under Recordings still failed to
   play, silently ("Error creating demuxer" in the log, no player ever
   started).** This took real digging, and an earlier note in this file
@@ -333,6 +354,41 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   replaces the account's previous key (confirmed: two calls returned two
   different keys), which is why this only ever generates one and caches
   it, rather than doing so on every addon start.
+
+## Known limitations with more than one Kodi client
+
+Not bugs in this addon -- inherent to running multiple, fully independent
+Kodi installations (e.g. one on Windows, one on macOS) against the same
+Dispatcharr server, worth writing down since it's easy to mistake for one:
+
+- **A recording created on one Kodi instance doesn't appear on another
+  until that other instance happens to refresh.** This addon has no
+  push/notification channel from Dispatcharr (it's a plain REST poller),
+  and `TriggerTimerUpdate()`/`TriggerRecordingUpdate()` only tell *that
+  specific running addon instance's* Kodi to re-fetch -- they have no way
+  to reach a separate Kodi installation's separate addon instance.
+  Confirmed: a recording created via one Kodi's guide didn't appear on a
+  second, independently-running Kodi until that second instance was
+  restarted. Restarting (or waiting for Kodi's own periodic PVR refresh)
+  on the second instance is the only way to see it sooner.
+- **Playback resume position doesn't carry over between Kodi
+  instances.** Kodi's "resume from where you left off" bookmark is
+  stored in that Kodi installation's own local video database, not
+  anywhere this addon controls or Dispatcharr is aware of -- watching
+  partway through a recording on one device has no way to inform a
+  different device's Kodi where to resume. Kodi's PVR API does have
+  purpose-built hooks for exactly this
+  (`GetRecordingLastPlayedPosition`/`SetRecordingLastPlayedPosition`,
+  meant for backends that track resume position server-side instead of
+  relying on Kodi's local database), which this addon doesn't currently
+  implement. It's a real, legitimate feature to add if cross-device
+  resume matters, but not attempted here yet -- it would need a place to
+  actually store the position server-side, and `custom_properties` is the
+  only candidate on the `Recording` object, whose write semantics
+  (whether a `PATCH` merges or replaces the field) need to be verified
+  against a **disposable test recording** before ever touching a real
+  one, given `custom_properties` was already confirmed to be fully
+  replaced rather than merged on `POST` create (see above).
 
 ## Still unconfirmed (verify before relying on in production)
 
