@@ -373,12 +373,18 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   turned out to be different from what that note assumed. Confirmed
   against Kodi's own source
   (`xbmc/cores/VideoPlayer/DVDInputStreams/DVDFactoryInputStream.cpp`):
-  any `pvr://recordings/...` path is *always* demuxed through
+  any `pvr://recordings/...` path is demuxed through
   `CInputStreamPVRRecording`, which calls the addon's
   `OpenRecordedStream()`/`ReadRecordedStream()`/`SeekRecordedStream()`/
-  `LengthRecordedStream()` -- **not** `GetRecordingStreamProperties()`'s
-  `PVR_STREAM_PROPERTY_STREAMURL`, unlike live channels and catch-up.
-  This addon never implemented those, so Kodi's default
+  `LengthRecordedStream()` -- **but only if `GetRecordingStreamProperties()`
+  leaves `PVR_STREAM_PROPERTY_STREAMURL` unset.** An earlier version of
+  this note claimed STREAMURL is *never* consulted for a recording and is
+  harmless to populate regardless; that turned out to be wrong -- a real
+  failure (see the API-key note below) was root-caused to Kodi's generic
+  `CCurlFile` opening a populated STREAMURL directly, bypassing these
+  callbacks (and their retry logic) entirely, confirmed via a live
+  `kodi.log`. This addon never implemented those callbacks originally, so
+  Kodi's default
   `OpenRecordedStream()` (`return false;`) meant every single recording
   playback attempt failed immediately, with no network request even
   attempted. Fixed by implementing real byte-range HTTP reads
@@ -409,8 +415,10 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   API key on first use via `POST /api/accounts/api-keys/generate/` and
   persists it to its own `api_key` setting. Regenerating that endpoint
   replaces the account's previous key (confirmed: two calls returned two
-  different keys), which is why this only ever generates one and caches
-  it, rather than doing so on every addon start.
+  different keys) -- **account-wide, not per-installation**, which matters
+  once more than one Kodi install shares the same Dispatcharr account; see
+  "Known limitations with more than one Kodi client" below for the
+  self-heal this addon now does about it.
 
 ## Known limitations with more than one Kodi client
 
@@ -446,6 +454,26 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
   against a **disposable test recording** before ever touching a real
   one, given `custom_properties` was already confirmed to be fully
   replaced rather than merged on `POST` create (see above).
+- **One install's addon can silently invalidate another install's stored
+  API key, breaking recording playback with no obvious cause.** Dispatcharr
+  keeps exactly one active API key per account (see the permissions note
+  above); if two Kodi installs share an account and each generates its own
+  key once, whichever install last regenerated invalidates the other's
+  stored copy. Confirmed end-to-end (Windows + macOS installs against the
+  same account, same recording): the macOS side got `CCurlFile ... Failed:
+  HTTP returned code 401` on a key that was valid when it was generated,
+  while a fresh `generate/` call from either side proved the account only
+  keeps one key alive at a time. Fixed by making `OpenRecordingStream()`/
+  `ReadRecordingStream()` treat a 401 as "this key was invalidated
+  elsewhere," not a hard failure: they call `GenerateApiKey()` and retry
+  once before giving up, and `PVRDispatcharr` re-persists the new key to
+  the addon's settings if it changed. This doesn't stop the two installs
+  from continuing to invalidate each other's cached key -- it just makes
+  that invisible, since whichever side needs the key next self-heals
+  within one HTTP round-trip instead of failing outright. Verified by
+  deliberately corrupting a live install's stored key and confirming
+  playback still succeeded, with the corrected key written back to
+  `settings.xml` automatically.
 
 ## Still unconfirmed (verify before relying on in production)
 

@@ -643,14 +643,6 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
   return true;
 }
 
-std::string DispatcharrClient::GetRecordingStreamUrl(int recordingId) const
-{
-  std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
-  if (!m_config.apiKey.empty())
-    url += "|X-API-Key=" + UrlEncode(m_config.apiKey);
-  return url;
-}
-
 bool DispatcharrClient::GenerateApiKey(std::string& keyOut, std::string& error)
 {
   if (!EnsureAuthenticated(error))
@@ -817,78 +809,96 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
 
   std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
 
-  CURL* curl = curl_easy_init();
-  if (!curl)
+  // Up to two attempts: Dispatcharr keeps only one active API key
+  // account-wide, so another Kodi install regenerating its own key can
+  // silently invalidate this addon's stored one between restarts. On a 401,
+  // regenerate once and retry before failing outright -- see GetApiKey()'s
+  // comment for why the caller still needs to re-persist the result.
+  for (int attempt = 0; attempt < 2; ++attempt)
   {
-    error = "Failed to initialise libcurl";
-    return false;
-  }
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+      error = "Failed to initialise libcurl";
+      return false;
+    }
 
-  struct curl_slist* headers = nullptr;
-  std::string apiKeyHeader;
-  if (!m_config.apiKey.empty())
-  {
-    apiKeyHeader = "X-API-Key: " + m_config.apiKey;
-    headers = curl_slist_append(headers, apiKeyHeader.c_str());
-  }
+    struct curl_slist* headers = nullptr;
+    std::string apiKeyHeader;
+    if (!m_config.apiKey.empty())
+    {
+      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      headers = curl_slist_append(headers, apiKeyHeader.c_str());
+    }
 
-  // A tiny ranged GET rather than a HEAD request: confirmed the "in
-  // progress -> redirect to HLS" behaviour on this endpoint, and it's
-  // safer to assume that only applies to the method a real player
-  // actually uses (GET) rather than trust it also applies to HEAD.
-  std::string discard;
-  int64_t totalLength = -1;
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &discard);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, RecordingHeaderCallback);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &totalLength);
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+    // A tiny ranged GET rather than a HEAD request: confirmed the "in
+    // progress -> redirect to HLS" behaviour on this endpoint, and it's
+    // safer to assume that only applies to the method a real player
+    // actually uses (GET) rather than trust it also applies to HEAD.
+    std::string discard;
+    int64_t totalLength = -1;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &discard);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, RecordingHeaderCallback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &totalLength);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
 
-  CURLcode res = curl_easy_perform(curl);
-  long httpCode = 0;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-  char* effectiveUrl = nullptr;
-  curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effectiveUrl);
-  char* contentTypeRaw = nullptr;
-  curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &contentTypeRaw);
-  std::string resolvedUrl = effectiveUrl ? effectiveUrl : url;
-  std::string contentType = contentTypeRaw ? contentTypeRaw : "";
-  curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
+    CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    char* effectiveUrl = nullptr;
+    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effectiveUrl);
+    char* contentTypeRaw = nullptr;
+    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &contentTypeRaw);
+    std::string resolvedUrl = effectiveUrl ? effectiveUrl : url;
+    std::string contentType = contentTypeRaw ? contentTypeRaw : "";
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
 
-  if (res != CURLE_OK)
-  {
-    error = std::string("HTTP request failed: ") + curl_easy_strerror(res);
-    return false;
-  }
-  if (httpCode < 200 || httpCode >= 300)
-  {
-    error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " opening recording stream";
-    return false;
-  }
-  // Confirmed against a live instance: an in-progress recording's /file/
-  // redirects to an HLS playlist (.../hls/index.m3u8), which this reader
-  // doesn't understand -- treating it as a flat byte range would just
-  // hand the demuxer m3u8 text instead of video.
-  if (contentType.find("mpegurl") != std::string::npos ||
-      resolvedUrl.find("/hls/") != std::string::npos)
-  {
-    error = "This recording is still in progress; playback of in-progress "
-            "recordings isn't supported yet, only completed ones";
-    return false;
-  }
+    if (res != CURLE_OK)
+    {
+      error = std::string("HTTP request failed: ") + curl_easy_strerror(res);
+      return false;
+    }
 
-  m_recordingStream.open = true;
-  m_recordingStream.url = resolvedUrl;
-  m_recordingStream.length = totalLength;
-  m_recordingStream.position = 0;
-  return true;
+    if (httpCode == 401 && attempt == 0)
+    {
+      std::string regenKey, regenError;
+      if (GenerateApiKey(regenKey, regenError))
+        continue;
+    }
+
+    if (httpCode < 200 || httpCode >= 300)
+    {
+      error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " opening recording stream";
+      return false;
+    }
+    // Confirmed against a live instance: an in-progress recording's /file/
+    // redirects to an HLS playlist (.../hls/index.m3u8), which this reader
+    // doesn't understand -- treating it as a flat byte range would just
+    // hand the demuxer m3u8 text instead of video.
+    if (contentType.find("mpegurl") != std::string::npos ||
+        resolvedUrl.find("/hls/") != std::string::npos)
+    {
+      error = "This recording is still in progress; playback of in-progress "
+              "recordings isn't supported yet, only completed ones";
+      return false;
+    }
+
+    m_recordingStream.open = true;
+    m_recordingStream.url = resolvedUrl;
+    m_recordingStream.length = totalLength;
+    m_recordingStream.position = 0;
+    return true;
+  }
+  error = "Dispatcharr returned HTTP 401 opening recording stream even after regenerating the API key";
+  return false;
 }
 
 int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
@@ -898,42 +908,55 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
   if (m_recordingStream.length >= 0 && m_recordingStream.position >= m_recordingStream.length)
     return 0; // EOF
 
-  CURL* curl = curl_easy_init();
-  if (!curl)
-    return -1;
-
-  struct curl_slist* headers = nullptr;
-  std::string apiKeyHeader;
-  if (!m_config.apiKey.empty())
-  {
-    apiKeyHeader = "X-API-Key: " + m_config.apiKey;
-    headers = curl_slist_append(headers, apiKeyHeader.c_str());
-  }
-
   int64_t rangeEnd = m_recordingStream.position + static_cast<int64_t>(size) - 1;
   std::string range = std::to_string(m_recordingStream.position) + "-" + std::to_string(rangeEnd);
 
-  FixedBufferSink sink{buffer, size, 0};
-  curl_easy_setopt(curl, CURLOPT_URL, m_recordingStream.url.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+  // See OpenRecordingStream(): the API key can be invalidated mid-playback
+  // by another install regenerating it, so retry once after a self-heal.
+  for (int attempt = 0; attempt < 2; ++attempt)
+  {
+    CURL* curl = curl_easy_init();
+    if (!curl)
+      return -1;
 
-  CURLcode res = curl_easy_perform(curl);
-  long httpCode = 0;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-  curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
+    struct curl_slist* headers = nullptr;
+    std::string apiKeyHeader;
+    if (!m_config.apiKey.empty())
+    {
+      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      headers = curl_slist_append(headers, apiKeyHeader.c_str());
+    }
 
-  if (res != CURLE_OK || (httpCode != 200 && httpCode != 206))
-    return -1;
+    FixedBufferSink sink{buffer, size, 0};
+    curl_easy_setopt(curl, CURLOPT_URL, m_recordingStream.url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
 
-  m_recordingStream.position += static_cast<int64_t>(sink.written);
-  return static_cast<int>(sink.written);
+    CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (httpCode == 401 && attempt == 0)
+    {
+      std::string regenKey, regenError;
+      if (GenerateApiKey(regenKey, regenError))
+        continue;
+    }
+
+    if (res != CURLE_OK || (httpCode != 200 && httpCode != 206))
+      return -1;
+
+    m_recordingStream.position += static_cast<int64_t>(sink.written);
+    return static_cast<int>(sink.written);
+  }
+  return -1;
 }
 
 int64_t DispatcharrClient::SeekRecordingStream(int64_t position, int whence)
