@@ -301,6 +301,20 @@ private:
     std::string url; // final URL after following any redirect
     int64_t length = -1;
     int64_t position = 0;
+    // Persistent libcurl easy handle, reused across every ReadRecordingStream()
+    // call for the current open recording so HTTP keep-alive actually applies
+    // across sequential range reads -- a fresh curl_easy_init()/cleanup() per
+    // read meant a brand-new TCP connection (and TLS handshake, over HTTPS)
+    // for every single demuxer read, which is negligible on a low-latency LAN
+    // but confirmed (via a companion session's WiFi measurements: 68.5 MB/s
+    // over one connection vs. 1.13 MB/s doing 64KB reads with a fresh
+    // connection each, both against the same host) to starve playback on a
+    // higher-latency/jittery link even with plenty of raw bandwidth for the
+    // recording's bitrate. Created lazily on the first read, cleaned up in
+    // CloseRecordingStream(). Stored as void* rather than CURL* so this
+    // header doesn't need <curl/curl.h>; CURL is itself just an opaque alias
+    // for void in curl.h, so the cast back in the .cpp is exact.
+    void* curl = nullptr;
   };
   RecordingStreamState m_recordingStream;
 };
