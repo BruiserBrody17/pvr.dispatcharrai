@@ -481,6 +481,25 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   in-progress playback starts; accepted as a fair trade for closing a gap
   that's already been hit repeatedly in real testing across two
   installs sharing one account.
+- **A recording/timer deleted (or otherwise changed) with no local Kodi
+  action to react to it kept showing in Kodi indefinitely -- a "phantom"
+  recording only a full Kodi restart would clear.** Root cause: every
+  `TriggerRecordingUpdate()`/`TriggerTimerUpdate()` call in this addon is
+  reactive, firing only right after this addon's own `AddTimer()`/
+  `DeleteTimer()`/etc. -- there was no periodic check independent of local
+  activity, unlike the lazy staleness check channels/EPG already have.
+  Anything that changed the recordings list another way (a different Kodi
+  install sharing the account, a direct Dispatcharr API call, a recording
+  finishing on its own) had nothing to prompt Kodi to notice. Fixed with a
+  background thread (started in the constructor, cleanly joined in the
+  destructor) that calls both triggers every `recording_refresh_minutes`
+  (default 5, configurable) regardless of local activity. Verified
+  end-to-end: created a recording directly via Dispatcharr's API (not
+  through this addon, matching how the phantom was actually produced
+  during testing), confirmed it appeared in Kodi, deleted it directly via
+  the API again, confirmed it was still showing immediately afterward
+  (reproducing the bug), then confirmed it disappeared on its own after
+  the refresh interval elapsed with no Kodi restart.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open
@@ -586,10 +605,15 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
   and `TriggerTimerUpdate()`/`TriggerRecordingUpdate()` only tell *that
   specific running addon instance's* Kodi to re-fetch -- they have no way
   to reach a separate Kodi installation's separate addon instance.
-  Confirmed: a recording created via one Kodi's guide didn't appear on a
-  second, independently-running Kodi until that second instance was
-  restarted. Restarting (or waiting for Kodi's own periodic PVR refresh)
-  on the second instance is the only way to see it sooner.
+  Originally confirmed with no fix at all: a recording created via one
+  Kodi's guide didn't appear on a second, independently-running Kodi until
+  that second instance was restarted. Substantially mitigated now (see the
+  periodic recordings/timers refresh below) -- every install triggers on
+  its own schedule regardless of the others' activity, so the wait is
+  bounded by `recording_refresh_minutes` instead of "until next restart."
+  Not eliminated: still a poll, not a push, so there's still up to that
+  many minutes of lag, and two installs mid-refresh-cycle can briefly
+  disagree.
 - **Playback resume position doesn't carry over between Kodi
   instances.** Kodi's "resume from where you left off" bookmark is
   stored in that Kodi installation's own local video database, not

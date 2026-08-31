@@ -10,8 +10,11 @@
 
 #include <kodi/addon-instance/PVR.h>
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -107,4 +110,25 @@ private:
   bool m_enableLiveTimeshift = false;
   bool m_enableInProgressPlayback = false;
   bool m_debugLogging = false;
+
+  // Recordings/timers only ever get re-fetched by Kodi when this addon
+  // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/
+  // EPG above, there's no lazy "check staleness next time Kodi asks"
+  // option, since Kodi only asks again once told to. Every existing call
+  // site is reactive (right after this addon's own AddTimer()/
+  // DeleteTimer()/etc.), so a change that happens with no local Kodi
+  // action to react to -- another Kodi install's action, a change made
+  // directly against Dispatcharr's API, a scheduled recording finishing on
+  // its own -- had no way to ever surface short of restarting Kodi.
+  // Confirmed: a recording deleted directly via Dispatcharr's API (not
+  // through this addon) kept showing in Kodi indefinitely until restarted.
+  // This background thread closes that gap by triggering periodically
+  // regardless of local activity. Started in the constructor, joined in
+  // the destructor.
+  void StartRecordingRefreshThread();
+  std::thread m_recordingRefreshThread;
+  std::mutex m_recordingRefreshMutex;
+  std::condition_variable m_recordingRefreshCv;
+  std::atomic<bool> m_stopRecordingRefreshThread{false};
+  int m_recordingRefreshMinutes = 5;
 };
