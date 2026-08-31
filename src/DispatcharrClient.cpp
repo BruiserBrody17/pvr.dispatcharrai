@@ -605,6 +605,23 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
     const json& custom = item.contains("custom_properties") ? item["custom_properties"] : json();
     if (custom.is_object())
     {
+      // custom_properties.status is a more authoritative signal than the
+      // start/end time window above when present: a recording stopped
+      // early (see StopRecording()) keeps its originally-scheduled
+      // end_time untouched, so the time-window check alone would keep
+      // reporting it as in-progress for the rest of that original
+      // duration even though it finished the moment it was stopped.
+      // Confirmed values: "recording" (still active), "completed"/
+      // "stopped"/"interrupted" (all finished, one way or another) --
+      // exact enum not documented, so only treat "recording" as
+      // authoritative for in-progress and fall back to the time window
+      // for anything else/absent, rather than assuming a closed list.
+      std::string status = FieldOr<std::string>(custom, "status", "");
+      if (status == "recording")
+        r.isInProgress = true;
+      else if (!status.empty())
+        r.isInProgress = false;
+
       const json& program = custom.contains("program") ? custom["program"] : json();
       if (program.is_object())
       {
