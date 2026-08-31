@@ -395,16 +395,16 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   Confirmed end-to-end against a real completed recording: real playback
   progress, correct duration, and working seeks (verified via
   `Player.Seek`).
-  **In-progress recordings are not supported by this fix** -- `/file/`
-  redirects to an HLS playlist (`.../hls/index.m3u8`) while a recording
-  is still being written, and each individual `.ts` segment inside that
-  playlist independently requires the same `X-API-Key` header, which
-  Kodi's own HLS demuxer has no way to know to send for segments it
-  discovers by parsing the playlist itself. `OpenRecordingStream()`
-  detects this case (by content-type/URL) and fails with a clear error
-  instead of trying and silently corrupting playback. Watching a
-  recording while Dispatcharr is still actively writing it remains
-  unsupported; wait for it to finish.
+  **In-progress recordings are not supported by this byte-range fix** --
+  `/file/` redirects to an HLS playlist (`.../hls/index.m3u8`) while a
+  recording is still being written, and each individual `.ts` segment
+  inside that playlist independently requires the same `X-API-Key`
+  header, which Kodi's own HLS demuxer has no way to know to send for
+  segments it discovers by parsing the playlist itself.
+  `OpenRecordingStream()` detects this case (by content-type/URL) and
+  fails with a clear error instead of trying and silently corrupting
+  playback. See the separate `inputstream.ffmpegdirect`-based path below
+  for how this is actually solved when opted into.
 - Both endpoints above (recording file and the HLS redirect target) also
   confirmed to return a flat **403 for a fully anonymous request**,
   despite their schema listing anonymous access (`{}`) as one of the
@@ -419,6 +419,60 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   once more than one Kodi install shares the same Dispatcharr account; see
   "Known limitations with more than one Kodi client" below for the
   self-heal this addon now does about it.
+- **In-progress recording playback, via `inputstream.ffmpegdirect`
+  (`enable_inprogress_playback` setting, off by default, experimental).**
+  Confirmed query-param auth is **not** a usable alternative to the
+  `X-API-Key` header for the HLS segment endpoints (`?api_key=` and
+  `?X-API-Key=` both got a flat 403; only the real header works), so
+  fixing this needed something that could attach a header to every
+  segment fetch, not just the manifest. `inputstream.ffmpegdirect`'s
+  plain pass-through mode does that -- confirmed by reading its actual
+  source, not just its docs -- but two details matter, both found by
+  reading `FFmpegStream.cpp` directly rather than guessing from the two
+  already-reverted attempts elsewhere in this addon (live TV's
+  `stream_mode: timeshift` and catch-up's `timeshift`/`catchup`, both
+  reverted for *seeking* reasons that don't apply to a forward-only,
+  still-growing in-progress recording):
+  1. A plain `http(s)://` URL defaults to `inputstream.ffmpegdirect`'s
+     `OpenWithCURL()` code path, not `OpenWithFFmpeg()` -- confirmed via
+     source that `OpenWithCURL()` sets no header options at all when
+     opening the format context, silently reproducing the exact same
+     segment-auth failure this was meant to fix. Must explicitly set
+     `inputstream.ffmpegdirect.open_mode=ffmpeg` to force the code path
+     that actually calls `GetFFMpegOptionsFromInput()`.
+  2. Even in FFmpeg-native mode, `GetFFMpegOptionsFromInput()` only maps
+     a fixed allowlist of standard HTTP header names to real headers --
+     anything else (including `X-API-Key`) is silently dropped unless
+     prefixed with a literal `!`, which it strips before using the rest
+     as the header name. Confirmed by a real failed attempt logging
+     `ignoring header option 'X-API-Key'` with the plain name, and a
+     second attempt with `!X-API-Key` succeeding.
+  No `stream_mode` is set at all (neither `timeshift` nor `catchup`) --
+  the recording's own HLS playlist is already a valid, correctly
+  segmented structure; the only actual gap was header propagation to
+  segments, not anything either specialized mode addresses.
+  `GetRecordingStreamProperties()` checks the recording's live
+  `isInProgress` status (via `GetRecordings()`) before taking this path
+  at all; a completed recording is unaffected and still goes through
+  `OpenRecordingStream()`/etc. as before.
+  Verified end-to-end against a real in-progress recording: real video
+  rendering (confirmed via screenshot, not just JSON-RPC state), playback
+  time advancing in real time, and over a minute of continuous playback
+  with no stalls. Seeking does not work (`Player.Seek` returned an error,
+  though playback continued normally afterward) -- expected, since
+  `is_realtime_stream=true` is set (correctly: it genuinely is a live,
+  growing stream) and `inputstream.ffmpegdirect` only advertises seek
+  support for non-realtime streams. Not chased further, deliberately, for
+  the same reason the seek-focused catch-up attempts were abandoned
+  elsewhere in this addon: it's exactly the kind of complexity that's
+  already burned time here twice.
+  One real limitation: unlike `OpenRecordingStream()`/
+  `ReadRecordingStream()`, this path has no way to self-heal a stale API
+  key (see the note above) -- the URL (and its baked-in key) is handed to
+  a separate addon process once, with no 401-retry hook the way this
+  addon's own HTTP client has. If the key was invalidated by another Kodi
+  install between when the URL was built and when ffmpegdirect actually
+  opens it, playback will fail with no automatic recovery.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open

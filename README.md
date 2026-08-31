@@ -33,6 +33,10 @@ This is a first working scaffold, not a finished addon. Implemented:
   `inputstream.ffmpegdirect` addon (`enable_live_timeshift` setting, off by
   default) -- buffered to local disk on the Kodi device, not held
   server-side by Dispatcharr; see `docs/API_NOTES.md`
+- Optional in-progress recording playback (`enable_inprogress_playback`
+  setting, off by default, experimental), also via
+  `inputstream.ffmpegdirect` -- lets you start watching a recording before
+  Dispatcharr finishes writing it; see `docs/API_NOTES.md`
 
 Not yet implemented / worth hardening next:
 

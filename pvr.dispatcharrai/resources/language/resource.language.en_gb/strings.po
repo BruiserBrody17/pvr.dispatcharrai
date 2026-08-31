@@ -101,6 +101,18 @@ msgctxt "#30028"
 msgid "Lets you pause, rewind, and fast-forward live channels. Requires the separate inputstream.ffmpegdirect addon (Kodi's official repository) to be installed -- if it isn't, live channels will fail to play, so leave this off until it is. The buffer is recorded to local disk on this device (managed by ffmpegdirect's own settings), not held on the Dispatcharr server -- it does not persist across a Kodi restart or follow you to another device."
 msgstr ""
 
+msgctxt "#30035"
+msgid "Recordings"
+msgstr ""
+
+msgctxt "#30036"
+msgid "Enable in-progress recording playback (experimental)"
+msgstr ""
+
+msgctxt "#30037"
+msgid "Lets you play a recording while Dispatcharr is still actively writing it, by routing it through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of this addon's normal recording playback -- it must be installed, or playback will fail. Experimental: unlike completed recordings, this hasn't seen the same amount of real-world use. Leave off to keep the existing behaviour of waiting for a recording to finish before playing it."
+msgstr ""
+
 msgctxt "#30030"
 msgid "Advanced"
 msgstr ""

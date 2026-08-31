@@ -38,6 +38,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
+  m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
   std::string error;
@@ -534,7 +535,7 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& /*recording*/,
+PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                                         std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   // The claim this used to make here -- that Kodi never actually consults
@@ -544,8 +545,55 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   // from a real failed playback showed Kodi's generic CCurlFile opening
   // this exact pipe-delimited STREAMURL directly (bypassing our addon's
   // OpenRecordedStream() entirely, including its 401-retry/API-key-regen
-  // logic, which never even ran). Leave STREAMURL unset so Kodi has no
-  // choice but to use the addon callbacks below.
+  // logic, which never even ran). Leave STREAMURL unset for a completed
+  // recording for that reason, so Kodi has no choice but to use the addon
+  // callbacks below.
+  //
+  // An in-progress recording is different: OpenRecordingStream() rejects it
+  // outright (it's a growing HLS playlist, not a Range-seekable file), so
+  // there's no existing behaviour to preserve by leaving STREAMURL unset.
+  // If enabled (opt-in, off by default -- see settings.xml/strings.po: this
+  // hasn't seen the real-world use the completed-recording path has, and
+  // ffmpegdirect has already needed reverting twice elsewhere in this addon
+  // for unrelated reasons), route it through inputstream.ffmpegdirect
+  // instead, forced into its plain ffmpeg-native open mode so libavformat's
+  // own HLS demuxer -- not Kodi's native one -- handles segment fetches,
+  // propagating the X-API-Key header from the URL to every segment, not
+  // just the manifest. See GetInProgressRecordingStreamUrl()'s comment for
+  // why this needs open_mode forced to "ffmpeg" specifically, and why
+  // neither of the stream_mode values already tried (and reverted) for live
+  // TV/catch-up elsewhere in this addon apply here.
+  if (m_enableInProgressPlayback)
+  {
+    int id = std::atoi(recording.GetRecordingId().c_str());
+    std::vector<Recording> recordings;
+    std::string error;
+    bool inProgress = false;
+    if (m_client.GetRecordings(recordings, error))
+    {
+      for (const auto& rec : recordings)
+      {
+        if (rec.id == id)
+        {
+          inProgress = rec.isInProgress;
+          break;
+        }
+      }
+    }
+
+    if (inProgress)
+    {
+      properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL,
+                               m_client.GetInProgressRecordingStreamUrl(id));
+      properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
+      properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
+      properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
+      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+      properties.emplace_back("inputstream.ffmpegdirect.open_mode", "ffmpeg");
+      return PVR_ERROR_NO_ERROR;
+    }
+  }
+
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
   return PVR_ERROR_NO_ERROR;
 }
