@@ -158,39 +158,92 @@ specific compiler/libc/Kodi-commit combination -- a binary built against a
 generic Linux aarch64 toolchain will very likely **not** be ABI-compatible,
 even though it's technically the same architecture.
 
-There are two realistic paths, in order of how "supported" they are:
+A GitHub Actions job for this was considered and rejected: CoreELEC's own
+build harness (a LibreELEC fork) is designed around persistent, self-hosted
+build infrastructure -- confirmed by reading LibreELEC's own addon-build
+automation (`LibreELEC/actions` on GitHub), which runs on
+`[self-hosted, nightly]` runners with a 12-hour timeout and host-mounted
+`/sources`, `/target`, `/build-root` directories that persist across runs,
+specifically so the cross toolchain and every dependency aren't rebuilt
+from scratch every time. GitHub's hosted runners are ephemeral, capped at
+6 hours, and give ~14GB free disk -- a real mismatch for a from-scratch
+build, not just a "might be slow" one. Building locally is the practical
+path.
 
-1. **Build it as a CoreELEC package** (recommended). CoreELEC is a
-   LibreELEC-derived buildroot distro; third-party binary Kodi addons are
-   normally added as a package under
-   `packages/mediacenter/kodi-binary-addons/<addon-name>/package.mk` in a
-   fork of the CoreELEC/LibreELEC source tree, following the same pattern
-   as addons they already ship (e.g. `pvr.iptvsimple`, `pvr.hts`). That
-   package.mk fetches this repo at a pinned commit/tag and runs the exact
-   same `tools/depends/target/binary-addons` harness above, but inside
-   CoreELEC's own cross-compilation environment, so the ABI matches
-   automatically. Building a full CoreELEC image is not required -- their
-   build scripts can build a single package/addon target. Ask in the
-   CoreELEC forum/Discord which package to model this on for your specific
-   CoreELEC release branch; the exact `package.mk` syntax drifts between
-   CoreELEC versions and isn't reproduced here to avoid giving you a
-   confidently-wrong file.
-2. **Manual cross-compile + side-load** (community workaround, more
-   fragile). Cross-compile using the same toolchain CoreELEC's build system
-   uses for your device's SoC (Amlogic ng, for the N2+), matching their
-   exact GCC version and the Kodi commit their release is built from, then
-   copy the resulting `.so` and a rendered `addon.xml` into
-   `/storage/.kodi/addons/pvr.dispatcharrai/` over SSH and restart Kodi. This
-   is what enthusiasts typically do for out-of-tree PVR addons on
-   LibreELEC/CoreELEC when a package doesn't exist yet -- there's an open
-   CoreELEC forum thread asking about exactly this for Dispatcharr, with no
-   working answer posted as of this writing, which suggests option 1 is the
-   more promising route for a device you plan to rely on daily.
+### Building it as a CoreELEC package (recommended)
 
-Either way, pin the Kodi source tree you build against (step 1 above) to
-the same major version CoreELEC's current release ships, or the addon will
-fail to load with an API-version mismatch even if the library itself loads
-fine.
+CoreELEC is a LibreELEC-derived buildroot distro; third-party binary Kodi
+addons are added as a package under
+`packages/mediacenter/kodi-binary-addons/<addon-name>/package.mk` in a
+CoreELEC source checkout, following the same pattern as addons they
+already ship. Unlike Kodi's own `tools/depends/target/binary-addons`
+harness (used above), this doesn't support pointing at a live git branch --
+every in-tree example (confirmed by reading CoreELEC/CoreELEC's real
+`pvr.hts` and `pvr.iptvsimple` package.mk files) points `PKG_URL` at a
+tagged release tarball with a pinned `PKG_SHA256`. A package definition for
+this addon following that same pattern is checked in at
+[`packaging/coreelec/pvr.dispatcharrai/package.mk`](../packaging/coreelec/pvr.dispatcharrai/package.mk).
+
+1. Tag and publish a GitHub release matching the version in
+   `pvr.dispatcharrai/addon.xml.in` (e.g. `0.1.0`, no `v` prefix -- CoreELEC's
+   own package.mk files use the tag name verbatim in the archive URL, and
+   keeping it identical to `PKG_VERSION` avoids a mismatch):
+   ```bash
+   git tag 0.1.0
+   git push origin 0.1.0
+   gh release create 0.1.0 --generate-notes
+   ```
+2. Compute the tarball's checksum and fill it into
+   `packaging/coreelec/pvr.dispatcharrai/package.mk`'s `PKG_SHA256`
+   (it currently holds a placeholder of zeros):
+   ```bash
+   curl -L https://github.com/BruiserBrody17/pvr.dispatcharrai/archive/0.1.0.tar.gz | sha256sum
+   ```
+3. On a Debian/Ubuntu-based Linux build machine (not the N2+ itself --
+   cross-compiling needs real CPU and disk; per CoreELEC's own build docs,
+   budget 50GB free disk and expect the first build to take a while, since
+   it also has to fetch/build the aarch64 cross toolchain), clone CoreELEC
+   at the branch matching your device's installed CoreELEC major version
+   (`coreelec-22` is current as of this writing) and copy the package.mk in:
+   ```bash
+   git clone --branch coreelec-22 --depth 1 https://github.com/CoreELEC/CoreELEC.git
+   mkdir -p CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharrai
+   cp packaging/coreelec/pvr.dispatcharrai/package.mk \
+     CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharrai/
+   ```
+4. Build it. The N2+'s S922X is confirmed (by reading CoreELEC's own source
+   tree -- `projects/Amlogic-ce/devices/Amlogic-no` is the directory that
+   ships `Odroid_N2_boot.ini`) to fall under the `Amlogic-ce` project,
+   `Amlogic-no` device, `aarch64` arch:
+   ```bash
+   cd CoreELEC
+   PROJECT=Amlogic-ce ARCH=aarch64 DEVICE=Amlogic-no ./scripts/create_addon pvr.dispatcharrai
+   ```
+   Per CoreELEC's own wiki, the result lands under `target/addons/`; this
+   hasn't been verified against a real run, so if it's not there, search
+   `target/` for `pvr.dispatcharrai*.zip` instead.
+5. Install the resulting zip on the N2+ via Kodi's "install from zip file"
+   option, or copy it over SSH and extract into
+   `/storage/.kodi/addons/pvr.dispatcharrai/` directly, then restart Kodi.
+
+For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
+repeating -- the CoreELEC checkout itself can be reused.
+
+### Manual cross-compile + side-load (fallback)
+
+If you'd rather not maintain a package.mk (e.g. testing an unreleased
+commit), cross-compile using the same toolchain CoreELEC's build system
+uses for the N2+ (`Amlogic-ce`/`Amlogic-no`, aarch64), matching their exact
+GCC version and the Kodi commit their release is built from, then copy the
+resulting `.so` and a rendered `addon.xml` into
+`/storage/.kodi/addons/pvr.dispatcharrai/` over SSH and restart Kodi. This
+is more fragile than the package.mk route above (nothing pins the toolchain
+version for you), so prefer that unless you specifically need to test a
+build that isn't tagged.
+
+Either way, pin the Kodi source tree/version you build against to the same
+major version CoreELEC's current release ships, or the addon will fail to
+load with an API-version mismatch even if the library itself loads fine.
 
 ## Distribution (Windows/macOS, once built)
 
