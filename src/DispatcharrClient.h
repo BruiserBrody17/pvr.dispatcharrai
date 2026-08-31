@@ -201,6 +201,16 @@ public:
   // schemes including anonymous access.
   std::string GetRecordingStreamUrl(int recordingId) const;
   bool DeleteRecording(int recordingId, std::string& error);
+  // Confirmed against the live schema: POST .../recordings/{id}/stop/
+  // "Stop[s] a recording early while retaining the partial content for
+  // playback" -- distinct from DeleteRecording(), which removes the file
+  // entirely. Kodi's "Stop Recording" action (and "Delete" on a timer
+  // it knows is still recording) both call this addon's DeleteTimer()
+  // with forceDelete=true specifically to mean "this is still recording"
+  // (confirmed against Kodi's own source, xbmc/pvr/timers/PVRTimers.cpp);
+  // see PVRDispatcharr::DeleteTimer() for why that maps to this call, not
+  // DeleteRecording().
+  bool StopRecording(int recordingId, std::string& error);
 
   // True if Config::apiKey is already set. Callers use this to decide
   // whether GenerateApiKey() is worth calling at all.

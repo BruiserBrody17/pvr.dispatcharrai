@@ -782,7 +782,16 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
   else
   {
     int id = static_cast<int>(timer.GetClientIndex() & ~0x40000000u);
-    ok = m_client.DeleteRecording(id, error);
+    // Confirmed against Kodi's own source (xbmc/pvr/timers/PVRTimers.cpp):
+    // forceDelete is specifically how Kodi tells the addon "this timer is
+    // still actively recording" -- both its dedicated "Stop Recording"
+    // action and "Delete" on a timer it already knows is recording pass
+    // it as true. That must route to Dispatcharr's dedicated stop
+    // endpoint ("stop a recording early while retaining the partial
+    // content for playback"), NOT the delete endpoint (removes the file
+    // entirely) -- confirmed by testing: routing it to delete wiped out
+    // an actively-recording file the user only meant to stop.
+    ok = forceDelete ? m_client.StopRecording(id, error) : m_client.DeleteRecording(id, error);
   }
 
   if (!ok)

@@ -663,6 +663,15 @@ bool DispatcharrClient::DeleteRecording(int recordingId, std::string& error)
   return Request("DELETE", path, json(), response, error);
 }
 
+bool DispatcharrClient::StopRecording(int recordingId, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json response;
+  std::string path = std::string(kRecordingsPath) + std::to_string(recordingId) + "/stop/";
+  return Request("POST", path, json(), response, error);
+}
+
 bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))
