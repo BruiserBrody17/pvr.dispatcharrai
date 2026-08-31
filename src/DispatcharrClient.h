@@ -266,14 +266,51 @@ public:
   // below) that populating STREAMURL anyway is NOT harmless once these are
   // implemented: Kodi will happily use it instead, silently skipping this
   // code path. GetRecordingStreamProperties() deliberately leaves STREAMURL
-  // unset for that reason. Only supports a completed recording (a real,
-  // Range-seekable file); an in-progress one currently redirects to an HLS
-  // playlist server-side, which isn't handled here -- see docs/API_NOTES.md.
+  // unset for a completed recording for that reason. Only supports a
+  // completed recording (a real, Range-seekable file) -- an in-progress one
+  // is instead served via GetInProgressRecordingStreamUrl() below, routed
+  // through inputstream.ffmpegdirect (opt-in), not through here at all.
   bool OpenRecordingStream(int recordingId, std::string& error);
   int ReadRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekRecordingStream(int64_t position, int whence);
   int64_t GetRecordingStreamLength() const;
   void CloseRecordingStream();
+
+  // Builds the pipe-delimited HLS URL (with an X-API-Key header suffix,
+  // Kodi's "|key=value" stream URL syntax) for an in-progress recording, to
+  // be routed through inputstream.ffmpegdirect rather than
+  // OpenRecordingStream()/ReadRecordingStream() above. A recording still
+  // being written is served as a growing HLS playlist (confirmed against a
+  // live instance: {base}/api/channels/recordings/{id}/hls/index.m3u8,
+  // segments named seg_NNNNN.ts), not a single Range-seekable file, and
+  // each segment independently requires the same X-API-Key header --
+  // confirmed that query-param auth is NOT accepted as an alternative
+  // (both ?api_key= and ?X-API-Key= got 403; only the real header works),
+  // and Kodi's own native (non-ffmpeg) HLS handling has no mechanism to
+  // attach a custom header to the segment requests it discovers by parsing
+  // the playlist itself. ffmpegdirect's plain pass-through mode (no
+  // stream_mode set) instead delegates the whole thing to ffmpeg's own HLS
+  // demuxer, which does propagate custom headers to every segment fetch,
+  // not just the manifest -- confirmed by reading its source
+  // (FFmpegStream::OpenWithFFmpeg -> GetFFMpegOptionsFromInput()) -- PROVIDED
+  // inputstream.ffmpegdirect.open_mode is explicitly forced to "ffmpeg": a
+  // plain http(s) URL otherwise defaults to its OpenWithCURL() path
+  // instead, which sets no header options at all when opening the format
+  // context and would silently reproduce this exact failure. Also confirmed
+  // (both by reading GetFFMpegOptionsFromInput()'s source and by an actual
+  // failed attempt logging "ignoring header option 'X-API-Key'"): it only
+  // forwards a fixed allowlist of standard HTTP header names as real
+  // headers; anything else -- X-API-Key included -- needs a literal "!"
+  // prefix on the option name, which it strips before using the rest as the
+  // header name, hence "!X-API-Key" below rather than "X-API-Key". See
+  // GetRecordingStreamProperties() in PVRDispatcharr.cpp for the rest of
+  // the properties this needs alongside the URL. The URL is constructed
+  // directly here (not resolved via a live redirect probe the way
+  // OpenRecordingStream() does) since the caller has already independently
+  // confirmed in-progress status via GetRecordings() -- the same condition
+  // Dispatcharr's own /file/ endpoint uses to decide whether to redirect
+  // here at all.
+  std::string GetInProgressRecordingStreamUrl(int recordingId) const;
 
 private:
   std::string BaseUrl() const;
