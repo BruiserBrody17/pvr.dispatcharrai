@@ -108,6 +108,14 @@
           <default>false</default>
           <control type="toggle" />
         </setting>
+        <setting id="api_key" type="string" label="30033" help="30034">
+          <level>2</level>
+          <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <control type="edit" format="string" />
+        </setting>
       </group>
     </category>
 

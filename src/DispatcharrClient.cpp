@@ -43,6 +43,7 @@ constexpr const char* kLogosPath = "/api/channels/logos/";
 // window for as long as it's actively used, rather than embedding a
 // short-lived JWT directly in the stream URL.
 constexpr const char* kCatchupSessionsPath = "/api/catchup/sessions/";
+constexpr const char* kApiKeyGeneratePath = "/api/accounts/api-keys/generate/";
 
 size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
 {
@@ -570,7 +571,30 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
 
 std::string DispatcharrClient::GetRecordingStreamUrl(int recordingId) const
 {
-  return BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
+  std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
+  if (!m_config.apiKey.empty())
+    url += "|X-API-Key=" + UrlEncode(m_config.apiKey);
+  return url;
+}
+
+bool DispatcharrClient::GenerateApiKey(std::string& keyOut, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json response;
+  if (!Request("POST", kApiKeyGeneratePath, json(), response, error))
+    return false;
+
+  std::string key = FieldOr<std::string>(response, "key", "");
+  if (key.empty())
+  {
+    error = "API key generation response did not contain a key";
+    return false;
+  }
+  m_config.apiKey = key;
+  keyOut = std::move(key);
+  return true;
 }
 
 bool DispatcharrClient::DeleteRecording(int recordingId, std::string& error)

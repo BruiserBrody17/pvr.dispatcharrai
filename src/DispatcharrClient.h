@@ -25,8 +25,20 @@
 //                                                         custom_properties?} -- no
 //                                                         title/name field exists
 //   DELETE {base}/api/channels/recordings/{id}/       -> delete one recording
-//   GET    {base}/api/channels/recordings/{id}/file/  -> recording playback
-//                                                         (Range-seekable, no auth)
+//   GET    {base}/api/channels/recordings/{id}/file/  -> recording playback,
+//                                                         Range-seekable, redirects to
+//                                                         .../hls/index.m3u8 while
+//                                                         still recording -- despite
+//                                                         its documented security
+//                                                         schemes including anonymous
+//                                                         access, a real instance
+//                                                         returned 403 for both this
+//                                                         and the redirect target
+//                                                         without an X-API-Key header
+//                                                         or Bearer token, confirmed
+//                                                         for both an in-progress and
+//                                                         a completed recording -- see
+//                                                         GetRecordingStreamUrl()
 //   GET    {base}/api/channels/series-rules/          -> {"rules": [...]}, NOT a bare
 //                                                         array or {results: [...]}
 //   POST   {base}/api/channels/series-rules/          -> body is {title, tvg_id?,
@@ -38,12 +50,18 @@
 //                                                         NOT /{id}/ -- series rules
 //                                                         have no path-addressable id
 //   POST   {base}/api/channels/series-rules/evaluate/ -> evaluate series rules
+//   POST   {base}/api/accounts/api-keys/generate/     -> {key, user}. Regenerating
+//                                                         replaces the previous key
+//                                                         (confirmed: calling this
+//                                                         twice returns two different
+//                                                         keys) -- only call this once
+//                                                         per account and cache the
+//                                                         result, see GenerateApiKey()
 //
-// NOT independently confirmed (the schema shows no example values and the
-// account used to develop this lacked permission to create a live
-// recording/series rule to inspect one): the exact key names inside a
-// Recording's custom_properties, and the exact shape of an item inside a
-// series-rules list response. See docs/API_NOTES.md.
+// A Recording's custom_properties key names (title/subtitle/description
+// nested under "program", plus status/file paths/poster logo) and a
+// series-rules list item's shape are both confirmed against real created
+// objects too -- see docs/API_NOTES.md for the details.
 
 #include <chrono>
 #include <mutex>
@@ -71,6 +89,12 @@ struct Config
   // that, so this defaults to off. Left available in case a genuinely
   // different Dispatcharr/provider setup needs a moment between switches.
   int channelSwitchDelaySeconds = 0;
+  // Long-lived Dispatcharr API key, used only to authenticate recording
+  // playback (see GetRecordingStreamUrl()) -- unlike the JWT access token
+  // (30-minute lifetime), this doesn't expire mid-playback. Auto-generated
+  // and persisted back to the addon's own settings on first use if left
+  // empty; see PVRDispatcharr's constructor.
+  std::string apiKey;
 };
 
 struct Channel
@@ -169,8 +193,26 @@ public:
                             std::string& error);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
+  // Includes an X-API-Key header suffix (Kodi's "|key=value" stream URL
+  // syntax) when Config::apiKey is set -- required (confirmed against a
+  // live instance): both in-progress and completed recordings return 403
+  // to an anonymous request despite this endpoint's documented security
+  // schemes including anonymous access.
   std::string GetRecordingStreamUrl(int recordingId) const;
   bool DeleteRecording(int recordingId, std::string& error);
+
+  // True if Config::apiKey is already set. Callers use this to decide
+  // whether GenerateApiKey() is worth calling at all.
+  bool HasApiKey() const { return !m_config.apiKey.empty(); }
+  // Generates a new Dispatcharr API key and stores it in this client's own
+  // config for immediate use by GetRecordingStreamUrl(). Regenerating
+  // replaces any previous key for the account (confirmed against a live
+  // instance), so callers should only invoke this when HasApiKey() is
+  // false, and should persist the result themselves (this client has no
+  // knowledge of Kodi's settings storage) so it isn't regenerated -- and
+  // any *other* key for the account isn't invalidated again -- on every
+  // addon restart.
+  bool GenerateApiKey(std::string& keyOut, std::string& error);
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
   bool CreateOneTimeRecording(int channelId,

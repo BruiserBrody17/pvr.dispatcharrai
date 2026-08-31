@@ -112,3 +112,11 @@ msgstr ""
 msgctxt "#30032"
 msgid "Logs full request/response details to the Kodi log. Leave off for normal use."
 msgstr ""
+
+msgctxt "#30033"
+msgid "Dispatcharr API key"
+msgstr ""
+
+msgctxt "#30034"
+msgid "Generated automatically on first connection and used only to play recordings, which Dispatcharr requires authentication for. Leave blank to have one generated for you -- only set this manually if you need to replace it (e.g. it was revoked or regenerated elsewhere), since regenerating one replaces the previous key for the whole account."
+msgstr ""
