@@ -537,6 +537,15 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
 PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                                         std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
+  // Confirmed against Kodi's own source that this is never actually
+  // consulted for a pvr://recordings/... item -- Kodi always routes
+  // recording playback through CInputStreamPVRRecording, which calls
+  // OpenRecordedStream()/ReadRecordedStream()/etc. below instead of
+  // resolving PVR_STREAM_PROPERTY_STREAMURL from here the way live
+  // channels and catch-up work. Left populated anyway (harmless, and
+  // matches what the kodi-dev-kit docs describe as the fallback if an
+  // addon doesn't implement OpenRecordedStream) in case a future Kodi
+  // version's behaviour differs.
   int id = std::atoi(recording.GetRecordingId().c_str());
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, m_client.GetRecordingStreamUrl(id));
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
@@ -554,6 +563,38 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
   }
   TriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
+}
+
+bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recording)
+{
+  int id = std::atoi(recording.GetRecordingId().c_str());
+  std::string error;
+  if (!m_client.OpenRecordingStream(id, error))
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to open recording %d: %s", id, error.c_str());
+    return false;
+  }
+  return true;
+}
+
+void PVRDispatcharr::CloseRecordedStream()
+{
+  m_client.CloseRecordingStream();
+}
+
+int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
+{
+  return m_client.ReadRecordingStream(buffer, size);
+}
+
+int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
+{
+  return m_client.SeekRecordingStream(position, whence);
+}
+
+int64_t PVRDispatcharr::LengthRecordedStream()
+{
+  return m_client.GetRecordingStreamLength();
 }
 
 // ---------------------------------------------------------------------
@@ -694,6 +735,15 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerTimerUpdate();
+  // A one-time recording for a start time at or near "now" (or an already
+  // in-progress EPG event, e.g. Kodi's "Record" button on a live guide
+  // entry) may already be actively recording by the time this returns.
+  // Without this, Kodi has no reason to re-poll GetRecordings() until its
+  // own next periodic refresh -- confirmed: a freshly-created recording
+  // did not appear under Recordings for several minutes without it, and a
+  // full Kodi restart was what actually surfaced it. Harmless no-op for a
+  // genuinely future recording or a series rule.
+  TriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
 
