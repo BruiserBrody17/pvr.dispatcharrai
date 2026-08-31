@@ -76,6 +76,17 @@ Visual Studio generator. `.github/workflows/build.yml` automates all of
 this; the steps below are what that workflow actually runs; every step here
 was verified against a real build, not just written from Kodi's docs.
 
+The `-G "Visual Studio ..."` generator string below must match whichever
+Visual Studio version is actually installed -- CMake doesn't fall back to
+whatever's present, it fails outright ("could not find any instance of
+Visual Studio") if you name a version that isn't there. This has already
+bitten CI once: GitHub's `windows-latest` runner moved to shipping only VS
+2026 (`"Visual Studio 18 2026"`) with no VS2022 left on the image at all,
+confirmed by running `vswhere -all -format json` in the workflow. A local
+machine may well still have VS2022 (`"Visual Studio 17 2022"`) instead --
+check what you actually have (Visual Studio Installer, or `vswhere -all`)
+rather than assuming either one.
+
 1. Clone Kodi and this addon exactly as in steps 1-2 above (Omega branch,
    this repo checked out under `addons/pvr.dispatcharrai`), and register the
    addon exactly as in step 3.
