@@ -278,38 +278,61 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   be a Kodi-version-specific difference in exactly which dialog surfaces
   it -- the underlying missing-timer-type cause and its fix are confirmed
   either way.
-- **Clicking an in-progress recording did nothing.** Two separate bugs
-  stacked here:
-  1. `GetRecordings()` was excluding any `isInProgress`/`isUpcoming`
-     recording entirely, on the assumption that `GetTimers()` covered
-     those. Wrong: Kodi's own `CPVRRecording::IsInProgress()`
-     (`xbmc/pvr/recordings/PVRRecording.cpp`) works by cross-referencing
-     `GetRecordings()`'s list against the active timer list by
-     channel+time overlap -- it expects a still-recording item to be
-     listed in **both** places at once. Omitting it from `GetRecordings()`
-     meant it only ever existed as an uneditable timer row, nothing
-     clickable. Fixed to only exclude genuinely upcoming (not yet started,
-     nothing to play) recordings.
-  2. Even once listed, `/api/channels/recordings/{id}/file/` (and its
-     redirect target while still recording, `.../hls/index.m3u8`) both
-     returned a flat **403 for an anonymous request** against a real
-     instance -- confirmed for both an in-progress and a fully completed
-     recording, despite this endpoint's schema listing anonymous access
-     (`{}`) as one of its allowed security schemes. A request with either
-     a Bearer token or an `X-API-Key` header succeeds. A JWT access token
-     expires after 30 minutes (confirmed by decoding one -- `exp - iat`
-     -- see the login note above), too short for most recordings, so this
-     addon now generates a Dispatcharr API key on first use via `POST
-     /api/accounts/api-keys/generate/` and persists it to its own
-     `api_key` setting, appended to the recording stream URL as an
-     `X-API-Key` header via Kodi's `|key=value` stream-URL syntax.
-     Regenerating that endpoint replaces the account's previous key
-     (confirmed: two calls returned two different keys), which is why
-     this only ever generates one and caches it, rather than doing so on
-     every addon start.
-  Confirmed by actually creating a real in-progress recording and playing
-  it through Kodi end-to-end (real bytes streamed, correct duration
-  reported), not just inspecting the code.
+- **A new recording never showed up under Recordings until Kodi was
+  restarted.** `AddTimer()` called `TriggerTimerUpdate()` but never
+  `TriggerRecordingUpdate()` -- Kodi has no reason to re-poll
+  `GetRecordings()` on its own just because a timer was added, and a
+  recording that starts at or near "now" (including Kodi's "Record"
+  button on a live guide entry, see above) may already be actively
+  recording by the time `AddTimer()` returns. Confirmed by waiting 90+
+  seconds after creating a recording with the old code -- it never
+  appeared until a full restart. Now calls both triggers.
+- **A recording that *did* show up under Recordings still failed to
+  play, silently ("Error creating demuxer" in the log, no player ever
+  started).** This took real digging, and an earlier note in this file
+  claiming in-progress recording playback worked end-to-end was wrong --
+  it did once, but wasn't actually reproducible, and the real mechanism
+  turned out to be different from what that note assumed. Confirmed
+  against Kodi's own source
+  (`xbmc/cores/VideoPlayer/DVDInputStreams/DVDFactoryInputStream.cpp`):
+  any `pvr://recordings/...` path is *always* demuxed through
+  `CInputStreamPVRRecording`, which calls the addon's
+  `OpenRecordedStream()`/`ReadRecordedStream()`/`SeekRecordedStream()`/
+  `LengthRecordedStream()` -- **not** `GetRecordingStreamProperties()`'s
+  `PVR_STREAM_PROPERTY_STREAMURL`, unlike live channels and catch-up.
+  This addon never implemented those, so Kodi's default
+  `OpenRecordedStream()` (`return false;`) meant every single recording
+  playback attempt failed immediately, with no network request even
+  attempted. Fixed by implementing real byte-range HTTP reads
+  (`DispatcharrClient::OpenRecordingStream()`/`ReadRecordingStream()`/
+  `SeekRecordingStream()`/`GetRecordingStreamLength()`) against
+  `/api/channels/recordings/{id}/file/`, using the `X-API-Key` header
+  (see the permissions note below for why that's required at all).
+  Confirmed end-to-end against a real completed recording: real playback
+  progress, correct duration, and working seeks (verified via
+  `Player.Seek`).
+  **In-progress recordings are not supported by this fix** -- `/file/`
+  redirects to an HLS playlist (`.../hls/index.m3u8`) while a recording
+  is still being written, and each individual `.ts` segment inside that
+  playlist independently requires the same `X-API-Key` header, which
+  Kodi's own HLS demuxer has no way to know to send for segments it
+  discovers by parsing the playlist itself. `OpenRecordingStream()`
+  detects this case (by content-type/URL) and fails with a clear error
+  instead of trying and silently corrupting playback. Watching a
+  recording while Dispatcharr is still actively writing it remains
+  unsupported; wait for it to finish.
+- Both endpoints above (recording file and the HLS redirect target) also
+  confirmed to return a flat **403 for a fully anonymous request**,
+  despite their schema listing anonymous access (`{}`) as one of the
+  allowed security schemes -- a Bearer token or `X-API-Key` header is
+  actually required. A JWT access token expires after 30 minutes
+  (confirmed by decoding one -- `exp - iat` -- see the login note above),
+  too short for most recordings, so this addon generates a Dispatcharr
+  API key on first use via `POST /api/accounts/api-keys/generate/` and
+  persists it to its own `api_key` setting. Regenerating that endpoint
+  replaces the account's previous key (confirmed: two calls returned two
+  different keys), which is why this only ever generates one and caches
+  it, rather than doing so on every addon start.
 
 ## Still unconfirmed (verify before relying on in production)
 

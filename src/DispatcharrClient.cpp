@@ -4,7 +4,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 
 using json = nlohmann::json;
@@ -44,6 +46,61 @@ constexpr const char* kLogosPath = "/api/channels/logos/";
 // short-lived JWT directly in the stream URL.
 constexpr const char* kCatchupSessionsPath = "/api/catchup/sessions/";
 constexpr const char* kApiKeyGeneratePath = "/api/accounts/api-keys/generate/";
+
+// Writes into a fixed-size caller-owned buffer, capping at its capacity --
+// used for recording stream reads, where the caller (Kodi's demuxer) owns
+// the destination buffer. A Range request should never actually return
+// more than requested, so hitting the cap would indicate a confused
+// server response rather than a normal condition.
+struct FixedBufferSink
+{
+  uint8_t* buffer;
+  unsigned int capacity;
+  unsigned int written = 0;
+};
+
+size_t FixedBufferWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+  auto* sink = static_cast<FixedBufferSink*>(userdata);
+  size_t totalBytes = size * nmemb;
+  size_t remaining = sink->capacity - sink->written;
+  size_t toCopy = std::min(totalBytes, remaining);
+  if (toCopy > 0)
+  {
+    std::memcpy(sink->buffer + sink->written, ptr, toCopy);
+    sink->written += static_cast<unsigned int>(toCopy);
+  }
+  return totalBytes;
+}
+
+// Captures the total resource size from a "Content-Range: bytes X-Y/TOTAL"
+// response header -- the only reliable way to learn a ranged request's
+// full size, since Content-Length on a 206 response reflects only the
+// requested slice.
+size_t RecordingHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata)
+{
+  auto* totalOut = static_cast<int64_t*>(userdata);
+  size_t len = size * nitems;
+  std::string line(buffer, len);
+  std::string prefix = line.size() >= 14 ? line.substr(0, 14) : std::string();
+  std::transform(prefix.begin(), prefix.end(), prefix.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (prefix == "content-range:")
+  {
+    size_t slash = line.rfind('/');
+    if (slash != std::string::npos)
+    {
+      try
+      {
+        *totalOut = std::stoll(line.substr(slash + 1));
+      }
+      catch (const std::exception&)
+      {
+      }
+    }
+  }
+  return len;
+}
 
 size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
 {
@@ -720,6 +777,170 @@ bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::st
     path += "&tvg_id=" + UrlEncode(tvgId);
   json response;
   return Request("DELETE", path, json(), response, error);
+}
+
+bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
+{
+  CloseRecordingStream();
+
+  std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/file/";
+
+  CURL* curl = curl_easy_init();
+  if (!curl)
+  {
+    error = "Failed to initialise libcurl";
+    return false;
+  }
+
+  struct curl_slist* headers = nullptr;
+  std::string apiKeyHeader;
+  if (!m_config.apiKey.empty())
+  {
+    apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+    headers = curl_slist_append(headers, apiKeyHeader.c_str());
+  }
+
+  // A tiny ranged GET rather than a HEAD request: confirmed the "in
+  // progress -> redirect to HLS" behaviour on this endpoint, and it's
+  // safer to assume that only applies to the method a real player
+  // actually uses (GET) rather than trust it also applies to HEAD.
+  std::string discard;
+  int64_t totalLength = -1;
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &discard);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, RecordingHeaderCallback);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &totalLength);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+
+  CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  char* effectiveUrl = nullptr;
+  curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effectiveUrl);
+  char* contentTypeRaw = nullptr;
+  curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &contentTypeRaw);
+  std::string resolvedUrl = effectiveUrl ? effectiveUrl : url;
+  std::string contentType = contentTypeRaw ? contentTypeRaw : "";
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK)
+  {
+    error = std::string("HTTP request failed: ") + curl_easy_strerror(res);
+    return false;
+  }
+  if (httpCode < 200 || httpCode >= 300)
+  {
+    error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " opening recording stream";
+    return false;
+  }
+  // Confirmed against a live instance: an in-progress recording's /file/
+  // redirects to an HLS playlist (.../hls/index.m3u8), which this reader
+  // doesn't understand -- treating it as a flat byte range would just
+  // hand the demuxer m3u8 text instead of video.
+  if (contentType.find("mpegurl") != std::string::npos ||
+      resolvedUrl.find("/hls/") != std::string::npos)
+  {
+    error = "This recording is still in progress; playback of in-progress "
+            "recordings isn't supported yet, only completed ones";
+    return false;
+  }
+
+  m_recordingStream.open = true;
+  m_recordingStream.url = resolvedUrl;
+  m_recordingStream.length = totalLength;
+  m_recordingStream.position = 0;
+  return true;
+}
+
+int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
+{
+  if (!m_recordingStream.open || size == 0)
+    return 0;
+  if (m_recordingStream.length >= 0 && m_recordingStream.position >= m_recordingStream.length)
+    return 0; // EOF
+
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return -1;
+
+  struct curl_slist* headers = nullptr;
+  std::string apiKeyHeader;
+  if (!m_config.apiKey.empty())
+  {
+    apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+    headers = curl_slist_append(headers, apiKeyHeader.c_str());
+  }
+
+  int64_t rangeEnd = m_recordingStream.position + static_cast<int64_t>(size) - 1;
+  std::string range = std::to_string(m_recordingStream.position) + "-" + std::to_string(rangeEnd);
+
+  FixedBufferSink sink{buffer, size, 0};
+  curl_easy_setopt(curl, CURLOPT_URL, m_recordingStream.url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+
+  CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK || (httpCode != 200 && httpCode != 206))
+    return -1;
+
+  m_recordingStream.position += static_cast<int64_t>(sink.written);
+  return static_cast<int>(sink.written);
+}
+
+int64_t DispatcharrClient::SeekRecordingStream(int64_t position, int whence)
+{
+  if (!m_recordingStream.open)
+    return -1;
+
+  int64_t newPos;
+  switch (whence)
+  {
+    case SEEK_SET:
+      newPos = position;
+      break;
+    case SEEK_CUR:
+      newPos = m_recordingStream.position + position;
+      break;
+    case SEEK_END:
+      if (m_recordingStream.length < 0)
+        return -1;
+      newPos = m_recordingStream.length + position;
+      break;
+    default:
+      return -1;
+  }
+  if (newPos < 0)
+    return -1;
+
+  m_recordingStream.position = newPos;
+  return newPos;
+}
+
+int64_t DispatcharrClient::GetRecordingStreamLength() const
+{
+  return m_recordingStream.length;
+}
+
+void DispatcharrClient::CloseRecordingStream()
+{
+  m_recordingStream = RecordingStreamState();
 }
 
 } // namespace dispatcharr
