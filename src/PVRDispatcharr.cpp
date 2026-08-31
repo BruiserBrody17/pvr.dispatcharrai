@@ -800,5 +800,11 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerTimerUpdate();
+  // Stopping a recording (forceDelete=true, see above) turns it into a
+  // normal completed recording immediately, not just a future timer-list
+  // change -- make sure Kodi's Recordings view picks that up too, same
+  // reasoning as AddTimer()'s trigger.
+  if (!isSeries)
+    TriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
