@@ -97,6 +97,25 @@ jobs:
           "pvr.dispatcharrai file:///${{ github.workspace }}/addons/pvr.dispatcharrai" |
             Out-File -Encoding ascii addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
 
+      - name: Diagnose Visual Studio availability
+        shell: pwsh
+        run: |
+          Write-Host "--- cmake --version ---"
+          cmake --version
+          Write-Host "--- cmake -G (generator list) ---"
+          cmake --help 2>&1 | Select-String -Pattern "Visual Studio"
+          Write-Host "--- vswhere ---"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            & $vswhere -all -products * -format json
+          } else {
+            Write-Host "vswhere not found at $vswhere"
+          }
+          Write-Host "--- Program Files\Microsoft Visual Studio ---"
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue -Recurse -Depth 2 | Select-Object FullName
+          Write-Host "--- Program Files (x86)\Microsoft Visual Studio ---"
+          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue -Recurse -Depth 2 | Select-Object FullName
+
       # Windows has no system libcurl, unlike Linux/macOS. Kodi's own
       # cmake/addons/depends/windows project fetches prebuilt archives listed
       # as <lib-id> <url> under its prebuilt/ subdirectory and installs them
