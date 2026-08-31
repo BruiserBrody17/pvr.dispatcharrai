@@ -255,6 +255,29 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `DeleteRecording()`'s path-id delete were both confirmed to actually
   remove the item server-side (checked directly against the API after
   deleting through Kodi), not just update Kodi's local view of it.
+- **Pressing Kodi's "Record" button on an EPG guide entry never actually
+  created a recording** -- reported as: a brief delay, then a repeating
+  "Switch / Record / Cancel" dialog that just re-appears no matter which
+  button is pressed. Root cause confirmed against Kodi's own source
+  (`xbmc/pvr/timers/PVRTimerInfoTag.cpp`, `CreateFromEpg()`): that code
+  path requires a timer type with neither `PVR_TIMER_TYPE_IS_MANUAL` nor
+  `PVR_TIMER_TYPE_IS_REPEATING` set. This addon's two timer types had
+  `IS_MANUAL` (the one-time type, needed for Kodi's separate "new manual
+  timer, no EPG event" flow) and `IS_REPEATING` (the series type) --
+  neither qualified, so Kodi could never build a timer object for a plain
+  "record this guide entry" press, regardless of anything the addon's own
+  `AddTimer()` does (it was never being reached at all). Fixed by adding a
+  third type (`kTimerTypeOneTimeEpgBased`) with neither flag; confirmed by
+  actually driving Kodi's guide UI (context menu -> Record) end-to-end and
+  watching a real Dispatcharr recording appear and start writing an MKV.
+  The dialog itself is likely `CPVRGUIActionsTimers::AnnounceReminder()` --
+  wasn't reproduced directly, but its button set is the only exact match
+  in Kodi's source for those three labels with an auto-close countdown,
+  and Kodi's UI paths documented above only ever show a plain one-button
+  "Timer creation failed" dialog for this specific failure, so there may
+  be a Kodi-version-specific difference in exactly which dialog surfaces
+  it -- the underlying missing-timer-type cause and its fix are confirmed
+  either way.
 
 ## Still unconfirmed (verify before relying on in production)
 

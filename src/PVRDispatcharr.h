@@ -72,6 +72,7 @@ public:
 private:
   static constexpr int kTimerTypeOneTime = 1;
   static constexpr int kTimerTypeSeries = 2;
+  static constexpr int kTimerTypeOneTimeEpgBased = 3;
 
   dispatcharr::Config LoadConfigFromSettings() const;
   void EnsureChannelsLoaded();
