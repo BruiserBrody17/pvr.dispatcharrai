@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -199,9 +200,73 @@ T FieldOr(const json& item, const char* key, T defaultValue)
   }
 }
 
+// Backs DispatcharrClient::m_curlShareState. A CURLSH connection/DNS/
+// TLS-session cache shared across every easy handle this client creates,
+// so short-lived per-call handles (Request(), the recording-stream probe)
+// still get keep-alive/connection reuse -- unlike ReadRecordingStream's
+// single reused CURL*, a lone shared easy handle isn't safe here since
+// Kodi's PVR API can call into this client from multiple threads at once.
+// libcurl doesn't lock a share object internally; these mutexes back the
+// lock/unlock callbacks below, which is the standard, documented pattern
+// for using one across threads (CURLSHOPT_LOCKFUNC/UNLOCKFUNC).
+constexpr int kCurlShareLockCount = 8; // headroom above CURL_LOCK_DATA_LAST
+
+struct CurlShareState
+{
+  CURLSH* handle = nullptr;
+  std::array<std::mutex, kCurlShareLockCount> locks;
+};
+
+void CurlShareLock(CURL*, curl_lock_data data, curl_lock_access, void* userptr)
+{
+  auto* state = static_cast<CurlShareState*>(userptr);
+  int index = static_cast<int>(data);
+  if (index >= 0 && index < kCurlShareLockCount)
+    state->locks[index].lock();
+}
+
+void CurlShareUnlock(CURL*, curl_lock_data data, void* userptr)
+{
+  auto* state = static_cast<CurlShareState*>(userptr);
+  int index = static_cast<int>(data);
+  if (index >= 0 && index < kCurlShareLockCount)
+    state->locks[index].unlock();
+}
+
 } // namespace
 
-DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config)) {}
+DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config))
+{
+  auto* state = new CurlShareState();
+  state->handle = curl_share_init();
+  if (state->handle)
+  {
+    curl_share_setopt(state->handle, CURLSHOPT_LOCKFUNC, CurlShareLock);
+    curl_share_setopt(state->handle, CURLSHOPT_UNLOCKFUNC, CurlShareUnlock);
+    curl_share_setopt(state->handle, CURLSHOPT_USERDATA, state);
+    curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+    curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+    curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+  }
+  m_curlShareState = state;
+}
+
+DispatcharrClient::~DispatcharrClient()
+{
+  auto* state = static_cast<CurlShareState*>(m_curlShareState);
+  if (state)
+  {
+    if (state->handle)
+      curl_share_cleanup(state->handle);
+    delete state;
+  }
+}
+
+void* DispatcharrClient::GetCurlShare() const
+{
+  auto* state = static_cast<CurlShareState*>(m_curlShareState);
+  return state ? state->handle : nullptr;
+}
 
 void DispatcharrClient::UpdateConfig(Config config)
 {
@@ -254,6 +319,7 @@ bool DispatcharrClient::Request(const std::string& method,
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
 
   if (method == "POST")
   {
@@ -490,6 +556,7 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error)
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
@@ -884,6 +951,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
 
     CURLcode res = curl_easy_perform(curl);
     long httpCode = 0;
@@ -980,6 +1048,7 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
 
     CURLcode res = curl_easy_perform(curl);
     long httpCode = 0;
