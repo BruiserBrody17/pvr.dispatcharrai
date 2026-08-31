@@ -108,6 +108,15 @@
           <default>false</default>
           <control type="toggle" />
         </setting>
+        <setting id="recording_refresh_minutes" type="integer" label="30038" help="30039">
+          <level>1</level>
+          <default>5</default>
+          <constraints>
+            <minimum>1</minimum>
+            <maximum>60</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
       </group>
     </category>
 

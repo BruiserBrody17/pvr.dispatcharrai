@@ -39,6 +39,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
   m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
+  m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
   std::string error;
@@ -59,9 +60,37 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     else
       kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to generate API key: %s", error.c_str());
   }
+
+  StartRecordingRefreshThread();
 }
 
-PVRDispatcharr::~PVRDispatcharr() = default;
+PVRDispatcharr::~PVRDispatcharr()
+{
+  {
+    std::lock_guard<std::mutex> lock(m_recordingRefreshMutex);
+    m_stopRecordingRefreshThread = true;
+  }
+  m_recordingRefreshCv.notify_all();
+  if (m_recordingRefreshThread.joinable())
+    m_recordingRefreshThread.join();
+}
+
+void PVRDispatcharr::StartRecordingRefreshThread()
+{
+  m_recordingRefreshThread = std::thread([this]() {
+    std::unique_lock<std::mutex> lock(m_recordingRefreshMutex);
+    while (!m_stopRecordingRefreshThread)
+    {
+      bool stopped = m_recordingRefreshCv.wait_for(
+          lock, std::chrono::minutes(m_recordingRefreshMinutes),
+          [this]() { return m_stopRecordingRefreshThread.load(); });
+      if (stopped)
+        break;
+      TriggerRecordingUpdate();
+      TriggerTimerUpdate();
+    }
+  });
+}
 
 // ---------------------------------------------------------------------
 // General
