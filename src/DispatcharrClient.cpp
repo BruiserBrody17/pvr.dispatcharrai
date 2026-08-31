@@ -724,6 +724,7 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
     t.title = FieldOr(item, "title", FieldOr<std::string>(item, "title_pattern", ""));
     t.titlePattern = FieldOr<std::string>(item, "title_pattern", t.title);
     t.isSeries = true;
+    t.recordNewOnly = FieldOr<std::string>(item, "mode", "all") == "new";
     out.push_back(std::move(t));
   }
   return true;
@@ -758,8 +759,9 @@ bool DispatcharrClient::CreateOneTimeRecording(
   return Request("POST", kRecordingsPath, body, response, error);
 }
 
-bool DispatcharrClient::CreateSeriesRule(
-    int channelId, const std::string& tvgId, const std::string& titlePattern, std::string& error)
+bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId,
+                                         const std::string& titlePattern, bool recordNewOnly,
+                                         std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -768,13 +770,17 @@ bool DispatcharrClient::CreateSeriesRule(
   // "channel_id" (not "title_pattern"/"channel"). tvg_id is genuinely
   // optional ("omit to match across all channels") so it's only sent when
   // non-empty rather than risking an empty string being read as an
-  // explicit "match only channels with a blank tvg_id" filter.
+  // explicit "match only channels with a blank tvg_id" filter. "mode"
+  // defaults server-side to "all" (every matching episode, including
+  // reruns); only sent explicitly when "new" (first-run only) is wanted.
   json body = {
       {"channel_id", channelId},
       {"title", titlePattern},
   };
   if (!tvgId.empty())
     body["tvg_id"] = tvgId;
+  if (recordNewOnly)
+    body["mode"] = "new";
   json response;
   if (!Request("POST", kSeriesRulesPath, body, response, error))
     return false;

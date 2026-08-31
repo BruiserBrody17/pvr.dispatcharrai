@@ -251,6 +251,22 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   to build each series timer's Kodi `ClientIndex`, which would collide for
   any second series rule; now hashes `(title, tvgId)` instead -- confirmed
   with two simultaneous rules that they now show as distinct timers.
+- Dispatcharr's `SeriesRuleRequest.mode` (`"all"` vs `"new"`, i.e. record
+  every episode including reruns vs first-run only) wasn't exposed at all
+  when creating a series rule -- it always used the server's `"all"`
+  default. Kodi's PVR API has a purpose-built control for exactly this,
+  `PVR_TIMER_TYPE_SUPPORTS_RECORD_ONLY_NEW_EPISODES` (paired with
+  `PVRTimer::SetPreventDuplicateEpisodes()`), which surfaces as a normal
+  "Prevent duplicate episodes: Record all episodes / Record only new
+  episodes" field in Kodi's own Timer Settings dialog when creating an
+  "Add timer" (series) rule from the guide. Wired up and confirmed
+  end-to-end through that real dialog: selecting "Record only new
+  episodes" and saving produced a rule with `"mode":"new"` on the server.
+  `GetTimerRules()` also reads the field back for existing rules, so an
+  already-created rule shows the right selection if inspected again (not
+  confirmed whether *editing* an existing rule's setting actually takes
+  effect server-side -- this addon doesn't implement `UpdateTimer()` at
+  all, a pre-existing gap unrelated to this specific field).
 - `DeleteSeriesRule()`'s title+tvg_id query-param delete and
   `DeleteRecording()`'s path-id delete were both confirmed to actually
   remove the item server-side (checked directly against the API after

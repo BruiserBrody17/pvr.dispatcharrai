@@ -638,8 +638,14 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
   kodi::addon::PVRTimerType series;
   series.SetId(kTimerTypeSeries);
   series.SetAttributes(PVR_TIMER_TYPE_IS_REPEATING | PVR_TIMER_TYPE_SUPPORTS_CHANNELS |
-                       PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
-  series.SetDescription("Record series (all episodes, via Dispatcharr series rule)");
+                       PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH |
+                       PVR_TIMER_TYPE_SUPPORTS_RECORD_ONLY_NEW_EPISODES);
+  series.SetDescription("Record series (via Dispatcharr series rule)");
+  // Maps to Dispatcharr's SeriesRuleRequest.mode ("all" vs "new") --
+  // confirmed against the live schema. Kodi shows this as a normal
+  // per-timer setting when creating/editing a series rule.
+  series.SetPreventDuplicateEpisodes({{0, "Record all episodes"}, {1, "Record only new episodes"}},
+                                     0);
   types.push_back(series);
 
   return PVR_ERROR_NO_ERROR;
@@ -703,6 +709,7 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
       timer.SetTitle(rule.title);
       timer.SetClientChannelUid(rule.channelId);
       timer.SetState(PVR_TIMER_STATE_SCHEDULED);
+      timer.SetPreventDuplicateEpisodes(rule.recordNewOnly ? 1 : 0);
       results.Add(timer);
     }
   }
@@ -720,7 +727,8 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
     std::string tvgId = ch ? ch->tvgId : "";
     ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId,
-                                   timer.GetTitle(), error);
+                                   timer.GetTitle(), timer.GetPreventDuplicateEpisodes() != 0,
+                                   error);
   }
   else
   {
