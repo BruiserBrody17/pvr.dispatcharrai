@@ -308,6 +308,29 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   &lt;id&gt;" from before this fix, its title is genuinely correct
   server-side already -- a plain Kodi restart will pick it up, no need
   to touch anything on Dispatcharr's side.
+- **Stopping an in-progress recording from Kodi deleted it entirely
+  instead of just stopping it -- confirmed to have actually destroyed a
+  real recording, not just a theoretical risk.** Root cause, confirmed
+  against Kodi's own source (`xbmc/pvr/timers/PVRTimers.cpp`): Kodi's
+  `DeleteTimer()` addon call takes a `forceDelete` flag that specifically
+  means "this timer is still actively recording" -- both the dedicated
+  "Stop Recording" action and choosing "Delete" on a timer Kodi already
+  knows is recording pass `forceDelete=true`; a timer that's merely
+  scheduled (not yet started) passes `false`. This addon's `DeleteTimer()`
+  ignored that flag entirely and always called `DeleteRecording()` --
+  `DELETE /api/channels/recordings/{id}/`, which "removes the associated
+  file(s) from disk" per its own description -- regardless of whether the
+  recording was still being written. Confirmed against the live schema
+  that Dispatcharr has a separate, purpose-built endpoint for exactly
+  this: `POST /api/channels/recordings/{id}/stop/`, documented as "Stop a
+  recording early while retaining the partial content for playback."
+  Fixed: `forceDelete=true` now calls `StopRecording()` (the `/stop/`
+  endpoint) instead. Verified directly against a real in-progress
+  recording -- after stopping, it remained listed with real bytes
+  written, `remux_success: true`, and a normal (non-HLS) `/file/` URL,
+  fully playable, exactly as documented -- and that a genuinely
+  non-recording timer's delete (`forceDelete=false`) still correctly
+  removes it entirely via `DeleteRecording()`.
 - **A recording that *did* show up under Recordings still failed to
   play, silently ("Error creating demuxer" in the log, no player ever
   started).** This took real digging, and an earlier note in this file
