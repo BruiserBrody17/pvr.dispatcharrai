@@ -419,6 +419,27 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   once more than one Kodi install shares the same Dispatcharr account; see
   "Known limitations with more than one Kodi client" below for the
   self-heal this addon now does about it.
+- **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
+  (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
+  demuxer read**, rather than reusing one across the life of an open
+  recording. Negligible on a low-latency LAN/Ethernet link, but confirmed
+  (via a companion session's real measurements over WiFi, 10-15ms jittery
+  RTT to the same host) to starve playback on a higher-latency link even
+  with plenty of raw bandwidth for the recording's bitrate: one bulk
+  100MB range request over a single connection measured 68.5 MB/s, but 60
+  sequential 64KB reads with a fresh connection each (matching the old
+  per-read pattern) measured only 1.13 MB/s effective throughput -- barely
+  above the ~6.9 Mbps a real recording needed, and reproduced live as
+  `CVideoPlayerAudio::Process - stream stalled` a few seconds into
+  playback. Fixed by keeping one persistent `CURL*` in
+  `RecordingStreamState`, reused across reads so libcurl's own connection
+  cache lets keep-alive apply, and only torn down on a transport-level
+  error (in case a long-idle keep-alive connection went stale) or on
+  `CloseRecordingStream()`. Verified on the Windows/Ethernet side by
+  watching `netstat` during live playback: one connection stayed
+  `ESTABLISHED` for the full duration of an 8-second sampling window
+  instead of new ports cycling through `ESTABLISHED`/`TIME_WAIT` on every
+  read.
 
 ## Known limitations with more than one Kodi client
 

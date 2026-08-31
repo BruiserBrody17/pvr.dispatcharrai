@@ -915,9 +915,17 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
   // by another install regenerating it, so retry once after a self-heal.
   for (int attempt = 0; attempt < 2; ++attempt)
   {
-    CURL* curl = curl_easy_init();
+    // Reuse one persistent handle across every read (see RecordingStreamState's
+    // comment) instead of curl_easy_init()/cleanup() per call, so libcurl's
+    // connection cache lets HTTP keep-alive apply across sequential reads.
+    CURL* curl = static_cast<CURL*>(m_recordingStream.curl);
     if (!curl)
-      return -1;
+    {
+      curl = curl_easy_init();
+      if (!curl)
+        return -1;
+      m_recordingStream.curl = curl;
+    }
 
     struct curl_slist* headers = nullptr;
     std::string apiKeyHeader;
@@ -941,7 +949,6 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
     long httpCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
 
     if (httpCode == 401 && attempt == 0)
     {
@@ -950,7 +957,18 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
         continue;
     }
 
-    if (res != CURLE_OK || (httpCode != 200 && httpCode != 206))
+    if (res != CURLE_OK)
+    {
+      // A transport-level failure, as opposed to a bad HTTP status, might
+      // mean the reused connection went stale/dead -- e.g. the server or an
+      // intervening proxy silently closed a keep-alive connection during a
+      // long pause. Drop the handle so the next read opens a fresh
+      // connection instead of retrying the same broken one indefinitely.
+      curl_easy_cleanup(curl);
+      m_recordingStream.curl = nullptr;
+      return -1;
+    }
+    if (httpCode != 200 && httpCode != 206)
       return -1;
 
     m_recordingStream.position += static_cast<int64_t>(sink.written);
@@ -995,6 +1013,8 @@ int64_t DispatcharrClient::GetRecordingStreamLength() const
 
 void DispatcharrClient::CloseRecordingStream()
 {
+  if (m_recordingStream.curl)
+    curl_easy_cleanup(static_cast<CURL*>(m_recordingStream.curl));
   m_recordingStream = RecordingStreamState();
 }
 
