@@ -624,19 +624,37 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   from this addon every session), but the *stream-probed* duration lives
   in Kodi's separate, persistent video library database, keyed by the
   recording's synthetic file path, which survives every restart.
-  Also plausibly explains a related symptom seen alongside it: Kodi's
-  info panel showing full codec/stream stats for the affected recording
-  but only bare runtime for an unaffected one -- consistent with Kodi
-  treating an item it's already probed and cached library metadata for
-  differently from one it hasn't.
+  **Confirmed (not just plausible) to be the exact same root cause as a
+  related symptom**: Kodi's Home screen "Recent recordings" widget shows
+  full media flags (resolution/codec/audio format, e.g. `H.264` `1080 HD`
+  `DOLBY` `5.1`) for the affected recording but only bare runtime for an
+  unaffected one -- reproduced side by side on the same install, same
+  widget, hovering each item in turn. Both symptoms come from the same
+  `m_streamDetails` field: populated, the media flags show *and* the
+  small probed duration can win; empty, neither happens.
+  Narrowed down further which playback path actually populates it: the
+  one affected recording here was specifically played through this
+  addon's **in-progress playback feature**
+  (`enable_inprogress_playback`, routed through the separate
+  `inputstream.ffmpegdirect` addon) while it was still being written; the
+  unaffected one was only ever played through this addon's native
+  completed-recording path (`OpenRecordedStream()`/`CInputStreamPVRRecording`).
+  That's a real, mechanistic difference, not a coincidence: it means
+  **using the in-progress playback feature to check in on a recording
+  early has a lasting side effect on how Kodi displays it later, once
+  it's completed** -- a permanently wrong duration in the library view,
+  even though the recording itself and its actual playback are both
+  completely fine. Not fixable from this addon's side (see above), but
+  worth knowing before using that feature on a recording you also plan
+  to watch normally once it's done.
   Not something this addon can fix or work around: there's no PVR client
   API to tell Kodi "forget the stream details/library metadata you
   cached for this file," and this addon doesn't (and shouldn't) touch
   Kodi's video library database directly. Actual playback is unaffected
-  -- confirmed separately that the real file plays with its correct,
-  full-length duration once actually opened; this is purely a
-  library/metadata display quirk for an item Kodi already has cached
-  data for.
+  either way -- confirmed separately that the real file plays with its
+  correct, full-length duration once actually opened; this is purely a
+  library/metadata display quirk for an item Kodi has cached stream
+  details for.
 
 ## Known limitations with more than one Kodi client
 
