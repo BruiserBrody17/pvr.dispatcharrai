@@ -113,6 +113,14 @@ msgctxt "#30037"
 msgid "Lets you play a recording while Dispatcharr is still actively writing it, by routing it through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of this addon's normal recording playback -- it must be installed, or playback will fail. Experimental: unlike completed recordings, this hasn't seen the same amount of real-world use. Leave off to keep the existing behaviour of waiting for a recording to finish before playing it."
 msgstr ""
 
+msgctxt "#30038"
+msgid "Recordings/timers refresh interval (minutes)"
+msgstr ""
+
+msgctxt "#30039"
+msgid "How often to ask Kodi to re-check its recordings and timers list on its own, without waiting for a local action (like starting or deleting a recording from this Kodi) to prompt it. Without this, a change made another way -- from a different Kodi install sharing this Dispatcharr account, directly through Dispatcharr itself, or a recording finishing on its own with nothing local to react to it -- would only ever show up after restarting Kodi."
+msgstr ""
+
 msgctxt "#30030"
 msgid "Advanced"
 msgstr ""
