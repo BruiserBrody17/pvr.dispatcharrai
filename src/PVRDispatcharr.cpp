@@ -583,8 +583,17 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
 
     if (inProgress)
     {
-      properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL,
-                               m_client.GetInProgressRecordingStreamUrl(id));
+      std::string keyBefore = m_client.GetApiKey();
+      std::string streamUrl = m_client.GetInProgressRecordingStreamUrl(id);
+      // See GetInProgressRecordingStreamUrl()'s comment: it may have just
+      // self-healed a stale key before building this URL. Persist it the
+      // same way OpenRecordedStream()/ReadRecordedStream() do, so a
+      // restart of this install doesn't immediately invalidate it again.
+      std::string keyAfter = m_client.GetApiKey();
+      if (keyAfter != keyBefore)
+        kodi::addon::SetSettingString("api_key", keyAfter);
+
+      properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
       properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
       properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
       properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");

@@ -466,13 +466,21 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   the same reason the seek-focused catch-up attempts were abandoned
   elsewhere in this addon: it's exactly the kind of complexity that's
   already burned time here twice.
-  One real limitation: unlike `OpenRecordingStream()`/
-  `ReadRecordingStream()`, this path has no way to self-heal a stale API
-  key (see the note above) -- the URL (and its baked-in key) is handed to
-  a separate addon process once, with no 401-retry hook the way this
-  addon's own HTTP client has. If the key was invalidated by another Kodi
-  install between when the URL was built and when ffmpegdirect actually
-  opens it, playback will fail with no automatic recovery.
+  Gap found by a companion session's real multi-install testing: unlike
+  `OpenRecordingStream()`/`ReadRecordingStream()`, there's no way to
+  self-heal a stale API key *after the fact* here -- the URL (with the
+  key baked in) is handed to a separate addon process once, with no
+  401-retry hook the way this addon's own HTTP client has. Fixed with a
+  proactive check instead of a reactive one:
+  `GetInProgressRecordingStreamUrl()` does a cheap live probe (a tiny
+  ranged GET, mirroring `OpenRecordingStream()`'s own probe) against the
+  exact URL it's about to build, and regenerates the key first if that
+  comes back 401, before ever baking it into the URL ffmpegdirect will
+  use standalone. `PVRDispatcharr` persists the regenerated key the same
+  way it does for the other two paths. Adds one extra request before
+  in-progress playback starts; accepted as a fair trade for closing a gap
+  that's already been hit repeatedly in real testing across two
+  installs sharing one account.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open
