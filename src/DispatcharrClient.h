@@ -166,6 +166,7 @@ class DispatcharrClient
 {
 public:
   explicit DispatcharrClient(Config config);
+  ~DispatcharrClient();
 
   void UpdateConfig(Config config);
 
@@ -279,6 +280,14 @@ private:
   bool Login(std::string& error);
   bool RefreshAccessToken(std::string& error);
 
+  // The CURLSH* behind m_curlShareState, or nullptr if it failed to
+  // initialise -- pass to CURLOPT_SHARE on every easy handle this client
+  // creates (Request(), OpenRecordingStream()'s probe, ReadRecordingStream()'s
+  // persistent handle) so they all pull from one connection/DNS/TLS-session
+  // cache. Returns void* (actually CURLSH*) so this header doesn't need
+  // <curl/curl.h>; defined in the .cpp, which does.
+  void* GetCurlShare() const;
+
   // Performs one HTTP call. `body` is sent as the JSON request body for
   // POST/PATCH/DELETE-with-body; pass an empty object for bodyless calls.
   // On success, parses the response into `responseOut` (may be left null
@@ -296,6 +305,25 @@ private:
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;
+
+  // Opaque pointer to a small heap-allocated struct (CurlShareState, defined
+  // in the .cpp) holding a CURLSH* and the mutexes that guard it. Every
+  // curl_easy_init() this client does (Request(), the recording-stream
+  // helpers) is still a fresh easy handle per call/open recording -- unlike
+  // ReadRecordingStream's single reused CURL*, a lone shared easy handle
+  // isn't safe here, since Kodi's PVR API can call into this client from
+  // multiple threads at once (see the class comment above). A CURLSH share
+  // object is libcurl's own answer to exactly that: a connection/DNS/
+  // TLS-session cache safely shared across separate, concurrently-used easy
+  // handles, as long as the application supplies lock/unlock callbacks
+  // (libcurl doesn't lock it internally) -- see GetCurlShare() and the
+  // constructor/destructor. Found necessary by a companion session's real
+  // measurements: a single "Record" press fires several Request() calls in
+  // a row (create, then a timer/recordings refresh), and on WiFi each one
+  // independently exposed to a fresh-connection latency spike produced a
+  // visible (1.8s-10s observed) delay before Kodi's own "recording started"
+  // notification appeared, versus ~20ms/call under calm conditions.
+  void* m_curlShareState = nullptr;
 
   // Kodi only ever has one recording open for playback at a time.
   struct RecordingStreamState
