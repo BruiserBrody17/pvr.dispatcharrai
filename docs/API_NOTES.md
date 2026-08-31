@@ -440,6 +440,37 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `ESTABLISHED` for the full duration of an 8-second sampling window
   instead of new ports cycling through `ESTABLISHED`/`TIME_WAIT` on every
   read.
+- The same per-call fresh-connection cost also applied to `Request()`, the
+  helper behind essentially every other API call (login, `GetChannels()`,
+  `GetRecordings()`, `AddTimer()`'s `CreateOneTimeRecording()`, etc.) --
+  not as hot a path as recording reads, but a companion session found that
+  a single "Record" press fires several of these in a row, and on WiFi
+  each one is independently exposed to a connection-setup latency spike:
+  measured 20ms/call under calm conditions but 1.8-10s before Kodi's own
+  "recording started" notification appeared under worse ones, on
+  identical code across repeated runs -- pointing at intermittent
+  connection setup, not a deterministic slow path. Unlike
+  `ReadRecordingStream()`, `Request()` can't just reuse one `CURL*`: Kodi's
+  PVR API calls into this client from multiple threads (see the class
+  comment in `DispatcharrClient.h`), and a single easy handle isn't safe
+  for concurrent use. Fixed with a `CURLSH` share object (connection/DNS/
+  TLS-session cache) applied to every easy handle this client creates,
+  with mutex-backed lock/unlock callbacks -- libcurl doesn't lock a share
+  object internally, that's on the application. Verified no regressions
+  across channels/recordings/timers/`AddTimer()`/playback after the
+  rebuild; a real WiFi-timing before/after comparison is the companion
+  session's to confirm, the way the read-path fix above was.
+- Unrelated discovery while testing the fix above: Kodi can reject
+  `PVR.AddTimer` outright with "The PVR backend does not allow to record
+  this event" for some EPG broadcasts and not others, with **zero** log
+  output from this addon (confirmed: no `AddOnLog: pvr.dispatcharrai`
+  line at all) -- meaning the rejection happens entirely in Kodi core,
+  before ever reaching `AddTimer()`. Not investigated further (out of
+  scope, and the exact same broadcastid succeeded cleanly and instantly
+  moments later), but worth knowing so a rejected recording isn't
+  mistaken for an addon bug: check for a scheduling conflict on that
+  channel first (a channel already mid-recording will reject an
+  overlapping one, which explains at least one case seen).
 - A freshly-created recording can briefly show as `"Recording <id>"`
   instead of its real title, until Dispatcharr's own async enrichment
   (`custom_properties.program.title`, see above) catches up and a later
