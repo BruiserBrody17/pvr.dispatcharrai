@@ -744,6 +744,23 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   // full Kodi restart was what actually surfaced it. Harmless no-op for a
   // genuinely future recording or a series rule.
   TriggerRecordingUpdate();
+  // Dispatcharr fills in the recording's real title (custom_properties.
+  // program.title, see GetRecordings()) asynchronously, a moment after it
+  // actually starts -- confirmed: right at creation, custom_properties is
+  // still `{}`. The immediate TriggerRecordingUpdate() above fires before
+  // that happens, so Kodi's first (and, confirmed, often *only* --
+  // nothing else prompts it to ask again) fetch gets our "Recording <id>"
+  // fallback and keeps showing it indefinitely, even after the recording
+  // finishes. A second, delayed trigger gives Dispatcharr time to enrich
+  // it first. Detached: AddTimer() shouldn't block Kodi's calling thread
+  // for this.
+  if (timer.GetTimerType() != kTimerTypeSeries)
+  {
+    std::thread([this]() {
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+      TriggerRecordingUpdate();
+    }).detach();
+  }
   return PVR_ERROR_NO_ERROR;
 }
 
