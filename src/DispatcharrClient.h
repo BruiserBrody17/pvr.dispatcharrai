@@ -64,6 +64,7 @@
 // objects too -- see docs/API_NOTES.md for the details.
 
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -229,6 +230,23 @@ public:
   // (confirmed against the live OpenAPI schema), not by path id.
   bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error);
 
+  // Raw byte-range recording playback. Confirmed against Kodi's own source
+  // that pvr://recordings/... paths are always demuxed via
+  // CInputStreamPVRRecording (xbmc/cores/VideoPlayer/DVDInputStreams/
+  // InputStreamPVRRecording.cpp), which serves the generic FFmpeg demuxer
+  // by calling these through the addon's OpenRecordedStream/
+  // ReadRecordedStream/SeekRecordedStream/LengthRecordedStream -- NOT by
+  // resolving PVR_STREAM_PROPERTY_STREAMURL from GetRecordingStreamUrl()
+  // the way live channels and catch-up work. Only supports a completed
+  // recording (a real, Range-seekable file); an in-progress one currently
+  // redirects to an HLS playlist server-side, which isn't handled here --
+  // see docs/API_NOTES.md.
+  bool OpenRecordingStream(int recordingId, std::string& error);
+  int ReadRecordingStream(uint8_t* buffer, unsigned int size);
+  int64_t SeekRecordingStream(int64_t position, int whence);
+  int64_t GetRecordingStreamLength() const;
+  void CloseRecordingStream();
+
 private:
   std::string BaseUrl() const;
   bool Login(std::string& error);
@@ -251,6 +269,16 @@ private:
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;
+
+  // Kodi only ever has one recording open for playback at a time.
+  struct RecordingStreamState
+  {
+    bool open = false;
+    std::string url; // final URL after following any redirect
+    int64_t length = -1;
+    int64_t position = 0;
+  };
+  RecordingStreamState m_recordingStream;
 };
 
 } // namespace dispatcharr

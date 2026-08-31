@@ -61,6 +61,17 @@ public:
   PVR_ERROR GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                          std::vector<kodi::addon::PVRStreamProperty>& properties) override;
   PVR_ERROR DeleteRecording(const kodi::addon::PVRRecording& recording) override;
+  // Kodi always demuxes pvr://recordings/... via CInputStreamPVRRecording,
+  // which serves the generic FFmpeg demuxer through these -- confirmed
+  // against Kodi's own source that it never resolves
+  // PVR_STREAM_PROPERTY_STREAMURL from GetRecordingStreamProperties() for
+  // this path the way live channels and catch-up work. See
+  // DispatcharrClient::OpenRecordingStream().
+  bool OpenRecordedStream(const kodi::addon::PVRRecording& recording) override;
+  void CloseRecordedStream() override;
+  int ReadRecordedStream(unsigned char* buffer, unsigned int size) override;
+  int64_t SeekRecordedStream(int64_t position, int whence) override;
+  int64_t LengthRecordedStream() override;
 
   // --- Timers ---
   PVR_ERROR GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types) override;
