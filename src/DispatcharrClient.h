@@ -310,7 +310,18 @@ public:
   // confirmed in-progress status via GetRecordings() -- the same condition
   // Dispatcharr's own /file/ endpoint uses to decide whether to redirect
   // here at all.
-  std::string GetInProgressRecordingStreamUrl(int recordingId) const;
+  //
+  // Not const: unlike OpenRecordingStream()/ReadRecordingStream(), there's
+  // no callback into this addon if the key turns out to be stale -- the URL
+  // (with the key already baked in) is handed to inputstream.ffmpegdirect
+  // once, upfront, with no way for it to ask this addon to regenerate and
+  // retry the way this addon's own HTTP client does on a 401. Confirmed via
+  // real multi-install testing that the shared account-wide key (see
+  // GenerateApiKey()'s comment) can already be stale by the time this is
+  // called, so this checks it live first and regenerates before baking in
+  // a key already known to be invalid, rather than baking it in blind and
+  // letting ffmpegdirect fail outright with no recovery.
+  std::string GetInProgressRecordingStreamUrl(int recordingId);
 
 private:
   std::string BaseUrl() const;
@@ -324,6 +335,16 @@ private:
   // cache. Returns void* (actually CURLSH*) so this header doesn't need
   // <curl/curl.h>; defined in the .cpp, which does.
   void* GetCurlShare() const;
+
+  // A tiny ranged GET (mirrors OpenRecordingStream()'s own probe -- a HEAD
+  // request isn't confirmed to behave the same on this endpoint) with the
+  // current API key attached, used only to check the key is still live
+  // before GetInProgressRecordingStreamUrl() bakes it into a URL that can't
+  // self-heal later. Returns true on anything but a 401 (a transport error
+  // or other status isn't this check's problem to solve -- fail open rather
+  // than block playback on a check that was only ever a best-effort head
+  // start on a problem the caller can't fully prevent anyway).
+  bool IsApiKeyValidFor(const std::string& url) const;
 
   // Performs one HTTP call. `body` is sent as the JSON request body for
   // POST/PATCH/DELETE-with-body; pass an empty object for bodyless calls.

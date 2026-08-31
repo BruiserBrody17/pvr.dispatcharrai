@@ -906,9 +906,53 @@ bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::st
   return Request("DELETE", path, json(), response, error);
 }
 
-std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId) const
+bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
 {
-  std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/index.m3u8";
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return true; // fail open: a local curl-init failure isn't evidence the key is bad
+
+  struct curl_slist* headers = nullptr;
+  std::string apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+  headers = curl_slist_append(headers, apiKeyHeader.c_str());
+
+  std::string discard;
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &discard);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+  CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  return res != CURLE_OK || httpCode != 401;
+}
+
+std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId)
+{
+  std::string path = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/index.m3u8";
+
+  // Proactive self-heal: confirmed via real multi-install testing that the
+  // key can already be stale by the time this is called (see this method's
+  // header comment for why nothing can retry after the fact here the way
+  // OpenRecordingStream()/ReadRecordingStream() do). Best-effort: if
+  // GenerateApiKey() itself fails, proceed with whatever key is on hand
+  // rather than blocking playback on this check entirely.
+  if (!m_config.apiKey.empty() && !IsApiKeyValidFor(path))
+  {
+    std::string regenKey, regenError;
+    GenerateApiKey(regenKey, regenError);
+  }
+
+  std::string url = path;
   // ffmpegdirect's header mapping (CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput,
   // confirmed against its source and a live failed attempt: it logged
   // "ignoring header option 'X-API-Key'" without the prefix) only forwards a
