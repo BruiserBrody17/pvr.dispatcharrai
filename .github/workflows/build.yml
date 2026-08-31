@@ -97,25 +97,6 @@ jobs:
           "pvr.dispatcharrai file:///${{ github.workspace }}/addons/pvr.dispatcharrai" |
             Out-File -Encoding ascii addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
 
-      - name: Diagnose Visual Studio availability
-        shell: pwsh
-        run: |
-          Write-Host "--- cmake --version ---"
-          cmake --version
-          Write-Host "--- cmake -G (generator list) ---"
-          cmake --help 2>&1 | Select-String -Pattern "Visual Studio"
-          Write-Host "--- vswhere ---"
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            & $vswhere -all -products * -format json
-          } else {
-            Write-Host "vswhere not found at $vswhere"
-          }
-          Write-Host "--- Program Files\Microsoft Visual Studio ---"
-          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue -Recurse -Depth 2 | Select-Object FullName
-          Write-Host "--- Program Files (x86)\Microsoft Visual Studio ---"
-          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue -Recurse -Depth 2 | Select-Object FullName
-
       # Windows has no system libcurl, unlike Linux/macOS. Kodi's own
       # cmake/addons/depends/windows project fetches prebuilt archives listed
       # as <lib-id> <url> under its prebuilt/ subdirectory and installs them
@@ -125,6 +106,16 @@ jobs:
       # both up together. curl here also needs OpenSSL and zlib to link
       # (verified by actually running this build -- CURLConfig.cmake pulls
       # them in transitively).
+      #
+      # Generator: "Visual Studio 18 2026", not "17 2022" -- confirmed via a
+      # live run's diagnostics that windows-latest now ships only VS2026
+      # (Enterprise, installed at C:\Program Files\Microsoft Visual
+      # Studio\18\Enterprise); no VS2022 instance exists on the runner at
+      # all anymore, so CMake's generator lookup failed outright ("could not
+      # find any instance of Visual Studio") rather than falling back. If
+      # this starts failing again after a future runner image update, rerun
+      # the same diagnostic (vswhere -all -format json) before guessing at
+      # another generator string.
       - name: Fetch prebuilt curl/OpenSSL/zlib for Windows
         shell: pwsh
         run: |
@@ -136,7 +127,7 @@ jobs:
             Out-File -Encoding ascii "$prebuilt/openssl.txt"
           "zlib http://mirrors.kodi.tv/build-deps/win32/zlib-1.2.11-x64-v141-20200105.7z" |
             Out-File -Encoding ascii "$prebuilt/zlib.txt"
-          cmake -S kodi-source/cmake/addons/depends/windows -B deps-build -G "Visual Studio 17 2022" -A x64 "-DADDON_DEPENDS_PATH=$depends"
+          cmake -S kodi-source/cmake/addons/depends/windows -B deps-build -G "Visual Studio 18 2026" -A x64 "-DADDON_DEPENDS_PATH=$depends"
           cmake --build deps-build --config Release
           # Remove the registrations before the main build: the generic addon-depends
           # scan below (add_addon_depends) also globs this same prebuilt/ directory,
@@ -146,7 +137,7 @@ jobs:
       - name: Build addon (CMake, MSVC)
         shell: pwsh
         run: |
-          cmake -S kodi-source/cmake/addons -B build -G "Visual Studio 17 2022" -A x64 `
+          cmake -S kodi-source/cmake/addons -B build -G "Visual Studio 18 2026" -A x64 `
             "-DADDONS_TO_BUILD=pvr.dispatcharrai" `
             "-DADDONS_DEFINITION_DIR=${{ github.workspace }}/addon-defs" `
             "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install" `
