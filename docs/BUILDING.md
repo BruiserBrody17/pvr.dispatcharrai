@@ -136,7 +136,16 @@ rather than assuming either one.
    multi-item list. Installing curl straight into the default depends path
    in step 2, and leaving `CMAKE_PREFIX_PATH` alone here, sidesteps that bug
    entirely.
-4. The resulting zip in `dist` bundles `libcurl.dll` and `zlib.dll` alongside
+4. `-DPACKAGE_DIR` doesn't actually redirect CPack's output here either (same
+   as the Linux/macOS harness above) -- confirmed via a real run's CPack log,
+   it instead drops the zip in the OS temp dir (`$env:TEMP`, e.g.
+   `addon-pvr.dispatcharrai-0.1.0-windows-x86_64.zip` under
+   `C:\Users\<runner>\AppData\Local\Temp`). Find it there rather than in
+   `dist`:
+   ```powershell
+   Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharrai-*.zip' -Recurse
+   ```
+   That zip bundles `libcurl.dll` and `zlib.dll` alongside
    `pvr.dispatcharrai.dll` (see `CMakeLists.txt`'s `DISPATCHARR_ADDITIONAL_BINARY`),
    since a standalone Windows install can't assume those are already present
    the way Kodi's own bundled curl, or Linux's system libcurl, would be.

@@ -146,6 +146,22 @@ jobs:
             "-DBUILD_DIR=${{ github.workspace }}/build/build"
           cmake --build build --config Release --target package-pvr.dispatcharrai
 
+      # -DPACKAGE_DIR doesn't take effect here either (same unhonored-variable
+      # issue as the Unix harness above) -- on Windows CPack instead drops the
+      # zip in the OS temp dir (confirmed via a real run's CPack log: it wrote
+      # to C:\Users\RUNNER~1\AppData\Local\Temp\addon-pvr.dispatcharrai-*.zip,
+      # i.e. $env:TEMP), which the "Upload build artifact" step silently found
+      # nothing at ("No files were found with the provided path: dist/*.zip")
+      # since dist/ was never created. Copy it out of $env:TEMP explicitly.
+      - name: Collect built zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $zip = Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharrai-*.zip' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $zip) { throw "Could not find built zip under $env:TEMP" }
+          Copy-Item $zip.FullName dist/
+          Get-ChildItem dist
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
