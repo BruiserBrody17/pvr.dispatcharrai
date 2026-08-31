@@ -440,6 +440,30 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   `ESTABLISHED` for the full duration of an 8-second sampling window
   instead of new ports cycling through `ESTABLISHED`/`TIME_WAIT` on every
   read.
+- A freshly-created recording can briefly show as `"Recording <id>"`
+  instead of its real title, until Dispatcharr's own async enrichment
+  (`custom_properties.program.title`, see above) catches up and a later
+  refresh picks it up. Kodi already has the correct title *before* this
+  addon is ever called, though: `CPVRTimerInfoTag::CreateFromEpg()`
+  populates it from the EPG tag the user pressed "Record" on, and
+  `AddTimer()` was just discarding it (`CreateOneTimeRecording()`'s
+  `title` parameter went unused, deliberately, to avoid the
+  custom_properties-replace-not-merge trap noted above). Fixed by caching
+  that title client-side (`DispatcharrClient`'s `PendingTitle`, matched by
+  channel, not also start time -- Dispatcharr silently clamps a recording's
+  stored `start_time` to the moment it actually began for an
+  already-airing EPG event, confirmed against a real one, so exact-time
+  matching missed the single most common case: "Record" on something
+  currently on) and using it in `GetRecordings()` in place of the
+  `"Recording <id>"` fallback. Live-tested against several real EPG
+  broadcasts (including an already-airing one) and confirmed the correct
+  title end to end with no regressions -- but this server's own
+  enrichment turned out to be fast enough in testing (both for
+  already-airing and future-scheduled recordings) that the exact race
+  this fixes couldn't be reliably reproduced live; the fix is
+  correct-by-construction (a pure fallback, only consulted when the
+  server-provided title is still empty) rather than confirmed against a
+  reproduced failure the way most fixes in this file are.
 
 ## Known limitations with more than one Kodi client
 
@@ -500,9 +524,11 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
 
 - Whether a one-time recording that doesn't match any real EPG programme
   (a fully manual/custom time range with nothing airing to auto-enrich
-  from) gets *any* usable title, or falls back to this addon's
-  `"Recording <id>"` default -- only the common EPG-matched case (which
-  does get a real title via the auto-enrichment above) was tested.
+  from) ever gets a title *from Dispatcharr itself*. Less consequential
+  than it used to be: the pending-title cache above now shows whatever
+  title Kodi's manual-timer dialog was given regardless, so this only
+  matters for whether Dispatcharr's own data independently agrees once
+  its enrichment (or lack thereof) resolves -- not tested.
 - The account used to verify this (`claude`) initially got "You do not
   have permission to perform this action" trying to create a recording or
   series rule -- same account that could log in, browse channels, and
