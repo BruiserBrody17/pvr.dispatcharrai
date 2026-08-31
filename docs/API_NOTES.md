@@ -458,8 +458,24 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   with mutex-backed lock/unlock callbacks -- libcurl doesn't lock a share
   object internally, that's on the application. Verified no regressions
   across channels/recordings/timers/`AddTimer()`/playback after the
-  rebuild; a real WiFi-timing before/after comparison is the companion
-  session's to confirm, the way the read-path fix above was.
+  rebuild.
+  This closed most, but confirmed not all, of the gap: the companion
+  session's post-fix WiFi timing was 2/3 runs at ~0.1s (matching the raw
+  ~20ms API latency) but one run at 8.4s, still in the original
+  complaint's range. They ruled out the network path for that outlier --
+  a 30-second/60-packet ping to the Dispatcharr host in a calm window
+  right after showed 0% loss, 6-17ms throughout, no anomaly -- and their
+  read (not confirmed, no lower-level instrumentation attempted) is macOS
+  WiFi radio power-save/idle-wake behavior: if the radio dozes during a
+  quiet spell between guide navigation and the record press, the next
+  transmission can eat a real multi-second wake latency no HTTP-layer fix
+  touches, and a sustained ping (which itself keeps the radio busy)
+  wouldn't reproduce it. Left as a documented, likely-environmental
+  caveat rather than chased further in the addon -- if confirmed later,
+  the fix would be periodic background keep-alive traffic to prevent the
+  radio from idling, but that's a real battery-life cost to pay for an
+  unconfirmed cause and an already-rare (1 of 3 runs, likely rarer in
+  normal use than in back-to-back test cycles) case.
 - Unrelated discovery while testing the fix above: Kodi can reject
   `PVR.AddTimer` outright with "The PVR backend does not allow to record
   this event" for some EPG broadcasts and not others, with **zero** log
