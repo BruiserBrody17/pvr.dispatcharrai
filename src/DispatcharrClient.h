@@ -38,7 +38,7 @@
 //                                                         or Bearer token, confirmed
 //                                                         for both an in-progress and
 //                                                         a completed recording -- see
-//                                                         GetRecordingStreamUrl()
+//                                                         OpenRecordingStream()
 //   GET    {base}/api/channels/series-rules/          -> {"rules": [...]}, NOT a bare
 //                                                         array or {results: [...]}
 //   POST   {base}/api/channels/series-rules/          -> body is {title, tvg_id?,
@@ -91,10 +91,14 @@ struct Config
   // different Dispatcharr/provider setup needs a moment between switches.
   int channelSwitchDelaySeconds = 0;
   // Long-lived Dispatcharr API key, used only to authenticate recording
-  // playback (see GetRecordingStreamUrl()) -- unlike the JWT access token
-  // (30-minute lifetime), this doesn't expire mid-playback. Auto-generated
-  // and persisted back to the addon's own settings on first use if left
-  // empty; see PVRDispatcharr's constructor.
+  // playback (see OpenRecordingStream()) -- unlike the JWT access token
+  // (30-minute lifetime), this doesn't expire on its own. It CAN still go
+  // stale, though: Dispatcharr keeps only one active key account-wide, so
+  // another Kodi install regenerating its own key silently invalidates
+  // this one -- OpenRecordingStream()/ReadRecordingStream() detect that (a
+  // 401) and self-heal by regenerating and retrying. Auto-generated and
+  // persisted back to the addon's own settings on first use if left empty;
+  // see PVRDispatcharr's constructor.
   std::string apiKey;
 };
 
@@ -195,12 +199,6 @@ public:
                             std::string& error);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
-  // Includes an X-API-Key header suffix (Kodi's "|key=value" stream URL
-  // syntax) when Config::apiKey is set -- required (confirmed against a
-  // live instance): both in-progress and completed recordings return 403
-  // to an anonymous request despite this endpoint's documented security
-  // schemes including anonymous access.
-  std::string GetRecordingStreamUrl(int recordingId) const;
   bool DeleteRecording(int recordingId, std::string& error);
   // Confirmed against the live schema: POST .../recordings/{id}/stop/
   // "Stop[s] a recording early while retaining the partial content for
@@ -216,14 +214,22 @@ public:
   // True if Config::apiKey is already set. Callers use this to decide
   // whether GenerateApiKey() is worth calling at all.
   bool HasApiKey() const { return !m_config.apiKey.empty(); }
+  // Current API key, e.g. to re-persist it after OpenRecordingStream()/
+  // ReadRecordingStream() have silently regenerated a stale one (see their
+  // comments below) -- this client has no knowledge of Kodi's settings
+  // storage, so the caller must notice the change and save it itself.
+  std::string GetApiKey() const { return m_config.apiKey; }
   // Generates a new Dispatcharr API key and stores it in this client's own
   // config for immediate use by GetRecordingStreamUrl(). Regenerating
   // replaces any previous key for the account (confirmed against a live
-  // instance), so callers should only invoke this when HasApiKey() is
-  // false, and should persist the result themselves (this client has no
-  // knowledge of Kodi's settings storage) so it isn't regenerated -- and
-  // any *other* key for the account isn't invalidated again -- on every
-  // addon restart.
+  // instance) -- Dispatcharr keeps only one active key account-wide, so
+  // running this addon against the same account from more than one Kodi
+  // install means whichever one last called this silently invalidates
+  // every other install's stored key. OpenRecordingStream()/
+  // ReadRecordingStream() call this automatically on a 401 to self-heal
+  // from that; call it directly only when HasApiKey() is false (e.g. first
+  // run), and persist the result so a restart doesn't invalidate a key
+  // some other install is actively relying on.
   bool GenerateApiKey(std::string& keyOut, std::string& error);
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
@@ -246,17 +252,19 @@ public:
   // (confirmed against the live OpenAPI schema), not by path id.
   bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error);
 
-  // Raw byte-range recording playback. Confirmed against Kodi's own source
-  // that pvr://recordings/... paths are always demuxed via
-  // CInputStreamPVRRecording (xbmc/cores/VideoPlayer/DVDInputStreams/
-  // InputStreamPVRRecording.cpp), which serves the generic FFmpeg demuxer
-  // by calling these through the addon's OpenRecordedStream/
-  // ReadRecordedStream/SeekRecordedStream/LengthRecordedStream -- NOT by
-  // resolving PVR_STREAM_PROPERTY_STREAMURL from GetRecordingStreamUrl()
-  // the way live channels and catch-up work. Only supports a completed
-  // recording (a real, Range-seekable file); an in-progress one currently
-  // redirects to an HLS playlist server-side, which isn't handled here --
-  // see docs/API_NOTES.md.
+  // Raw byte-range recording playback, called through the addon's
+  // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
+  // LengthRecordedStream. Kodi's kodi-dev-kit docs describe
+  // PVR_STREAM_PROPERTY_STREAMURL as a fallback used only when an addon
+  // doesn't implement these -- but confirmed against a real failure (a live
+  // kodi.log showed Kodi's generic CCurlFile hitting a populated STREAMURL
+  // directly, bypassing these entirely, including the 401-retry logic
+  // below) that populating STREAMURL anyway is NOT harmless once these are
+  // implemented: Kodi will happily use it instead, silently skipping this
+  // code path. GetRecordingStreamProperties() deliberately leaves STREAMURL
+  // unset for that reason. Only supports a completed recording (a real,
+  // Range-seekable file); an in-progress one currently redirects to an HLS
+  // playlist server-side, which isn't handled here -- see docs/API_NOTES.md.
   bool OpenRecordingStream(int recordingId, std::string& error);
   int ReadRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekRecordingStream(int64_t position, int whence);
