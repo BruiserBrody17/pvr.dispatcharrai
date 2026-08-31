@@ -548,8 +548,30 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
   oneTime.SetAttributes(PVR_TIMER_TYPE_IS_MANUAL | PVR_TIMER_TYPE_SUPPORTS_CHANNELS |
                         PVR_TIMER_TYPE_SUPPORTS_START_TIME | PVR_TIMER_TYPE_SUPPORTS_END_TIME |
                         PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
-  oneTime.SetDescription("One-time recording");
+  oneTime.SetDescription("One-time recording (manual)");
   types.push_back(oneTime);
+
+  // Separate from the manual type above: Kodi's own "Record" button on an
+  // EPG guide entry (CGUIDialogPVRGuideInfo::OnClickButtonRecord /
+  // PVRContextMenus.cpp's StartRecording) creates a timer via
+  // CPVRTimerInfoTag::CreateFromEpg(), which explicitly searches for a
+  // timer type WITHOUT PVR_TIMER_TYPE_IS_MANUAL and WITHOUT
+  // PVR_TIMER_TYPE_IS_REPEATING (confirmed in Kodi's own source,
+  // xbmc/pvr/timers/PVRTimerInfoTag.cpp). The one-time type above has
+  // IS_MANUAL set (needed for Kodi's separate "add a manual timer with no
+  // EPG event" flow), and the series type below has IS_REPEATING set, so
+  // neither one qualifies -- without this type, CreateFromEpg() always
+  // returned null and "Record" from the guide could never create a real
+  // timer. AddTimer()/DeleteTimer() already treat anything that isn't
+  // kTimerTypeSeries as a one-time recording, so no other code needed to
+  // change for this type to work.
+  kodi::addon::PVRTimerType oneTimeEpg;
+  oneTimeEpg.SetId(kTimerTypeOneTimeEpgBased);
+  oneTimeEpg.SetAttributes(PVR_TIMER_TYPE_SUPPORTS_CHANNELS | PVR_TIMER_TYPE_SUPPORTS_START_TIME |
+                           PVR_TIMER_TYPE_SUPPORTS_END_TIME |
+                           PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
+  oneTimeEpg.SetDescription("One-time recording (from guide)");
+  types.push_back(oneTimeEpg);
 
   kodi::addon::PVRTimerType series;
   series.SetId(kTimerTypeSeries);
