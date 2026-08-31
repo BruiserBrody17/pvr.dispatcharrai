@@ -534,20 +534,18 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
+PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& /*recording*/,
                                                         std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
-  // Confirmed against Kodi's own source that this is never actually
-  // consulted for a pvr://recordings/... item -- Kodi always routes
-  // recording playback through CInputStreamPVRRecording, which calls
-  // OpenRecordedStream()/ReadRecordedStream()/etc. below instead of
-  // resolving PVR_STREAM_PROPERTY_STREAMURL from here the way live
-  // channels and catch-up work. Left populated anyway (harmless, and
-  // matches what the kodi-dev-kit docs describe as the fallback if an
-  // addon doesn't implement OpenRecordedStream) in case a future Kodi
-  // version's behaviour differs.
-  int id = std::atoi(recording.GetRecordingId().c_str());
-  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, m_client.GetRecordingStreamUrl(id));
+  // The claim this used to make here -- that Kodi never actually consults
+  // STREAMURL for a pvr://recordings/... item, always routing through
+  // CInputStreamPVRRecording's OpenRecordedStream()/ReadRecordedStream()/etc.
+  // below instead -- turned out to be wrong in practice: a live kodi.log
+  // from a real failed playback showed Kodi's generic CCurlFile opening
+  // this exact pipe-delimited STREAMURL directly (bypassing our addon's
+  // OpenRecordedStream() entirely, including its 401-retry/API-key-regen
+  // logic, which never even ran). Leave STREAMURL unset so Kodi has no
+  // choice but to use the addon callbacks below.
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
   return PVR_ERROR_NO_ERROR;
 }
@@ -569,11 +567,19 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
 {
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
+  std::string keyBefore = m_client.GetApiKey();
   if (!m_client.OpenRecordingStream(id, error))
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to open recording %d: %s", id, error.c_str());
     return false;
   }
+  // OpenRecordingStream() may have silently regenerated the API key (see its
+  // comment) if another Kodi install using this same Dispatcharr account had
+  // invalidated the one persisted here. Save the new one so a restart of
+  // this install doesn't immediately invalidate it again.
+  std::string keyAfter = m_client.GetApiKey();
+  if (keyAfter != keyBefore)
+    kodi::addon::SetSettingString("api_key", keyAfter);
   return true;
 }
 
@@ -584,7 +590,14 @@ void PVRDispatcharr::CloseRecordedStream()
 
 int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
 {
-  return m_client.ReadRecordingStream(buffer, size);
+  // Same self-heal persistence as OpenRecordedStream(): the key can also be
+  // invalidated mid-playback by another install, not just between opens.
+  std::string keyBefore = m_client.GetApiKey();
+  int result = m_client.ReadRecordingStream(buffer, size);
+  std::string keyAfter = m_client.GetApiKey();
+  if (keyAfter != keyBefore)
+    kodi::addon::SetSettingString("api_key", keyAfter);
+  return result;
 }
 
 int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
