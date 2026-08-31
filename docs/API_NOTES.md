@@ -593,6 +593,51 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   server-provided title is still empty) rather than confirmed against a
   reproduced failure the way most fixes in this file are.
 
+## Known Kodi-core quirks (confirmed not this addon's bug)
+
+- **A completed recording's duration/"runtime" can be permanently wrong in
+  Kodi's recordings list and info panel -- stuck at some small value from
+  early in the recording, even though this addon reports the correct
+  final duration on every single call.** Confirmed this addon is not the
+  cause: added a temporary diagnostic log directly in
+  `PVRDispatcharr::GetRecordings()` and confirmed, in the same Kodi
+  session that displayed the wrong value, that this addon computed and
+  handed Kodi the exact correct duration (matching Dispatcharr's live API
+  exactly) on every call -- Kodi's own JSON-RPC `runtime` property still
+  reported the old, wrong number regardless.
+  Root cause, confirmed by reading Kodi's own source
+  (`xbmc/video/VideoInfoTag.cpp`): `CVideoInfoTag::GetDuration()` --
+  inherited by `CPVRRecording`, since a PVR recording *is* a video
+  library item -- doesn't just return the duration this addon sets via
+  `SetDuration()`. It prefers a separately-tracked, *stream-probed*
+  duration (`m_streamDetails.GetVideoDuration()`, populated by Kodi's own
+  player/library code when it actually opens and reads the file's real
+  media streams) unless that probed value is under 60% of the tag's own
+  duration. If Kodi probed this recording's file early -- while it was
+  still being written, so only a couple of minutes existed on disk -- and
+  persisted that small probed duration, it can keep winning over this
+  addon's correct value indefinitely.
+  This explains why a full Kodi restart doesn't fix it, unlike a plain
+  "phantom recording" (see below): recordings themselves are **not**
+  persisted locally (confirmed: Kodi's own PVR database, `TV46.db`, has
+  no `recordings` table at all -- the in-memory list is rebuilt fresh
+  from this addon every session), but the *stream-probed* duration lives
+  in Kodi's separate, persistent video library database, keyed by the
+  recording's synthetic file path, which survives every restart.
+  Also plausibly explains a related symptom seen alongside it: Kodi's
+  info panel showing full codec/stream stats for the affected recording
+  but only bare runtime for an unaffected one -- consistent with Kodi
+  treating an item it's already probed and cached library metadata for
+  differently from one it hasn't.
+  Not something this addon can fix or work around: there's no PVR client
+  API to tell Kodi "forget the stream details/library metadata you
+  cached for this file," and this addon doesn't (and shouldn't) touch
+  Kodi's video library database directly. Actual playback is unaffected
+  -- confirmed separately that the real file plays with its correct,
+  full-length duration once actually opened; this is purely a
+  library/metadata display quirk for an item Kodi already has cached
+  data for.
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent
