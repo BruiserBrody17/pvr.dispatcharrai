@@ -325,12 +325,30 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   this: `POST /api/channels/recordings/{id}/stop/`, documented as "Stop a
   recording early while retaining the partial content for playback."
   Fixed: `forceDelete=true` now calls `StopRecording()` (the `/stop/`
-  endpoint) instead. Verified directly against a real in-progress
-  recording -- after stopping, it remained listed with real bytes
-  written, `remux_success: true`, and a normal (non-HLS) `/file/` URL,
-  fully playable, exactly as documented -- and that a genuinely
-  non-recording timer's delete (`forceDelete=false`) still correctly
-  removes it entirely via `DeleteRecording()`.
+  endpoint) instead. Verified end-to-end through Kodi's real "Stop
+  recording" UI action (not just a direct API call): the recording
+  remained listed afterward with real bytes written, `remux_success:
+  true`, and a normal (non-HLS) `/file/` URL -- fully playable, exactly
+  as documented -- and that a genuinely non-recording timer's delete
+  (`forceDelete=false`) still correctly removes it entirely via
+  `DeleteRecording()`.
+- Stopping a recording early leaves its `end_time` at the originally
+  *scheduled* value -- Dispatcharr doesn't rewrite it to the actual stop
+  time, only `custom_properties.stopped_at` reflects that. `isInProgress`
+  was computed purely from `start_time <= now < end_time`, so a
+  recording stopped well before its scheduled end kept showing as
+  actively recording in Kodi's timer list for the entire remainder of
+  that original window, even though `custom_properties.status` was
+  already `"stopped"` and the file was already complete and playable.
+  Confirmed end-to-end (stopped a real in-progress recording via Kodi,
+  it kept showing as a timer). Fixed by trusting `custom_properties.status`
+  over the time window when present: `"recording"` means in-progress,
+  any other non-empty value means finished, matching the confirmed
+  values (`"recording"`/`"completed"`/`"stopped"`/`"interrupted"`)
+  without assuming that's a closed set. Also added a
+  `TriggerRecordingUpdate()` after a successful stop/delete (previously
+  only `TriggerTimerUpdate()`), for the same reason `AddTimer()` needed
+  one: the change affects the Recordings view too, not just Timers.
 - **A recording that *did* show up under Recordings still failed to
   play, silently ("Error creating demuxer" in the log, no player ever
   started).** This took real digging, and an earlier note in this file
