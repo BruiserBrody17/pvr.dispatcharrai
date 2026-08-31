@@ -27,6 +27,7 @@ dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
   config.timeoutSeconds = kodi::addon::GetSettingInt("timeout", 30);
   config.debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
   config.channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
+  config.apiKey = kodi::addon::GetSettingString("api_key", "");
   return config;
 }
 
@@ -43,6 +44,19 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   if (!m_client.EnsureAuthenticated(error))
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: initial login failed: %s", error.c_str());
+  }
+  else if (!m_client.HasApiKey())
+  {
+    // Recording playback needs an API key (see GetRecordingStreamUrl()) --
+    // a JWT would work too, but expires after 30 minutes, which is shorter
+    // than most recordings. Generate one once and persist it so it isn't
+    // silently regenerated (and any other use of this account's key
+    // invalidated) on every addon restart.
+    std::string key;
+    if (m_client.GenerateApiKey(key, error))
+      kodi::addon::SetSettingString("api_key", key);
+    else
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to generate API key: %s", error.c_str());
   }
 }
 
@@ -473,9 +487,16 @@ PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
   std::string error;
   if (!m_client.GetRecordings(recordings, error))
     return PVR_ERROR_SERVER_ERROR;
-  amount = static_cast<int>(
-      std::count_if(recordings.begin(), recordings.end(),
-                    [](const Recording& r) { return !r.isInProgress && !r.isUpcoming; }));
+  // In-progress recordings belong here too, not just upcoming/scheduled
+  // ones excluded below -- Kodi's own CPVRRecording::IsInProgress() cross-
+  // references GetRecordings() against the active timer list by
+  // channel+time overlap to decide whether a *listed recording* is still
+  // being written, and that's also what makes it clickable/playable while
+  // recording. Omitting in-progress ones here (as an earlier version of
+  // this code did) made them show up only as an uneditable timer entry,
+  // with nothing to actually click and play.
+  amount = static_cast<int>(std::count_if(
+      recordings.begin(), recordings.end(), [](const Recording& r) { return !r.isUpcoming; }));
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -494,10 +515,10 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
 
   for (const auto& rec : recordings)
   {
-    // Scheduled and in-progress recordings are surfaced via GetTimers()
-    // instead; only fully-finished ones belong here (must match
-    // GetRecordingsAmount()'s filter above).
-    if (rec.isInProgress || rec.isUpcoming)
+    // Only a not-yet-started recording has nothing to play at all; skip
+    // that case. In-progress ones belong here too (see
+    // GetRecordingsAmount() above for why) -- must match its filter.
+    if (rec.isUpcoming)
       continue;
     kodi::addon::PVRRecording recording;
     recording.SetRecordingId(std::to_string(rec.id));

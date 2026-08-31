@@ -278,6 +278,38 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   be a Kodi-version-specific difference in exactly which dialog surfaces
   it -- the underlying missing-timer-type cause and its fix are confirmed
   either way.
+- **Clicking an in-progress recording did nothing.** Two separate bugs
+  stacked here:
+  1. `GetRecordings()` was excluding any `isInProgress`/`isUpcoming`
+     recording entirely, on the assumption that `GetTimers()` covered
+     those. Wrong: Kodi's own `CPVRRecording::IsInProgress()`
+     (`xbmc/pvr/recordings/PVRRecording.cpp`) works by cross-referencing
+     `GetRecordings()`'s list against the active timer list by
+     channel+time overlap -- it expects a still-recording item to be
+     listed in **both** places at once. Omitting it from `GetRecordings()`
+     meant it only ever existed as an uneditable timer row, nothing
+     clickable. Fixed to only exclude genuinely upcoming (not yet started,
+     nothing to play) recordings.
+  2. Even once listed, `/api/channels/recordings/{id}/file/` (and its
+     redirect target while still recording, `.../hls/index.m3u8`) both
+     returned a flat **403 for an anonymous request** against a real
+     instance -- confirmed for both an in-progress and a fully completed
+     recording, despite this endpoint's schema listing anonymous access
+     (`{}`) as one of its allowed security schemes. A request with either
+     a Bearer token or an `X-API-Key` header succeeds. A JWT access token
+     expires after 30 minutes (confirmed by decoding one -- `exp - iat`
+     -- see the login note above), too short for most recordings, so this
+     addon now generates a Dispatcharr API key on first use via `POST
+     /api/accounts/api-keys/generate/` and persists it to its own
+     `api_key` setting, appended to the recording stream URL as an
+     `X-API-Key` header via Kodi's `|key=value` stream-URL syntax.
+     Regenerating that endpoint replaces the account's previous key
+     (confirmed: two calls returned two different keys), which is why
+     this only ever generates one and caches it, rather than doing so on
+     every addon start.
+  Confirmed by actually creating a real in-progress recording and playing
+  it through Kodi end-to-end (real bytes streamed, correct duration
+  reported), not just inspecting the code.
 
 ## Still unconfirmed (verify before relying on in production)
 
