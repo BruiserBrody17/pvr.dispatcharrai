@@ -906,6 +906,20 @@ bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::st
   return Request("DELETE", path, json(), response, error);
 }
 
+std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId) const
+{
+  std::string url = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/index.m3u8";
+  // ffmpegdirect's header mapping (CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput,
+  // confirmed against its source and a live failed attempt: it logged
+  // "ignoring header option 'X-API-Key'" without the prefix) only forwards a
+  // fixed allowlist of standard HTTP header names as real headers -- anything
+  // else needs a literal "!" prefix, which it strips before using the rest
+  // as the header name. X-API-Key isn't on that allowlist.
+  if (!m_config.apiKey.empty())
+    url += "|!X-API-Key=" + UrlEncode(m_config.apiKey);
+  return url;
+}
+
 bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
 {
   CloseRecordingStream();

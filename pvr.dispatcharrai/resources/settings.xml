@@ -101,6 +101,16 @@
       </group>
     </category>
 
+    <category id="recordings" label="30035">
+      <group id="1">
+        <setting id="enable_inprogress_playback" type="boolean" label="30036" help="30037">
+          <level>0</level>
+          <default>false</default>
+          <control type="toggle" />
+        </setting>
+      </group>
+    </category>
+
     <category id="advanced" label="30030">
       <group id="1">
         <setting id="debug_logging" type="boolean" label="30031" help="30032">
