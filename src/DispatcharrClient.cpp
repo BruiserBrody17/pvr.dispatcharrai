@@ -637,6 +637,33 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
         r.description = FieldOr<std::string>(custom, "description", "");
     }
     if (r.title.empty())
+    {
+      // See PendingTitle's comment on why this can be filled in before
+      // Dispatcharr's own async enrichment has caught up, and why it's
+      // matched by channel alone rather than also start time.
+      std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
+      constexpr auto kPendingTitleTtl = std::chrono::minutes(3);
+      auto now = std::chrono::steady_clock::now();
+      m_pendingTitles.erase(
+          std::remove_if(m_pendingTitles.begin(), m_pendingTitles.end(),
+                          [&](const PendingTitle& p) { return now - p.insertedAt > kPendingTitleTtl; }),
+          m_pendingTitles.end());
+      // Deliberately NOT erased on match: this runs on every poll until
+      // Dispatcharr's own enrichment lands (at which point r.title is no
+      // longer empty and this isn't consulted again for that recording), so
+      // erasing after the first match would make the title flicker back to
+      // "Recording <id>" on the very next poll if enrichment hadn't caught
+      // up yet. Left to expire via the TTL prune above instead.
+      const PendingTitle* latest = nullptr;
+      for (const auto& pending : m_pendingTitles)
+      {
+        if (pending.channelId == r.channelId && (!latest || pending.insertedAt > latest->insertedAt))
+          latest = &pending;
+      }
+      if (latest)
+        r.title = latest->title;
+    }
+    if (r.title.empty())
       r.title = "Recording " + std::to_string(r.id);
     out.push_back(std::move(r));
   }
@@ -723,7 +750,7 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
 }
 
 bool DispatcharrClient::CreateOneTimeRecording(
-    int channelId, time_t start, time_t end, const std::string& /*title*/, std::string& error)
+    int channelId, time_t start, time_t end, const std::string& title, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -737,18 +764,27 @@ bool DispatcharrClient::CreateOneTimeRecording(
   // custom_properties on create *replaces* that entirely rather than
   // merging, which would throw away the richer data for what's normally an
   // exact match anyway (Kodi's "record from guide" title already came from
-  // that same EPG programme). `title` is unused here as a result; a
-  // one-time recording with no matching EPG programme (a fully manual time
-  // range) will fall back to GetRecordings()'s "Recording <id>" default
-  // instead of carrying the typed title, which is an accepted trade-off in
-  // favor of the far more common EPG-matched case having full metadata.
+  // that same EPG programme).
   json body = {
       {"channel", channelId},
       {"start_time", IsoFromTime(start)},
       {"end_time", IsoFromTime(end)},
   };
   json response;
-  return Request("POST", kRecordingsPath, body, response, error);
+  if (!Request("POST", kRecordingsPath, body, response, error))
+    return false;
+
+  // See PendingTitle's comment: cache the title Kodi already gave us (from
+  // the EPG tag the "Record" button was pressed on) so GetRecordings() can
+  // show it immediately instead of "Recording <id>" while Dispatcharr's own
+  // async enrichment catches up. Only useful for the EPG-matched case --
+  // title is empty for a fully manual time range with nothing airing.
+  if (!title.empty())
+  {
+    std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
+    m_pendingTitles.push_back({channelId, title, std::chrono::steady_clock::now()});
+  }
+  return true;
 }
 
 bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId,

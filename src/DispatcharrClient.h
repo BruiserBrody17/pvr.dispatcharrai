@@ -233,6 +233,9 @@ public:
   bool GenerateApiKey(std::string& keyOut, std::string& error);
 
   bool GetTimerRules(std::vector<TimerRule>& out, std::string& error);
+  // title is used only as a client-side placeholder (see GetRecordings()'s
+  // pending-title cache) -- not sent to Dispatcharr itself; see the .cpp for
+  // why.
   bool CreateOneTimeRecording(int channelId,
                                time_t start,
                                time_t end,
@@ -317,6 +320,39 @@ private:
     void* curl = nullptr;
   };
   RecordingStreamState m_recordingStream;
+
+  // Client-side placeholder for a just-created one-time recording's title,
+  // matched by channelId (not also start time -- see below) to whatever
+  // this addon was called with in CreateOneTimeRecording(). Dispatcharr
+  // only learns a recording's real title asynchronously (custom_properties.
+  // program.title, populated a moment after the recording actually starts,
+  // see GetRecordings()), but Kodi already told AddTimer() the correct
+  // EPG-derived title *before* this client ever calls Dispatcharr --
+  // CreateFromEpg() reads it from the EPG tag the user clicked "Record" on.
+  // Caching that and using it in GetRecordings() in place of the
+  // "Recording <id>" fallback means the correct title shows immediately,
+  // without needing to wait for Dispatcharr's enrichment or a later refresh
+  // to catch up at all, for the common EPG-matched case.
+  // Deliberately NOT also matched on start time: confirmed against a real
+  // recording of an already-airing EPG event that Dispatcharr silently
+  // clamps the stored start_time to the moment it actually began recording
+  // (e.g. "now"), not the EPG programme's own start time this addon sent --
+  // exact-time matching missed every such case, which is the single most
+  // common one ("Record" on something currently on). Matching by channel
+  // alone (picking the most recently inserted match, and consuming it so it
+  // isn't reused for a later recording on the same channel) is good enough
+  // for what this is: a short-lived, best-effort bridge, not an
+  // authoritative mapping. Entries expire after a few minutes regardless
+  // (pruned in GetRecordings()) since Dispatcharr's own enrichment should
+  // have long since caught up by then, and to avoid an unbounded cache.
+  struct PendingTitle
+  {
+    int channelId = 0;
+    std::string title;
+    std::chrono::steady_clock::time_point insertedAt;
+  };
+  std::mutex m_pendingTitlesMutex;
+  std::vector<PendingTitle> m_pendingTitles;
 };
 
 } // namespace dispatcharr
