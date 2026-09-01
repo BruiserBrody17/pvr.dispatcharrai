@@ -277,7 +277,7 @@ public:
   // code path. GetRecordingStreamProperties() deliberately leaves STREAMURL
   // unset for a completed recording for that reason. Only supports a
   // completed recording (a real, Range-seekable file) -- an in-progress one
-  // is instead served via GetInProgressRecordingStreamUrl() below, routed
+  // is instead served via FetchInProgressPlaylistSnapshot() below, routed
   // through inputstream.ffmpegdirect (opt-in), not through here at all.
   bool OpenRecordingStream(int recordingId, std::string& error);
   int ReadRecordingStream(uint8_t* buffer, unsigned int size);
@@ -286,16 +286,19 @@ public:
   void CloseRecordingStream();
 
   // Fetches an in-progress recording's live HLS playlist and rewrites it
-  // into a definite-VOD-shaped snapshot: every segment reference becomes an
-  // absolute URL (the result is served from a local loopback HTTP server,
-  // not Dispatcharr itself, so it has no base path of its own for a
-  // relative reference to resolve against -- see LocalPlaylistServer.h),
-  // and a trailing #EXT-X-ENDLIST is appended if the playlist doesn't
-  // already have one. Returns the rewritten text (not a URL) -- the caller
-  // (PVRDispatcharr::GetRecordingStreamProperties()) registers it with its
-  // own LocalPlaylistServer instance and builds the actual STREAMURL from
-  // that server's loopback address, since a bare data: URI cannot be used
-  // here at all: PVR_STREAM_PROPERTY_STREAMURL's pipe-delimited
+  // for serving through a local loopback HTTP server (LocalPlaylistServer)
+  // instead of Dispatcharr's own URL directly: every segment reference
+  // becomes an absolute URL (the local server has no base path of its own
+  // for a relative reference to resolve against), and this is called again
+  // on every request the local server receives for this recording, not
+  // just once at open -- see LocalPlaylistServer.h for why this needs to
+  // be dynamic rather than a single upfront snapshot (in short: to let a
+  // single playback session keep tailing newly-recorded segments, not just
+  // to fix where it starts). Returns the rewritten text (not a URL) --
+  // PVRDispatcharr registers a provider callback wrapping this with its
+  // LocalPlaylistServer instance and builds the actual STREAMURL from that
+  // server's loopback address, since a bare data: URI cannot be used here
+  // at all: PVR_STREAM_PROPERTY_STREAMURL's pipe-delimited
   // "url|option=value" syntax is parsed by Kodi's own CURL class
   // (xbmc/URL.cpp), which hard-requires the literal substring "://" to
   // recognise a protocol -- confirmed via its source and a live failed
@@ -304,34 +307,46 @@ public:
   // recognised as a protocol at all and is instead mishandled as a literal
   // filename.
   //
-  // A recording still being written is served as a growing HLS playlist
-  // (confirmed against a live instance:
+  // `truncateForInitialJoin` should be true only for the very first
+  // request a freshly-opened stream will see, false for every request
+  // after that (LocalPlaylistServer tracks which is which). A recording
+  // still being written is served as a growing HLS playlist (confirmed
+  // against a live instance:
   // {base}/api/channels/recordings/{id}/hls/index.m3u8, segments named
-  // seg_NNNNN.ts) with no #EXT-X-ENDLIST tag. Confirmed live (both via a
-  // direct av_dump_format log line and by cross-checking it against the
-  // recording's real start_time and wall-clock elapsed time) that pointing
-  // ffmpegdirect straight at that live URL makes libavformat's HLS demuxer
-  // join wherever it currently is -- effectively the live edge -- rather
-  // than at the true first segment, regardless of the is_realtime_stream
-  // property (that property only ever controls ffmpegdirect's own
-  // advertised seek capability, not libavformat's automatic join-point
-  // selection for a no-ENDLIST playlist, and there is no property this
-  // addon can set that reaches libavformat's own live_start_index option --
-  // confirmed via GetFFMpegOptionsFromInput()'s source, which only maps a
-  // small fixed allowlist of names to real AVOptions). A definite-VOD-
-  // shaped playlist is unconditionally demuxed from segment 0 with a full
-  // seek range in libavformat's HLS demuxer, sidestepping live_start_index
-  // entirely rather than trying to override it.
+  // seg_NNNNN.ts) with no #EXT-X-ENDLIST tag, and pointing ffmpegdirect
+  // straight at that live URL makes libavformat's HLS demuxer join
+  // wherever it currently is -- effectively the live edge -- rather than
+  // at the true first segment (confirmed live via a direct av_dump_format
+  // log line cross-checked against the recording's real start_time and
+  // wall-clock elapsed time; independent of the is_realtime_stream
+  // property, which only ever controls ffmpegdirect's own advertised seek
+  // capability, not libavformat's automatic join-point selection for a
+  // no-ENDLIST playlist -- there is no property this addon can set that
+  // reaches libavformat's own live_start_index option directly, confirmed
+  // via GetFFMpegOptionsFromInput()'s source). Confirmed instead, by
+  // reading libavformat's actual hls.c (select_cur_seq_no()): that
+  // live-edge join computation --
+  // FFMAX(pls->n_segments + live_start_index, 0), live_start_index
+  // defaulting to -3 -- only ever runs on the very first segment
+  // selection, and clamps to the true first segment whenever the playlist
+  // it sees at that moment has 3 or fewer segments listed, regardless of
+  // how much has actually been recorded. `RewritePlaylist()`'s
+  // `maxSegments` parameter is what enforces that limit for exactly this
+  // one request.
   //
-  // Real, accepted trade-off: this is a one-time snapshot, not a live
-  // reference -- once marked ENDLIST, libavformat treats the playlist as
-  // complete and stops polling for segments appended after this call, so a
-  // single playback session no longer tails the recording as it keeps
-  // growing. Re-opening fetches a fresh, larger snapshot, but doesn't
-  // resume where a prior session left off (see docs/API_NOTES.md -- there
-  // is no Kodi-exposed way to write an arbitrary resume point for a pvr://
-  // path, confirmed via Files.SetFileDetails failing unconditionally for
-  // that scheme).
+  // Whether a trailing #EXT-X-ENDLIST gets appended is decided fresh on
+  // every call (a live re-check of the recording's current in-progress
+  // status via GetRecordings()), not fixed at open time: as long as it's
+  // withheld, hls.c keeps reloading the playlist on its own throughout
+  // playback (its `!pls->finished` reload-interval check) -- that reload,
+  // not anything this addon drives, is the entire mechanism a single
+  // session picks up newly-recorded segments by, and reloads past the
+  // first one intentionally aren't truncated (see RewritePlaylist()'s
+  // comment for why revealing full history from the second request
+  // onward is safe). Once the recording actually finishes, this starts
+  // returning true, so a session that's caught up to the real end gets a
+  // normal, clean end-of-file instead of libavformat waiting forever for
+  // segments that will never come.
   //
   // Each segment independently requires the same X-API-Key header --
   // confirmed that query-param auth is NOT accepted as an alternative
@@ -365,14 +380,21 @@ public:
   // multi-install testing that the shared account-wide key (see
   // GenerateApiKey()'s comment) can already be stale by the time this is
   // called. The playlist fetch itself self-heals reactively on a 401, same
-  // pattern as OpenRecordingStream(); the proactive check additionally
-  // covers the key baked into the rewritten playlist's segment URLs for
-  // ffmpegdirect's own later segment fetches, which have no such retry
-  // hook once handed off.
+  // pattern as OpenRecordingStream(). Note what this proactive check does
+  // and doesn't cover: it keeps this addon's *own* repeated fetches of
+  // Dispatcharr's live playlist working (and persists any regenerated key
+  // for future sessions), but the X-API-Key header ffmpegdirect itself
+  // attaches to every real *segment* fetch is parsed out of STREAMURL's
+  // pipe-option exactly once, when PVRDispatcharr first builds it -- it is
+  // never re-read on a playlist reload, so a key that goes stale mid-
+  // session still can't be fixed for ffmpegdirect's own segment requests
+  // without a fresh Player.Open(), same limitation as the design this
+  // replaced.
   //
   // Returns an empty string and populates `error` on failure (a genuine
   // network/HTTP failure fetching the playlist itself).
-  std::string GetInProgressRecordingStreamUrl(int recordingId, std::string& error);
+  std::string FetchInProgressPlaylistSnapshot(int recordingId, bool truncateForInitialJoin,
+                                               std::string& error);
 
 private:
   std::string BaseUrl() const;
@@ -390,7 +412,7 @@ private:
   // A tiny ranged GET (mirrors OpenRecordingStream()'s own probe -- a HEAD
   // request isn't confirmed to behave the same on this endpoint) with the
   // current API key attached, used only to check the key is still live
-  // before GetInProgressRecordingStreamUrl() bakes it into a URL that can't
+  // before FetchInProgressPlaylistSnapshot() bakes it into a URL that can't
   // self-heal later. Returns true on anything but a 401 (a transport error
   // or other status isn't this check's problem to solve -- fail open rather
   // than block playback on a check that was only ever a best-effort head
