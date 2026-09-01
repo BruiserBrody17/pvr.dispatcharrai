@@ -141,6 +141,14 @@ msgctxt "#30046"
 msgid "This recording has already finished -- nothing to switch to live"
 msgstr ""
 
+msgctxt "#30047"
+msgid "Improve catch-up seek reliability (experimental)"
+msgstr ""
+
+msgctxt "#30048"
+msgid "Routes catch-up/archive playback (play from guide) through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of Kodi's own built-in seeking, which can be imprecise for raw MPEG-TS over HTTP. Experimental -- requires inputstream.ffmpegdirect to be installed, or catch-up playback will fail outright with this on. Leave off to use Kodi's default catch-up playback."
+msgstr ""
+
 msgctxt "#30030"
 msgid "Advanced"
 msgstr ""

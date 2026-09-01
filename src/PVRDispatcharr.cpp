@@ -43,6 +43,8 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
   m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
+  m_enableCatchupFfmpegdirectSeek =
+      kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
   m_enableRealtimeUpdates = kodi::addon::GetSettingBoolean("enable_realtime_updates", false);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
@@ -606,6 +608,54 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
   properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, playbackUrl);
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
   properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
+
+  // Third attempt at improving catch-up seek reliability, after the two
+  // documented further down (still kept here for history) were tried and
+  // reverted -- this one deliberately sets neither ffmpegdirect property
+  // either of those set. Confirmed via ffmpegdirect's own source
+  // (StreamManager.cpp's Open()): leaving
+  // "inputstream.ffmpegdirect.stream_mode" unset at all (neither "catchup"
+  // nor "timeshift") makes it instantiate the plain FFmpegStream class
+  // instead of FFmpegCatchupStream or TimeshiftStream -- the same base
+  // class this addon already routes in-progress-recording playback
+  // through. Its SeekTime() calls libavformat's own av_seek_frame() against
+  // the mpegts demuxer directly, rather than the generic
+  // CCurlFile-plus-bitrate-estimate seek Kodi-core falls back to on its own
+  // (byte offset computed first from duration/filesize outside any
+  // format-specific logic, then handed to FFmpeg to resync) when no
+  // PVR_STREAM_PROPERTY_INPUTSTREAM is set at all -- the plain STREAMURL
+  // path set above, still what plays when this setting is off. Leaving
+  // "open_mode" unset too: ffmpegdirect's
+  // own DEFAULT-mode detection lands on OpenMode::CURL for a plain http://
+  // URL with this mimetype (neither an HLS/DASH manifest type nor one of
+  // its listed non-http schemes) -- its own intended default for exactly
+  // this shape of URL, not something to override.
+  //
+  // Requires the separate inputstream.ffmpegdirect addon to actually be
+  // installed; if it isn't, this would fail to open the stream at all, so
+  // it's opt-in (enable_catchup_ffmpegdirect_seek, default off) rather than
+  // silently changed for everyone.
+  //
+  // Verified live against a real instance, both directions, several times:
+  // seeks land precisely (within ~10-15s of the requested target, e.g. a
+  // seek to 18:20 landing at 18:09, one to 5:00 landing at 5:15) and
+  // playback resumes and continues normally afterward -- a real
+  // improvement over the plain-STREAMURL path's known-imprecise byte-
+  // estimation seeking. One caveat worth recording rather than glossing
+  // over: a seek can occasionally take much longer than the ~10-20s
+  // typical case to actually land (one observed instance sat unmoved,
+  // confirmed via Kodi's own OSD position readout rather than just
+  // JSON-RPC, for 85+ seconds -- possibly settled eventually, possibly
+  // didn't; not conclusively resolved either way before testing moved on).
+  // Not reproduced on demand despite trying, so this is a real but
+  // apparently intermittent latency/reliability caveat on this path, not a
+  // hard blocker -- worth keeping an eye on rather than treating either as
+  // solved or as broken.
+  if (m_enableCatchupFfmpegdirectSeek)
+  {
+    properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
+    properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "false");
+  }
 
   // PVR_STREAM_PROPERTY_EPGPLAYBACKASLIVE was tried here too (a plain
   // Kodi-core flag, unrelated to ffmpegdirect) to make the OSD feel more

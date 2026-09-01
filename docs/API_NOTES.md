@@ -116,10 +116,53 @@ So the addon now plays the catch-up URL directly via
 `PVR_STREAM_PROPERTY_STREAMURL` -- exactly the same three properties as
 the original catch-up implementation, before either of these two attempts
 at improving seek reliability. Seeking precision on raw MPEG-TS via Kodi's
-built-in PCR/bitrate-based estimation remains inherently approximate; no
-further improvement path has been identified without a backend change
-(e.g. Dispatcharr transcoding catch-up to a seek-friendly container/format,
-or exposing a proper index), which is out of scope for this addon.
+built-in PCR/bitrate-based estimation remains inherently approximate --
+this is the default behaviour when the setting below is off.
+
+**A third attempt, revisited later per a direct user request to look at
+this again, found a genuinely different (and, this time, working) code
+path.** Both previous attempts pointed `PVR_STREAM_PROPERTY_INPUTSTREAM`
+at `inputstream.ffmpegdirect` with an explicit `stream_mode` ("timeshift"
+or "catchup") -- what hadn't been tried was leaving `stream_mode` unset
+entirely. Confirmed via ffmpegdirect's own source
+(`src/StreamManager.cpp`'s `Open()`): with no `stream_mode` set, it
+instantiates the plain `FFmpegStream` class instead of
+`FFmpegCatchupStream`/`TimeshiftStream` -- the same base class this
+addon's in-progress-recording playback already routes through -- whose
+`SeekTime()` calls libavformat's own `av_seek_frame()` against the mpegts
+demuxer directly, rather than the generic byte-estimation seek Kodi-core
+falls back to with no inputstream addon involved at all. Gated behind a
+new setting, `enable_catchup_ffmpegdirect_seek` (off by default,
+Live TV/EPG category) -- requires `inputstream.ffmpegdirect` to actually
+be installed, same caveat as the two settings that already depend on it.
+
+Verified live against a real instance, both seek directions, several
+times, using a real `SportsCenter` catch-up recording: confirmed via
+`kodi.log` that this path is genuinely active (`OpenStream() - Num Props:
+1`, only `is_realtime_stream=false` set, no `stream_mode` at all;
+`ffmpegdirect::FFmpegStream::OpenWithCURL`; a real
+`Duration: 01:03:59.44` known upfront from the `proxy/catchup/...`
+session URL). Seeks landed precisely -- within roughly 10-15 seconds of
+the requested target (an 18:20 request landing at 18:09, a 5:00 request
+landing at 5:15) -- and playback resumed and continued normally
+afterward each time, a real improvement over the default path's
+byte-estimation imprecision.
+
+**One caveat recorded rather than glossed over: a seek can occasionally
+take much longer than that ~10-20s typical case to actually land.** One
+attempt sat completely unmoved -- confirmed via Kodi's own on-screen OSD
+position readout, not just JSON-RPC (which could plausibly just be
+reporting stale), holding at the identical pre-seek timestamp for 85+
+seconds straight -- before testing moved on without conclusively
+resolving whether it would have eventually landed given more time. Not
+reproduced on demand despite deliberately retrying the same seek
+distances and directions afterward, every other attempt (including
+several seeks issued back-to-back in the same session) landing within the
+normal ~10-20s window. So: a real, if apparently intermittent, latency
+characteristic of this path -- not a hard, reliably-reproducible failure,
+but also not nothing. Worth keeping an eye on with more real-world use
+rather than either dismissing it or blocking the feature on fully
+explaining it.
 
 ### Live TV pause/rewind ("timeshift")
 

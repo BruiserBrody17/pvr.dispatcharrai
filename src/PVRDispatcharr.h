@@ -116,6 +116,7 @@ private:
   int m_channelSwitchDelaySeconds = 0;
   bool m_enableLiveTimeshift = false;
   bool m_enableInProgressPlayback = false;
+  bool m_enableCatchupFfmpegdirectSeek = false;
   bool m_debugLogging = false;
 
   // Backs in-progress recording playback's rewritten-playlist snapshot --
