@@ -21,13 +21,40 @@ namespace
 
 // Starting cap (matches live_start_index's default magnitude -- see
 // FetchInProgressPlaylistSnapshot()'s comment) and per-request growth
-// step. Kept equal and small deliberately: every reload's segment count
-// should only ever move a little from the last one, so that even if
-// libavformat's live-edge join computation gets re-applied more times
-// than expected while it's still settling in after open, it can never
-// land far from wherever it last was.
+// step, once growth actually starts. Kept small deliberately: every
+// reload's segment count should only ever move a little from the last
+// one, so that even if libavformat's live-edge join computation gets
+// re-applied more times than expected while it's still settling in
+// after open, it can never land far from wherever it last was.
 constexpr int kInitialMaxSegments = 3;
 constexpr int kMaxSegmentsGrowthStep = 3;
+
+// How many requests to hold the cap at kInitialMaxSegments before
+// allowing it to grow at all -- confirmed live that growing starting
+// from the very first request wasn't quite enough on its own: a second
+// application of the join computation (still within libavformat's
+// settling window, one reload later) using the grown cap produced a
+// reproducible, exact 12-second offset from the true start. Holding
+// steady for a few requests first gives that settling process more
+// chances to finish while the cap -- and so the join computation's
+// result, however many times it's actually re-applied during the
+// window -- stays fixed at exactly 0. Not based on a precisely known
+// number of reloads settling takes (that's internal to libavformat and
+// not observable from here); chosen with margin above the single
+// re-application actually observed.
+constexpr int kHoldRequestsAtInitialCap = 4;
+
+// The segment cap for the Nth successful request (0-indexed) served for
+// a given recording: kInitialMaxSegments for the first
+// kHoldRequestsAtInitialCap requests, then growing by
+// kMaxSegmentsGrowthStep on each request after that.
+int ComputeMaxSegments(int requestIndex)
+{
+  int stepsGrown = requestIndex - kHoldRequestsAtInitialCap + 1;
+  if (stepsGrown < 0)
+    stepsGrown = 0;
+  return kInitialMaxSegments + stepsGrown * kMaxSegmentsGrowthStep;
+}
 
 #ifdef _WIN32
 using NativeSocket = SOCKET;
@@ -205,10 +232,10 @@ void LocalPlaylistServer::SetPlaylistProvider(int recordingId, PlaylistProvider 
 {
   std::lock_guard<std::mutex> lock(m_providersMutex);
   m_providers[recordingId] = std::move(provider);
-  // Reset growth-step tracking: a fresh call to GetRecordingStreamProperties()
+  // Reset request-count tracking: a fresh call to GetRecordingStreamProperties()
   // (a new playback attempt) should start small again, even if this
   // recording id was played before in this addon's lifetime.
-  m_nextMaxSegments.erase(recordingId);
+  m_requestCount.erase(recordingId);
 }
 
 void LocalPlaylistServer::AcceptLoop()
@@ -262,18 +289,19 @@ void LocalPlaylistServer::HandleConnection(intptr_t clientSocketHandle)
   if (recordingId >= 0)
   {
     PlaylistProvider provider;
-    int maxSegments = kInitialMaxSegments;
+    int requestIndex = 0;
     {
       std::lock_guard<std::mutex> lock(m_providersMutex);
       auto it = m_providers.find(recordingId);
       if (it != m_providers.end())
       {
         provider = it->second;
-        auto capIt = m_nextMaxSegments.find(recordingId);
-        if (capIt != m_nextMaxSegments.end())
-          maxSegments = capIt->second;
+        auto countIt = m_requestCount.find(recordingId);
+        if (countIt != m_requestCount.end())
+          requestIndex = countIt->second;
       }
     }
+    int maxSegments = ComputeMaxSegments(requestIndex);
 
     // Invoked outside the lock: this calls back into DispatcharrClient,
     // which performs real network requests to Dispatcharr -- holding
@@ -284,14 +312,14 @@ void LocalPlaylistServer::HandleConnection(intptr_t clientSocketHandle)
       content = provider(maxSegments);
     found = !content.empty();
 
-    // Only advances the growth step once a fetch actually succeeds -- a
+    // Only advances the request count once a fetch actually succeeds -- a
     // transient failure (network hiccup, a 401 that couldn't self-heal in
-    // time) shouldn't cost this recording its place in the gradual ramp-up
-    // on the retry that follows it.
+    // time) shouldn't cost this recording its place in the hold-then-grow
+    // sequence on the retry that follows it.
     if (found)
     {
       std::lock_guard<std::mutex> lock(m_providersMutex);
-      m_nextMaxSegments[recordingId] = maxSegments + kMaxSegmentsGrowthStep;
+      m_requestCount[recordingId] = requestIndex + 1;
     }
   }
 
