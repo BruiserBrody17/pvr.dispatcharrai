@@ -41,11 +41,12 @@ This is a first working scaffold, not a finished addon. Implemented:
   `docs/API_NOTES.md`). Seek/FF/RW and continuing to follow the recording
   live are mutually exclusive within one playback session (Kodi decides
   seekability once, at open, based on a duration that can only be known
-  once the recording is treated as complete) -- so pressing Play on an
-  in-progress recording asks which one you want for that session: "Play
-  live" (follows new content as it's recorded, no seek) or "Play from
-  start" (full seek/rewind over what's been recorded so far, won't pick
-  up anything recorded after you pressed Play).
+  once the recording is treated as complete) -- so plain Play on an
+  in-progress recording defaults to "Play from start" (full seek/rewind
+  over what's been recorded so far, won't pick up anything recorded after
+  you pressed Play); a "Play live" entry in the recording's context menu
+  (follows new content as it's recorded, no seek) arms that mode for the
+  next time you press Play on it instead.
 - Optional real-time recording/timer updates (`enable_realtime_updates`
   setting, off by default, experimental) -- connects directly to
   Dispatcharr's own WebSocket push feed (the same one its web UI uses, no

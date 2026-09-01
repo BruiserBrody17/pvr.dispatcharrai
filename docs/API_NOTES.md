@@ -760,10 +760,15 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   **Since seek and live-tailing are permanently mutually exclusive per
   playback session (not just currently unimplemented together), added an
   explicit choice instead of picking one behaviour for everyone: pressing
-  Play on an in-progress recording now shows a blocking selection dialog
+  Play on an in-progress recording showed a blocking selection dialog
   ("Play live" vs. "Play from start (seek)") before
-  `GetRecordingStreamProperties()` returns, and the answer decides which
-  of the two designs above this playback session uses.** Confirmed safe
+  `GetRecordingStreamProperties()` returns, and the answer decided which
+  of the two designs above that playback session used.** (Superseded a
+  few commits later by the context-menu-based design described further
+  down this section, once cancelling this dialog turned out to always
+  trigger Kodi's own "Playback failed" report -- kept here as the
+  as-shipped history of how the choice was first implemented and verified,
+  not the current behaviour.) Confirmed safe
   to call `kodi::gui::dialogs::Select::Show()` -- a synchronous, blocking
   call -- directly from inside that callback: it's invoked directly in
   response to the user pressing Play, the same circumstance Kodi's own
@@ -828,27 +833,76 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   confirming the join computation landed on true position 0 for "Play
   live" this time.
 
-  **Investigated, but not yet fixed: cancelling the mode-choice dialog
-  (pressing Cancel or Back) shows Kodi's native "Playback failed" OK
-  dialog, which has to be dismissed manually.** Confirmed via Kodi-core
-  source, not guessed: `CPVRPlaybackState::StartPlayback()` calls
-  `GetRecordingStreamProperties()` but never actually checks its
-  `PVR_ERROR` return value -- it only inspects whether any stream
-  properties were set. Returning `PVR_ERROR_FAILED` on cancel (as this
-  addon does) is therefore indistinguishable, from Kodi-core's point of
-  view, from any other kind of failure to produce stream properties: with
-  nothing to open, `CVideoPlayer::CloseFile()` sets `m_error = true`
-  (since this wasn't a user-initiated stop, `m_bCloseRequest` is false),
-  which fires `OnPlayBackError()` and, via
-  `GUI_MSG_PLAYBACK_ERROR`, Kodi's generic `HELPERS::ShowOKDialogText`
-  "Playback failed" dialog (strings #16026/#16027). There is no
-  cancel-safe value in Kodi's `PVR_ERROR` enum, and no separate
-  "user cancelled, don't report an error" signal available to a PVR client
-  addon at this call site -- this is an architectural gap in Kodi-core's
-  PVR playback path, not something fixable from this addon's side alone
-  without changing what "cancel" actually does (e.g. silently falling back
-  to a default mode instead of aborting, which would change cancel's
-  existing semantics and needs a product decision, not just a bug fix).
+  **The mode-choice dialog itself was removed and replaced with a
+  context-menu design, which also eliminates the "Playback failed" dialog
+  above as a side effect rather than working around it.** Root cause of
+  that dialog (confirmed via Kodi-core source, not guessed):
+  `CPVRPlaybackState::StartPlayback()` calls `GetRecordingStreamProperties()`
+  but never actually checks its `PVR_ERROR` return value -- it only
+  inspects whether any stream properties were set. Returning
+  `PVR_ERROR_FAILED` on cancel (as the dialog-based design did) was
+  therefore indistinguishable, from Kodi-core's point of view, from any
+  other kind of failure to produce stream properties: with nothing to
+  open, `CVideoPlayer::CloseFile()` sets `m_error = true` (since this
+  wasn't a user-initiated stop, `m_bCloseRequest` is false), which fires
+  `OnPlayBackError()` and, via `GUI_MSG_PLAYBACK_ERROR`, Kodi's generic
+  `HELPERS::ShowOKDialogText` "Playback failed" dialog (strings
+  #16026/#16027). There is no cancel-safe value in Kodi's `PVR_ERROR`
+  enum, and no separate "user cancelled, don't report an error" signal
+  available to a PVR client addon at this call site -- an architectural
+  gap in Kodi-core's PVR playback path that can't be worked around from
+  inside `GetRecordingStreamProperties()` alone. Fixed at the design level
+  instead, per explicit user direction, once presented with the trade-off:
+  plain Play on an in-progress recording no longer prompts at all -- it
+  goes straight to "Play from start" (the seekable one-shot snapshot,
+  matching what the earlier dialog's default-highlighted option already
+  was) -- and "Play live" moved to a `PVR_MENUHOOK_RECORDING` context-menu
+  entry (`CallRecordingMenuHook()`) instead of a second dialog option.
+  With no dialog on the Play path at all, there's nothing left to cancel
+  and no way to trigger the "Playback failed" report.
+
+  A binary PVR addon has no API to start playback itself, though (no
+  `PlayMedia`/`ExecuteBuiltin`-equivalent exposed to `kodi::addon::CInstancePVRClient`
+  -- confirmed by reading through `kodi-dev-kit`'s `AddonToKodiFuncTable_kodi`
+  general-purpose function table, which has nothing playback-related), so
+  the menu hook can't just open the item live directly the way selecting
+  the old dialog's option did. It arms a single pending-recording-id flag
+  (`m_pendingLiveModeRecordingId`) instead and shows a
+  `kodi::QueueNotification` telling the user to press Play now;
+  `GetRecordingStreamProperties()` consumes it (one-shot, whether or not
+  it actually matches the id being opened) the next time it's called, and
+  falls back to "Play from start" otherwise. Also confirmed via source
+  (`PVRContextMenus.cpp`'s `PVRClientMenuHook::IsVisible()`) that
+  `PVR_MENUHOOK_RECORDING` has no per-item visibility hook back to the
+  addon -- it shows on every recording's context menu indiscriminately,
+  completed ones included -- so `CallRecordingMenuHook()` re-checks
+  `isInProgress` itself and shows a different, explanatory notification
+  (without arming anything) when invoked on a recording that isn't
+  actually in progress.
+
+  Verified live end-to-end, including the specific failure this replaced
+  a first, broken attempt at: plain `Player.Open` on an in-progress
+  recording went straight to `Fullscreen video` with zero dialogs,
+  `canseek: true` and a real `totaltime` (confirming "Play from start" by
+  default, matching the design). Selecting "Play live" from the context
+  menu on that same recording, confirmed present in the menu via GUI
+  navigation, then pressing Play again produced `canseek: false`, no
+  `totaltime`, and the gradual-cap `hasEndlist=0` diagnostic log line seen
+  earlier in this file -- confirming the arm/consume flag actually
+  switched modes correctly. Selecting "Play live" on a *completed*
+  recording instead queued the explanatory notification and armed nothing,
+  confirmed by tracing `id`/`inProgress` through a temporary diagnostic
+  log line before removing it. One real bug caught and fixed mid-verification:
+  an initial live A/B run through this exact same sequence appeared to show
+  the arm silently failing (a second `Player.Open` also came back
+  "Play from start"-shaped) -- diagnostic logging on both
+  `CallRecordingMenuHook()` and the consuming side in
+  `GetRecordingStreamProperties()` showed the ids actually matching
+  correctly once added, so the first run's failure is attributed to GUI
+  focus landing on a different one of the two identically-titled test
+  recordings than intended, not a real logic bug -- flagged here rather
+  than asserted with full confidence, since the diagnostic run that would
+  have proven that explanation conclusively wasn't repeated.
 
   Two secondary things noticed along the way, neither investigated
   further this session: the placeholder-duration behaviour described
