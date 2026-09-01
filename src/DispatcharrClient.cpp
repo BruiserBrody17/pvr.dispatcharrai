@@ -1022,8 +1022,7 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
   return res != CURLE_OK || httpCode != 401;
 }
 
-std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId,
-                                                                bool truncateForInitialJoin,
+std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments,
                                                                 std::string& error)
 {
   std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
@@ -1109,13 +1108,28 @@ std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId,
     }
   }
 
-  // Segment count small enough to force libavformat's live_start_index
-  // clamp to land on the true first segment -- see RewritePlaylist()'s
-  // comment for exactly why 3 (matching live_start_index's default
-  // magnitude) is the right number, not an arbitrary one.
-  constexpr int kInitialJoinSegmentLimit = 3;
-  int maxSegments = truncateForInitialJoin ? kInitialJoinSegmentLimit : -1;
-  std::string rewritten = RewritePlaylist(playlistText, baseDir, maxSegments, !stillInProgress);
+  // `maxSegments` (the growing cap LocalPlaylistServer tracks per
+  // recording -- see its header comment and this method's own for why a
+  // gradual ramp-up, not a one-time truncate-then-reveal-everything, is
+  // what actually keeps libavformat's live-edge join from landing far
+  // from 0) only matters while the playlist is still being served as
+  // not-finished. The cap exists purely to bound how far the live-edge
+  // join computation can land while it might still be getting re-applied
+  // -- but that computation is only ever reachable in hls.c's
+  // !pls->finished branch; a finished (ENDLIST-terminated) playlist always
+  // takes the simple `return pls->start_seq_no` path, unconditionally.
+  // Once the recording has actually finished, applying the cap here as
+  // well would combine with #EXT-X-ENDLIST below to falsely declare an
+  // artificially truncated prefix of the recording "the complete file" --
+  // confirmed live: a still-growing recording stopped mid-session while
+  // the cap hadn't yet caught up to the true segment count produced a
+  // real, reproduced bug of playback ending at the cap's current value
+  // (a couple of minutes in) instead of the recording's real, much later
+  // end. So the cap applies only when still in progress; once finished,
+  // reveal everything, unconditionally, in the same response that finally
+  // appends ENDLIST.
+  int effectiveMaxSegments = stillInProgress ? maxSegments : -1;
+  std::string rewritten = RewritePlaylist(playlistText, baseDir, effectiveMaxSegments, !stillInProgress);
 
   // Proactive self-heal for the key baked into the rewritten segment URLs:
   // same pattern as before, checked against the original playlist URL as a
