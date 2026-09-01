@@ -601,25 +601,68 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   pipe-option on the outer STREAMURL for ffmpegdirect's own segment
   fetches, exactly as before.
 
-  Verified live end-to-end against a real in-progress recording, with a
-  temporary debug-log line (kept, gated behind `debug_logging`) confirming
-  the mechanism directly rather than inferring it from playback behaviour
-  alone: first request logged `isFirstRequest=1, lines=13, hasEndlist=0,
-  containsSeg00000=1`; the very next request (66ms later, ffmpeg's own
-  immediate re-probe) logged `isFirstRequest=0, lines=49` -- the full
-  history revealed at once, safe because the one-time join decision had
-  already happened; subsequent requests every few seconds kept growing
-  (`53`, `55`, `57`, ... `111` lines) as the recording continued, with
-  `hasEndlist=0` throughout. `Player.GetProperties` showed continuous,
-  gapless 1x playback across that whole window (confirmed by polling
-  position against wall-clock elapsed time repeatedly over ~100 seconds,
-  well past where the old static-snapshot design would have hit a hard
-  stop) with no stalls and no 401s. Separately verified the finish
-  transition: stopped the underlying recording while a session was still
-  open on it, and the very next request logged `hasEndlist=1`, after
-  which `kodi.log` showed a clean `CVideoPlayer::Process - eof reading
-  from demuxer` / `OnPlayBackEnded` -- not an error, not a stall waiting
-  for segments that would never come.
+  **The "revealing full history from the second request onward is safe"
+  claim above turned out to be wrong, and was shipped on insufficient
+  evidence -- corrected here, along with the actual fix.** Original
+  verification checked this addon's own `isFirstRequest=1, lines=13,
+  hasEndlist=0, containsSeg00000=1` log line (proving what this addon
+  *served*) and Kodi's relative `Player.GetProperties` time display, but
+  never rechecked the one genuinely conclusive signal used earlier in
+  this file -- ffmpegdirect's own `av_dump_format` `start:` value -- for
+  this specific design. That gap hid a real bug for weeks of testing on
+  short (1-3 minute) recordings, where "true position 0" and "wherever
+  the demuxer actually landed" were too close together to visibly
+  distinguish. A user testing against an 11+ minute recording caught it
+  cleanly: playback consistently showed different content on every
+  attempt, all matching whatever was live at that moment. Rechecking the
+  raw `start:` line confirmed it precisely --
+  `start: 118.931` on a recording that was ~2 minutes old at open,
+  `start: 433.875` at ~7.2 minutes, `start: 734.182` at ~12.2 minutes --
+  matching the recording's current age each time, not 0, despite this
+  addon's own logging correctly showing every single first request as
+  truncated-and-starting-from-`seg_00000`.
+  Root cause: `select_cur_seq_no()`'s live-edge join computation, while
+  documented as a one-time operation on the very first segment selection,
+  can in practice get re-applied several times across libavformat's own
+  rapid reloads while it's still probing/settling in right after open. A
+  first request capped to 3 segments correctly forced the *first*
+  application of that computation to land on segment 0 -- but the second
+  request revealing the *entire* history at once (jumping from 13 lines
+  to sometimes 300+) meant that if the computation got re-applied again
+  before probing settled, it would use that much larger count and land
+  far from 0 instead.
+  Fixed by growing the revealed segment cap gradually instead of jumping
+  straight to the full history on request two: `LocalPlaylistServer`
+  tracks a small, growing per-recording cap
+  (`kInitialMaxSegments`/`kMaxSegmentsGrowthStep`, both 3) instead of a
+  one-time `isFirstRequest` boolean, and `FetchInProgressPlaylistSnapshot()`
+  takes that cap directly as an `int` rather than a bool. Every reload's
+  segment count now stays close to the previous one's, so no matter how
+  many times the join computation actually gets re-applied during the
+  settling window, it can never land far from wherever it last was.
+  A second bug turned up applying this fix, caught before shipping by
+  deliberately testing the finish-transition case again: applying the
+  still-growing cap *unconditionally* combined badly with appending
+  `#EXT-X-ENDLIST` once a recording finishes -- if the cap hadn't yet
+  caught up to the true segment count when the recording ended, the
+  response would falsely declare an artificially truncated prefix (e.g.
+  57 of several hundred true segments) "the complete file," cutting
+  playback off at ~2 minutes into what was actually a much longer
+  recording. Fixed by only applying the cap while still in progress; once
+  finished, the cap is ignored and the full true history is revealed in
+  the same response that finally appends `ENDLIST` (safe unconditionally,
+  since a finished/`ENDLIST`-terminated playlist takes hls.c's simple
+  `return pls->start_seq_no` path and never reaches the live-edge
+  computation at all).
+  Re-verified end-to-end with the actual conclusive signal this time:
+  against a ~10-minute-old recording, `start: 14.013` (not ~600s);
+  against a ~19.5-minute-old one, `start: 13.829` (not ~1170s). Confirmed
+  continuous, gapless playback throughout via repeated `Player.GetProperties`
+  polling against wall-clock elapsed time. Confirmed the finish transition
+  separately: stopping the underlying recording mid-session produced a
+  response with the full ~170-segment true history (not capped) alongside
+  `hasEndlist=1`, and playback continued normally past where the old,
+  buggy version would have cut off.
 
   **Real, accepted trade-off, and different from the one-time-snapshot
   version's trade-off:** a still-growing (no-`ENDLIST`) playlist reports

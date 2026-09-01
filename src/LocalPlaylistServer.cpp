@@ -19,6 +19,16 @@ namespace dispatcharr
 namespace
 {
 
+// Starting cap (matches live_start_index's default magnitude -- see
+// FetchInProgressPlaylistSnapshot()'s comment) and per-request growth
+// step. Kept equal and small deliberately: every reload's segment count
+// should only ever move a little from the last one, so that even if
+// libavformat's live-edge join computation gets re-applied more times
+// than expected while it's still settling in after open, it can never
+// land far from wherever it last was.
+constexpr int kInitialMaxSegments = 3;
+constexpr int kMaxSegmentsGrowthStep = 3;
+
 #ifdef _WIN32
 using NativeSocket = SOCKET;
 constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
@@ -195,11 +205,10 @@ void LocalPlaylistServer::SetPlaylistProvider(int recordingId, PlaylistProvider 
 {
   std::lock_guard<std::mutex> lock(m_providersMutex);
   m_providers[recordingId] = std::move(provider);
-  // Reset first-request tracking: a fresh call to
-  // GetRecordingStreamProperties() (a new playback attempt) should see its
-  // own first request truncated, even if this recording id was played
-  // before in this addon's lifetime.
-  m_servedOnce.erase(recordingId);
+  // Reset growth-step tracking: a fresh call to GetRecordingStreamProperties()
+  // (a new playback attempt) should start small again, even if this
+  // recording id was played before in this addon's lifetime.
+  m_nextMaxSegments.erase(recordingId);
 }
 
 void LocalPlaylistServer::AcceptLoop()
@@ -253,14 +262,16 @@ void LocalPlaylistServer::HandleConnection(intptr_t clientSocketHandle)
   if (recordingId >= 0)
   {
     PlaylistProvider provider;
-    bool isFirstRequest = false;
+    int maxSegments = kInitialMaxSegments;
     {
       std::lock_guard<std::mutex> lock(m_providersMutex);
       auto it = m_providers.find(recordingId);
       if (it != m_providers.end())
       {
         provider = it->second;
-        isFirstRequest = m_servedOnce.find(recordingId) == m_servedOnce.end();
+        auto capIt = m_nextMaxSegments.find(recordingId);
+        if (capIt != m_nextMaxSegments.end())
+          maxSegments = capIt->second;
       }
     }
 
@@ -270,17 +281,17 @@ void LocalPlaylistServer::HandleConnection(intptr_t clientSocketHandle)
     // other request on a different recording id, though this server only
     // ever handles one connection at a time) for however long that takes.
     if (provider)
-      content = provider(isFirstRequest);
+      content = provider(maxSegments);
     found = !content.empty();
 
-    // Only counts as "served" once a fetch actually succeeds -- a
-    // transient failure on the true first request (network hiccup, a 401
-    // that couldn't self-heal in time) shouldn't cost this recording its
-    // one truncated, join-forcing response on the retry that follows it.
-    if (found && isFirstRequest)
+    // Only advances the growth step once a fetch actually succeeds -- a
+    // transient failure (network hiccup, a 401 that couldn't self-heal in
+    // time) shouldn't cost this recording its place in the gradual ramp-up
+    // on the retry that follows it.
+    if (found)
     {
       std::lock_guard<std::mutex> lock(m_providersMutex);
-      m_servedOnce.insert(recordingId);
+      m_nextMaxSegments[recordingId] = maxSegments + kMaxSegmentsGrowthStep;
     }
   }
 

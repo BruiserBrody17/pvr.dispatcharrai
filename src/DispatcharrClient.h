@@ -307,11 +307,15 @@ public:
   // recognised as a protocol at all and is instead mishandled as a literal
   // filename.
   //
-  // `truncateForInitialJoin` should be true only for the very first
-  // request a freshly-opened stream will see, false for every request
-  // after that (LocalPlaylistServer tracks which is which). A recording
-  // still being written is served as a growing HLS playlist (confirmed
-  // against a live instance:
+  // `maxSegments` truncates the rewritten playlist to at most that many
+  // segment entries -- LocalPlaylistServer passes a value that starts
+  // small on a recording's first-ever request and grows by a small, fixed
+  // step on every request after that (see LocalPlaylistServer.h's class
+  // comment for the full reasoning; summary follows here since the "why"
+  // is specific to this method).
+  //
+  // A recording still being written is served as a growing HLS playlist
+  // (confirmed against a live instance:
   // {base}/api/channels/recordings/{id}/hls/index.m3u8, segments named
   // seg_NNNNN.ts) with no #EXT-X-ENDLIST tag, and pointing ffmpegdirect
   // straight at that live URL makes libavformat's HLS demuxer join
@@ -327,12 +331,28 @@ public:
   // reading libavformat's actual hls.c (select_cur_seq_no()): that
   // live-edge join computation --
   // FFMAX(pls->n_segments + live_start_index, 0), live_start_index
-  // defaulting to -3 -- only ever runs on the very first segment
-  // selection, and clamps to the true first segment whenever the playlist
-  // it sees at that moment has 3 or fewer segments listed, regardless of
-  // how much has actually been recorded. `RewritePlaylist()`'s
-  // `maxSegments` parameter is what enforces that limit for exactly this
-  // one request.
+  // defaulting to -3 -- clamps to the true first segment whenever the
+  // playlist it sees *at that moment* has 3 or fewer segments listed,
+  // regardless of how much has actually been recorded.
+  //
+  // The complication a small fixed initial cap alone doesn't solve:
+  // that computation is documented (and was originally assumed here) to
+  // run only once, on the very first segment selection -- but confirmed
+  // live that it can in practice get re-applied several times in a row
+  // while libavformat is still probing/settling in right after open, each
+  // time using whatever segment count that specific reload's response
+  // happened to have. A first request capped to 3 segments followed
+  // immediately by a second one revealing the *entire* history (hundreds
+  // of segments for a long-running recording) reproduced the exact
+  // original bug this was meant to fix: consistently joining at very
+  // close to the recording's current age rather than its start, even
+  // though this addon's own logging confirmed every single response was
+  // correctly truncated and started from seg_00000. A small, bounded
+  // per-request growth step (rather than jumping straight to the full
+  // history on request two) fixes this: every reload's segment count
+  // stays close to the previous one's, so no matter how many times that
+  // computation actually gets re-applied during the settling window, it
+  // can never land far from wherever it last was.
   //
   // Whether a trailing #EXT-X-ENDLIST gets appended is decided fresh on
   // every call (a live re-check of the recording's current in-progress
@@ -340,13 +360,10 @@ public:
   // withheld, hls.c keeps reloading the playlist on its own throughout
   // playback (its `!pls->finished` reload-interval check) -- that reload,
   // not anything this addon drives, is the entire mechanism a single
-  // session picks up newly-recorded segments by, and reloads past the
-  // first one intentionally aren't truncated (see RewritePlaylist()'s
-  // comment for why revealing full history from the second request
-  // onward is safe). Once the recording actually finishes, this starts
-  // returning true, so a session that's caught up to the real end gets a
-  // normal, clean end-of-file instead of libavformat waiting forever for
-  // segments that will never come.
+  // session picks up newly-recorded segments by. Once the recording
+  // actually finishes, this starts returning true, so a session that's
+  // caught up to the real end gets a normal, clean end-of-file instead of
+  // libavformat waiting forever for segments that will never come.
   //
   // Each segment independently requires the same X-API-Key header --
   // confirmed that query-param auth is NOT accepted as an alternative
@@ -393,8 +410,7 @@ public:
   //
   // Returns an empty string and populates `error` on failure (a genuine
   // network/HTTP failure fetching the playlist itself).
-  std::string FetchInProgressPlaylistSnapshot(int recordingId, bool truncateForInitialJoin,
-                                               std::string& error);
+  std::string FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments, std::string& error);
 
 private:
   std::string BaseUrl() const;

@@ -32,20 +32,41 @@
 // on each of those reloads is what actually lets a single playback session
 // keep tailing newly-recorded segments as the underlying recording grows,
 // rather than being frozen at whatever existed the moment playback opened.
-// The provider also needs to know whether a given request is the very
-// first one for that recording, since that first response has to be
-// deliberately truncated to force libavformat's live-edge join logic to
-// land on the true first segment (again, see
-// FetchInProgressPlaylistSnapshot()'s comment for exactly why) --
-// everything after the first request should reflect the full, untruncated
-// history.
+//
+// The provider is given a segment cap that starts small and grows a
+// little on every request for the same recording, rather than jumping
+// straight from "a handful of segments" to "the full history" on the
+// second request. Confirmed live (via ffmpegdirect's own av_dump_format
+// line, not just this addon's own logging of what it served) that jumping
+// straight to the full history on request two is NOT safe: libavformat's
+// live-edge join computation -- intended to run only once, on the very
+// first segment selection -- turned out to still be getting re-applied
+// across several of the rapid reloads libavformat performs while it's
+// still probing/settling in right after open, each time using whatever
+// segment count *that* particular response happened to have. A small
+// first response correctly forced the very first application of that
+// computation to land on segment 0, but a second response revealing
+// hundreds of segments at once, arriving while probing was still
+// ongoing, caused a later application of the same computation to land
+// far from 0 instead -- confirmed by a real, reproduced failure where
+// playback consistently joined at very close to the recording's current
+// age (start: 118s on a ~2-minute-old recording, start: 734s on a
+// ~12-minute-old one) despite every request being correctly logged as
+// truncated-and-starting-from-seg_00000 on this addon's own side. A
+// small, bounded per-request growth step keeps every single reload's
+// segment count close to whatever the previous one was, so even if
+// libavformat's join computation gets re-applied more times than
+// expected during that settling window, it can never land far from
+// wherever it last was.
+//
+// See FetchInProgressPlaylistSnapshot()'s comment for the rest of the
+// reasoning.
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <mutex>
-#include <set>
 #include <string>
 #include <thread>
 
@@ -55,12 +76,16 @@ namespace dispatcharr
 class LocalPlaylistServer
 {
 public:
-  // Called for each GET request for a given recording id. `isFirstRequest`
-  // is true only the very first time this provider is invoked for that id
-  // (see the class comment for why that matters). Returning an empty
-  // string results in a 404 -- used when the underlying fetch itself
-  // fails, rather than serving broken/partial content.
-  using PlaylistProvider = std::function<std::string(bool isFirstRequest)>;
+  // Called for each GET request for a given recording id. `maxSegments` is
+  // the cap this specific response should be truncated to -- starts small
+  // and grows by a fixed step on each subsequent request for the same
+  // recording id (see the class comment for why a small, gradual growth
+  // step is used instead of jumping straight to the full history).
+  // Returning an empty string results in a 404 -- used when the
+  // underlying fetch itself fails, rather than serving broken/partial
+  // content (and doesn't advance the growth step for next time, so a
+  // transient failure on an early request doesn't cost it its turn).
+  using PlaylistProvider = std::function<std::string(int maxSegments)>;
 
   LocalPlaylistServer();
   ~LocalPlaylistServer();
@@ -82,10 +107,10 @@ public:
 
   // Registers (or replaces) the provider used to answer
   // GET /playlist/<recordingId>.m3u8. Replacing an existing provider for
-  // the same id resets its "first request" tracking, so a fresh playback
-  // session started against a recording that was previously played (and
-  // whose provider is being re-registered by a new call to
-  // GetRecordingStreamProperties()) correctly gets the truncated response
+  // the same id resets its growth-step tracking back to the initial cap,
+  // so a fresh playback session started against a recording that was
+  // previously played (and whose provider is being re-registered by a new
+  // call to GetRecordingStreamProperties()) correctly starts small again
   // on its own first request. Thread-safe -- called from whichever thread
   // handles GetRecordingStreamProperties(), read from the accept thread.
   void SetPlaylistProvider(int recordingId, PlaylistProvider provider);
@@ -105,7 +130,7 @@ private:
 
   std::mutex m_providersMutex;
   std::map<int, PlaylistProvider> m_providers;
-  std::set<int> m_servedOnce; // which recording ids have answered at least one request
+  std::map<int, int> m_nextMaxSegments; // per-recording growth-step tracking
 };
 
 } // namespace dispatcharr

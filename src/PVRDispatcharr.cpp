@@ -761,11 +761,11 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
       // comment for why a live re-fetch on every call, not a one-time
       // snapshot, is what lets a single session keep tailing newly-
       // recorded segments as the recording grows).
-      m_playlistServer.SetPlaylistProvider(id, [this, id](bool isFirstRequest) {
+      m_playlistServer.SetPlaylistProvider(id, [this, id](int maxSegments) {
         std::string keyBefore = m_client.GetApiKey();
         std::string playlistText;
         std::string fetchError;
-        playlistText = m_client.FetchInProgressPlaylistSnapshot(id, isFirstRequest, fetchError);
+        playlistText = m_client.FetchInProgressPlaylistSnapshot(id, maxSegments, fetchError);
         // May have just self-healed a stale key while building this.
         // Persist it the same way OpenRecordedStream()/ReadRecordedStream()
         // do, so a restart of this install doesn't immediately invalidate
@@ -782,9 +782,9 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
           bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
           bool hasFirstSegment = playlistText.find("seg_00000.ts") != std::string::npos;
           kodi::Log(ADDON_LOG_INFO,
-                    "pvr.dispatcharrai: playlist snapshot for recording %d: isFirstRequest=%d, "
+                    "pvr.dispatcharrai: playlist snapshot for recording %d: maxSegments=%d, "
                     "lines=%d, hasEndlist=%d, containsSeg00000=%d",
-                    id, isFirstRequest ? 1 : 0, lineCount, hasEndlist ? 1 : 0, hasFirstSegment ? 1 : 0);
+                    id, maxSegments, lineCount, hasEndlist ? 1 : 0, hasFirstSegment ? 1 : 0);
         }
         return playlistText;
       });
