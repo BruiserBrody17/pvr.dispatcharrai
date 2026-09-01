@@ -131,4 +131,27 @@ private:
   std::condition_variable m_recordingRefreshCv;
   std::atomic<bool> m_stopRecordingRefreshThread{false};
   int m_recordingRefreshMinutes = 5;
+
+  // Real-time alternative/complement to the polling thread above: connects
+  // to Dispatcharr's own WebSocket push (ws(s)://host:port/ws/?token=<JWT>,
+  // the exact channel its own frontend uses -- no plugin or server-side
+  // change needed, confirmed by reading Dispatcharr's own source) and
+  // triggers a Kodi refresh the moment a relevant recording/timer event
+  // actually happens, instead of waiting out the polling interval. Kept
+  // as an addition to, not a replacement for, the polling thread: if the
+  // connection can't be established or drops and stays down (a firewall,
+  // an older Dispatcharr version without this channel, a network blip
+  // outlasting the reconnect backoff), the poll above still gets there
+  // eventually. Opt-in (enable_realtime_updates, off by default) since
+  // this is genuinely new, non-trivial networking code (a hand-rolled
+  // RFC 6455 client -- see WebSocketClient.h for why it isn't just
+  // curl's own WebSocket support) that hasn't seen the real-world use
+  // everything else in this addon has.
+  void StartRealtimeUpdateThread();
+  void HandleRealtimeUpdateMessage(const std::string& message);
+  std::thread m_realtimeUpdateThread;
+  std::mutex m_realtimeUpdateMutex;
+  std::condition_variable m_realtimeUpdateCv;
+  std::atomic<bool> m_stopRealtimeUpdateThread{false};
+  bool m_enableRealtimeUpdates = false;
 };

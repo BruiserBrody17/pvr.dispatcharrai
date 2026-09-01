@@ -117,6 +117,11 @@
           </constraints>
           <control type="edit" format="integer" />
         </setting>
+        <setting id="enable_realtime_updates" type="boolean" label="30040" help="30041">
+          <level>0</level>
+          <default>false</default>
+          <control type="toggle" />
+        </setting>
       </group>
     </category>
 
