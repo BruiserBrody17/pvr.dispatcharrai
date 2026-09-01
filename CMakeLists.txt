@@ -59,6 +59,7 @@ set(DISPATCHARR_SOURCES
     src/DispatcharrClient.cpp
     src/XmlTvParser.cpp
     src/WebSocketClient.cpp
+    src/LocalPlaylistServer.cpp
 )
 
 set(DISPATCHARR_HEADERS
@@ -66,6 +67,7 @@ set(DISPATCHARR_HEADERS
     src/DispatcharrClient.h
     src/XmlTvParser.h
     src/WebSocketClient.h
+    src/LocalPlaylistServer.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
@@ -83,10 +85,12 @@ set(DEPLIBS
     pugixml::pugixml
 )
 
-# WebSocketClient.cpp calls select()/SOCKET APIs directly (see its own
-# comment for why: curl's native WebSocket support needs curl >= 7.86,
-# newer than the prebuilt Windows curl dependency this addon links
-# against). curl handles its own Winsock linkage internally and doesn't
+# WebSocketClient.cpp and LocalPlaylistServer.cpp both call select()/SOCKET
+# APIs directly (see WebSocketClient.h's comment for why: curl's native
+# WebSocket support needs curl >= 7.86, newer than the prebuilt Windows curl
+# dependency this addon links against; LocalPlaylistServer needs a real
+# listening socket, which curl -- a client-only library -- can't provide at
+# all). curl handles its own Winsock linkage internally and doesn't
 # propagate it to consumers, so this addon needs its own explicit link
 # against ws2_32 now that it also calls raw Winsock functions itself.
 if(WIN32)
