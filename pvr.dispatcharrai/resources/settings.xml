@@ -98,6 +98,11 @@
           <default>false</default>
           <control type="toggle" />
         </setting>
+        <setting id="enable_catchup_ffmpegdirect_seek" type="boolean" label="30047" help="30048">
+          <level>1</level>
+          <default>false</default>
+          <control type="toggle" />
+        </setting>
       </group>
     </category>
 
