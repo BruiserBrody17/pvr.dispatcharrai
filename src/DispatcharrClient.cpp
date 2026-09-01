@@ -1022,24 +1022,21 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
   return res != CURLE_OK || httpCode != 401;
 }
 
-std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments,
-                                                                std::string& error)
+bool DispatcharrClient::FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl,
+                                                    std::string& playlistText, std::string& error)
 {
-  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
-  std::string playlistUrl = baseDir + "index.m3u8";
-
   // Two attempts: the playlist fetch itself can self-heal on a 401, same
   // pattern as OpenRecordingStream() -- unlike the key baked into the
-  // resulting data: URI below, which can't retry after the fact once
-  // handed to inputstream.ffmpegdirect (see this method's header comment).
-  std::string playlistText;
+  // outer STREAMURL, which can't retry after the fact once handed to
+  // inputstream.ffmpegdirect (see FetchInProgressPlaylistSnapshot()'s
+  // header comment).
   for (int attempt = 0; attempt < 2; ++attempt)
   {
     CURL* curl = curl_easy_init();
     if (!curl)
     {
       error = "Failed to initialise libcurl";
-      return "";
+      return false;
     }
 
     struct curl_slist* headers = nullptr;
@@ -1069,7 +1066,7 @@ std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, 
     if (res != CURLE_OK)
     {
       error = std::string("HTTP request failed fetching playlist: ") + curl_easy_strerror(res);
-      return "";
+      return false;
     }
 
     if (httpCode == 401 && attempt == 0)
@@ -1082,10 +1079,22 @@ std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, 
     if (httpCode < 200 || httpCode >= 300)
     {
       error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " fetching in-progress playlist";
-      return "";
+      return false;
     }
-    break;
+    return true;
   }
+  return false;
+}
+
+std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments,
+                                                                std::string& error)
+{
+  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
+  std::string playlistUrl = baseDir + "index.m3u8";
+
+  std::string playlistText;
+  if (!FetchRawInProgressPlaylist(recordingId, playlistUrl, playlistText, error))
+    return "";
 
   // Fresh in-progress check on every call (not just once at open): this is
   // now invoked repeatedly over a playback session's lifetime (see
@@ -1138,6 +1147,41 @@ std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, 
   // this is handed to inputstream.ffmpegdirect). Run on every call now, not
   // just once at open, which meaningfully shrinks the staleness window
   // compared to the original one-shot design this replaced.
+  if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
+  {
+    std::string regenKey, regenError;
+    GenerateApiKey(regenKey, regenError);
+  }
+
+  return rewritten;
+}
+
+std::string DispatcharrClient::FetchInProgressRecordingSeekableSnapshot(int recordingId,
+                                                                         std::string& error)
+{
+  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
+  std::string playlistUrl = baseDir + "index.m3u8";
+
+  std::string playlistText;
+  if (!FetchRawInProgressPlaylist(recordingId, playlistUrl, playlistText, error))
+    return "";
+
+  // Unconditionally finished, no segment cap: this is the explicit
+  // "seekable" alternative to FetchInProgressPlaylistSnapshot()'s default
+  // live-tailing behaviour (see GetRecordingStreamProperties()'s prompt),
+  // for when the user chooses seek/rewind over continuing to follow the
+  // recording live. Safe to reveal everything in one shot regardless of
+  // size, unlike the gradual cap that mode needs: an ENDLIST-terminated
+  // playlist makes libavformat's hls.c take the simple
+  // `return pls->start_seq_no` path unconditionally (pls->finished=true),
+  // never reaching the live-edge join computation the cap exists to bound
+  // (see FetchInProgressPlaylistSnapshot()'s comment for the full
+  // reasoning behind that). libavformat also never reloads a finished
+  // playlist, so in practice this only ever gets called once per playback
+  // session regardless -- there's no ongoing per-request cost to serving
+  // everything up front.
+  std::string rewritten = RewritePlaylist(playlistText, baseDir, -1, true);
+
   if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
   {
     std::string regenKey, regenError;

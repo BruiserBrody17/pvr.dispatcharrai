@@ -757,6 +757,49 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   manually -- which itself doesn't work either, per the seek finding
   above.
 
+  **Since seek and live-tailing are permanently mutually exclusive per
+  playback session (not just currently unimplemented together), added an
+  explicit choice instead of picking one behaviour for everyone: pressing
+  Play on an in-progress recording now shows a blocking selection dialog
+  ("Play live" vs. "Play from start (seek)") before
+  `GetRecordingStreamProperties()` returns, and the answer decides which
+  of the two designs above this playback session uses.** Confirmed safe
+  to call `kodi::gui::dialogs::Select::Show()` -- a synchronous, blocking
+  call -- directly from inside that callback: it's invoked directly in
+  response to the user pressing Play, the same circumstance Kodi's own
+  native resume-point prompt already blocks in.
+  "Play live" registers the existing gradual-cap `SetPlaylistProvider()`
+  callback unchanged. "Play from start" instead calls a new one-shot
+  method, `DispatcharrClient::FetchInProgressRecordingSeekableSnapshot()`
+  (shares its actual HTTP fetch-with-401-retry logic with
+  `FetchInProgressPlaylistSnapshot()` via a small private helper,
+  `FetchRawInProgressPlaylist()`), which calls `RewritePlaylist()` with no
+  segment cap and `appendEndlist` forced true unconditionally --
+  deliberately skipping the gradual-cap dance the live mode needs
+  entirely, since an always-ENDLIST-terminated response is unconditionally
+  safe to reveal in one shot (`pls->finished=true` takes hls.c's simple,
+  always-start-at-0 path, never reaching the live-edge join computation
+  the cap exists to bound) and libavformat never reloads a finished
+  playlist anyway, so this mode's provider is in practice only ever
+  invoked once per session regardless of how it's implemented. Cancelling
+  the dialog (`Select::Show()` returning `-1`) returns `PVR_ERROR_FAILED`
+  from `GetRecordingStreamProperties()` -- confirmed live this cleanly
+  aborts opening with no player started, rather than falling back to
+  either mode silently.
+  Verified all three paths live: choosing "Play live" reproduced the
+  already-established live-tailing behaviour exactly
+  (`maxSegments`/`hasEndlist=0` diagnostic logging, `canseek: false`);
+  choosing "Play from start" gave a real known `totaltime` (`2:10`) and
+  `canseek: true`, and an actual `Player.Seek` to 1:00 succeeded and
+  continued playing correctly afterward; cancelling produced
+  `Player.GetActivePlayers: []` -- no player started at all -- confirmed
+  via `kodi.log` showing a clean `CVideoPlayer::CloseFile()` rather than
+  a hang or crash.
+  New localised strings `#30042`-`#30044` (dialog heading, the two option
+  labels) in `strings.po`; no new settings.xml entries -- this is a
+  per-playback choice, not a persistent preference, and only appears at
+  all when `enable_inprogress_playback` is already on.
+
   Two secondary things noticed along the way, neither investigated
   further this session: the placeholder-duration behaviour described
   above (Dispatcharr-side, not confirmed against its own source, but

@@ -412,10 +412,27 @@ public:
   // network/HTTP failure fetching the playlist itself).
   std::string FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments, std::string& error);
 
+  // The explicit "seekable" alternative to the above: fetches the current
+  // playlist once and rewrites it as a complete, definite-VOD-shaped
+  // snapshot (#EXT-X-ENDLIST always appended, full history revealed, no
+  // segment cap) instead of a live-tailing one. For when
+  // GetRecordingStreamProperties()'s prompt is answered "play from start
+  // (seek)" rather than "play live" -- see that prompt and
+  // FetchInProgressPlaylistSnapshot()'s comment for the full trade-off
+  // between the two modes. Same failure/self-heal behaviour as above.
+  std::string FetchInProgressRecordingSeekableSnapshot(int recordingId, std::string& error);
+
 private:
   std::string BaseUrl() const;
   bool Login(std::string& error);
   bool RefreshAccessToken(std::string& error);
+
+  // Shared by FetchInProgressPlaylistSnapshot() and
+  // FetchInProgressRecordingSeekableSnapshot(): fetches the raw live
+  // playlist text for a recording, with a self-healing retry on a 401.
+  // Returns false (with `error` set) on a genuine network/HTTP failure.
+  bool FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl,
+                                   std::string& playlistText, std::string& error);
 
   // The CURLSH* behind m_curlShareState, or nullptr if it failed to
   // initialise -- pass to CURLOPT_SHARE on every easy handle this client

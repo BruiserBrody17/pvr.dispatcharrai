@@ -3,6 +3,7 @@
 #include "WebSocketClient.h"
 
 #include <kodi/AddonBase.h>
+#include <kodi/gui/dialogs/Select.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -755,39 +756,82 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
       if (playlistServerPort == 0)
         return PVR_ERROR_SERVER_ERROR;
 
-      // Registers a provider rather than fetching once here: libavformat
-      // calls back into this repeatedly over the whole playback session
-      // (see LocalPlaylistServer.h and FetchInProgressPlaylistSnapshot()'s
-      // comment for why a live re-fetch on every call, not a one-time
-      // snapshot, is what lets a single session keep tailing newly-
-      // recorded segments as the recording grows).
-      m_playlistServer.SetPlaylistProvider(id, [this, id](int maxSegments) {
+      // Seek and live-tailing are mutually exclusive here (see
+      // FetchInProgressPlaylistSnapshot()'s and
+      // FetchInProgressRecordingSeekableSnapshot()'s comments for the full
+      // reasoning: Kodi won't offer seeking without a known total
+      // duration, and the only way to get libavformat to report one is to
+      // mark the playlist complete, which stops it from ever picking up
+      // segments recorded after that point). Ask which one the user wants
+      // for this playback session with a blocking selection dialog --
+      // confirmed safe to call from here: this is a normal synchronous
+      // addon callback triggered directly by the user pressing Play, the
+      // same way Kodi's own native resume-point prompt already blocks in
+      // a similar spot.
+      std::vector<std::string> playbackModeOptions = {
+          kodi::addon::GetLocalizedString(30043), kodi::addon::GetLocalizedString(30044)};
+      int playbackModeChoice = kodi::gui::dialogs::Select::Show(
+          kodi::addon::GetLocalizedString(30042), playbackModeOptions);
+      if (playbackModeChoice < 0)
+        return PVR_ERROR_FAILED; // user cancelled the prompt -- don't play anything
+
+      if (playbackModeChoice == 1)
+      {
+        // "Play from start (seek)": a one-time, definite-VOD-shaped
+        // snapshot as of right now, not a live-tailing one -- fetched
+        // once here rather than via a provider callback, since
+        // libavformat never reloads an ENDLIST-terminated playlist and
+        // this will only ever be asked for once per session anyway.
         std::string keyBefore = m_client.GetApiKey();
-        std::string playlistText;
-        std::string fetchError;
-        playlistText = m_client.FetchInProgressPlaylistSnapshot(id, maxSegments, fetchError);
-        // May have just self-healed a stale key while building this.
-        // Persist it the same way OpenRecordedStream()/ReadRecordedStream()
-        // do, so a restart of this install doesn't immediately invalidate
-        // it again. Only fixes up this addon's own future fetches, not the
-        // X-API-Key header already baked into this STREAMURL for
-        // ffmpegdirect's own segment fetches -- see
-        // FetchInProgressPlaylistSnapshot()'s comment.
+        std::string seekError;
+        std::string playlistText =
+            m_client.FetchInProgressRecordingSeekableSnapshot(id, seekError);
         std::string keyAfter = m_client.GetApiKey();
         if (keyAfter != keyBefore)
           kodi::addon::SetSettingString("api_key", keyAfter);
-        if (m_debugLogging)
-        {
-          int lineCount = static_cast<int>(std::count(playlistText.begin(), playlistText.end(), '\n'));
-          bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
-          bool hasFirstSegment = playlistText.find("seg_00000.ts") != std::string::npos;
-          kodi::Log(ADDON_LOG_INFO,
-                    "pvr.dispatcharrai: playlist snapshot for recording %d: maxSegments=%d, "
-                    "lines=%d, hasEndlist=%d, containsSeg00000=%d",
-                    id, maxSegments, lineCount, hasEndlist ? 1 : 0, hasFirstSegment ? 1 : 0);
-        }
-        return playlistText;
-      });
+        if (playlistText.empty())
+          return PVR_ERROR_SERVER_ERROR;
+
+        m_playlistServer.SetPlaylistProvider(
+            id, [playlistText](int /*maxSegments*/) { return playlistText; });
+      }
+      else
+      {
+        // "Play live": registers a provider rather than fetching once
+        // here -- libavformat calls back into this repeatedly over the
+        // whole playback session (see LocalPlaylistServer.h and
+        // FetchInProgressPlaylistSnapshot()'s comment for why a live
+        // re-fetch on every call, not a one-time snapshot, is what lets a
+        // single session keep tailing newly-recorded segments as the
+        // recording grows).
+        m_playlistServer.SetPlaylistProvider(id, [this, id](int maxSegments) {
+          std::string keyBefore = m_client.GetApiKey();
+          std::string playlistText;
+          std::string fetchError;
+          playlistText = m_client.FetchInProgressPlaylistSnapshot(id, maxSegments, fetchError);
+          // May have just self-healed a stale key while building this.
+          // Persist it the same way OpenRecordedStream()/ReadRecordedStream()
+          // do, so a restart of this install doesn't immediately invalidate
+          // it again. Only fixes up this addon's own future fetches, not the
+          // X-API-Key header already baked into this STREAMURL for
+          // ffmpegdirect's own segment fetches -- see
+          // FetchInProgressPlaylistSnapshot()'s comment.
+          std::string keyAfter = m_client.GetApiKey();
+          if (keyAfter != keyBefore)
+            kodi::addon::SetSettingString("api_key", keyAfter);
+          if (m_debugLogging)
+          {
+            int lineCount = static_cast<int>(std::count(playlistText.begin(), playlistText.end(), '\n'));
+            bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
+            bool hasFirstSegment = playlistText.find("seg_00000.ts") != std::string::npos;
+            kodi::Log(ADDON_LOG_INFO,
+                      "pvr.dispatcharrai: playlist snapshot for recording %d: maxSegments=%d, "
+                      "lines=%d, hasEndlist=%d, containsSeg00000=%d",
+                      id, maxSegments, lineCount, hasEndlist ? 1 : 0, hasFirstSegment ? 1 : 0);
+          }
+          return playlistText;
+        });
+      }
 
       std::string streamUrl =
           "http://127.0.0.1:" + std::to_string(playlistServerPort) + "/playlist/" +
