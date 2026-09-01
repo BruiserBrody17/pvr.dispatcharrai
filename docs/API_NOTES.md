@@ -500,6 +500,45 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   coincidence. No auth errors across the session, confirming the
   `!X-API-Key` header still applies correctly to segment fetches made
   after a seek.
+
+  **Known platform gap: seek/FF/RW works on Windows but not on macOS,
+  despite identical addon config, identical Kodi build, and identical
+  FFmpeg version.** Cross-verified independently on macOS (position-0
+  start confirmed working there too), but `Player.GetProperties` reports
+  `canseek: false` and `Player.Seek` is rejected outright with JSON-RPC
+  error -32100 -- rejected by Kodi's own dispatch layer before it ever
+  reaches the inputstream addon, meaning Kodi-core itself has decided the
+  stream isn't seekable rather than the addon failing to advertise it.
+  Considered and ruled out, in order:
+  - *Property not actually applying on macOS* -- ruled out; the macOS
+    `kodi.log` shows `inputstream.ffmpegdirect.is_realtime_stream = false`
+    logged correctly, in the correct causal order before
+    `GetCapabilities()` runs.
+  - *Kodi/FFmpeg version mismatch between the two machines* -- ruled out;
+    both machines log the identical build hash
+    (`Git:20251031-a3a448d26b`) and identical FFmpeg version
+    (`6.0.1-Kodi`).
+  - *Stale Kodi-core-side caching from testing under the old
+    `is_realtime_stream=true` code, before this fix* (the same class of
+    issue as the duration/codec-stats quirk elsewhere in this file) --
+    ruled out by a clean-room test: fully killed the Kodi process,
+    created a brand-new recording via the API while Kodi wasn't even
+    running, launched Kodi fresh, and opened that recording for the very
+    first time on that install. Same `canseek: false` / -32100 result.
+    There was no prior state for anything to be stale from.
+  With property-plumbing, version mismatch, and caching all eliminated,
+  this is a genuine macOS-specific behaviour difference somewhere below
+  the addon/ffmpegdirect-property layer -- most likely in how
+  libavformat's HLS demuxer or Kodi-core's own seek-permission gate
+  behaves on macOS specifically for a still-growing (no-`#EXT-X-ENDLIST`)
+  playlist, since `FFmpegStream::IsRealTimeStream()`'s own logic is a
+  platform-independent boolean expression that should produce the same
+  result given the same input on both platforms. Not something reachable
+  from this addon's code with the tools available for this investigation;
+  documented as a known limitation rather than chased further. Windows
+  users get full VCR controls over the already-recorded portion; macOS
+  users get correct position-0 start but no seek/FF/RW, same as before
+  this fix.
   Gap found by a companion session's real multi-install testing: unlike
   `OpenRecordingStream()`/`ReadRecordingStream()`, there's no way to
   self-heal a stale API key *after the fact* here -- the URL (with the
