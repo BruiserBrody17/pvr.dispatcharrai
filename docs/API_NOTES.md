@@ -164,6 +164,34 @@ but also not nothing. Worth keeping an eye on with more real-world use
 rather than either dismissing it or blocking the feature on fully
 explaining it.
 
+**A companion session's macOS testing found a credible explanation for
+this latency, and a fix was tried for it -- and made things worse, not
+better, in direct patient testing.** A real macOS `kodi.log` showed the
+mechanism behind the occasional slowness: leaving `open_mode` unset
+(above) lands on `OpenMode::CURL`, which routes ffmpegdirect's I/O
+through Kodi-core's own `CCurlFile`/`CFileCache` rather than an
+independent connection, and libavformat's mpegts demuxer's normal
+PCR-probe seek algorithm (~15-30 probe-and-adjust reads, expected for a
+format with no real index) was shown paying `CFileCache`'s own "cache
+completely reset for seek to position X" cost on every single probe.
+Forcing `open_mode` to `"ffmpeg"` instead (matching the in-progress-
+recording HLS path, for the same reasoning: bypass Kodi-core's cache
+layer by having FFmpeg's own native `http://` protocol handler own the
+I/O) was tried live on Windows as the fix -- and a forward seek that
+would typically land within the normal ~10-20s window under `CURL` mode
+instead sat completely unmoved for **nearly 5 minutes (280s)** before
+finally landing 68 seconds off target, confirmed via patient polling
+specifically designed to avoid the mistake made on the first attempt at
+this same test: an initial, shorter 60-second wait had already concluded
+this looked "stuck," which in hindsight wasn't long enough to
+distinguish "slow" from "actually stuck" for this path -- seeks here can
+need patience on the order of minutes, not seconds, before concluding
+anything either way, a lesson that applies to any future investigation
+of this same latency, not just this one fix attempt. Reverted; `open_mode`
+stays unset. The *diagnosis* of why `CURL` mode is occasionally slow is
+still credible -- forcing `"ffmpeg"` mode just isn't the right fix for it,
+and shouldn't be retried without knowing this.
+
 ### Live TV pause/rewind ("timeshift")
 
 Requested as "timeshifting with the live TV buffer held on the Dispatcharr
