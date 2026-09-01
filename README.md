@@ -36,15 +36,16 @@ This is a first working scaffold, not a finished addon. Implemented:
 - Optional in-progress recording playback (`enable_inprogress_playback`
   setting, off by default, experimental), also via
   `inputstream.ffmpegdirect` -- lets you start watching a recording before
-  Dispatcharr finishes writing it, from the true beginning, continuing to
-  tail newly-recorded content live for as long as you keep watching (no
-  need to stop and reopen to catch up). Runs a tiny loopback-only local
-  HTTP server inside the addon to make this work (see `docs/API_NOTES.md`).
-  Trade-off: seek/FF/RW isn't available while the recording is still
-  actively being written -- Kodi decides seekability once, when you press
-  play, and a still-growing recording reports an unknown duration at that
-  point. Once the recording finishes, reopening it plays back with normal
-  full seek support, same as any completed recording.
+  Dispatcharr finishes writing it, from the true beginning. Runs a tiny
+  loopback-only local HTTP server inside the addon to make this work (see
+  `docs/API_NOTES.md`). Seek/FF/RW and continuing to follow the recording
+  live are mutually exclusive within one playback session (Kodi decides
+  seekability once, at open, based on a duration that can only be known
+  once the recording is treated as complete) -- so pressing Play on an
+  in-progress recording asks which one you want for that session: "Play
+  live" (follows new content as it's recorded, no seek) or "Play from
+  start" (full seek/rewind over what's been recorded so far, won't pick
+  up anything recorded after you pressed Play).
 - Optional real-time recording/timer updates (`enable_realtime_updates`
   setting, off by default, experimental) -- connects directly to
   Dispatcharr's own WebSocket push feed (the same one its web UI uses, no
