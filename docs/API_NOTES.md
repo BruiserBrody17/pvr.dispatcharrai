@@ -503,20 +503,93 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   most likely also joined near its own live edge; it just wasn't caught
   because the only check was Kodi's relative-position display.
 
-  Real fix has not been implemented yet. The only known way to stop
-  libavformat from applying live-edge-join logic at all is to make the
-  playlist look like a complete, closed VOD list -- i.e., inject
-  `#EXT-X-ENDLIST` into a copy of the playlist before handing it to
-  ffmpeg (e.g. as a `data:` URI built from a one-time fetch-and-rewrite of
-  the current playlist text, since ffmpegdirect exposes no way to pass a
-  rewritten playlist any other way). This is expected to fix both the
-  join-position and seek-range problems in one shot (VOD-shaped HLS is
-  always demuxed from segment 0 with a full seek range), at a real cost:
-  once marked `ENDLIST`, ffmpeg treats the list as complete and stops
-  polling for newly-appended segments, so a single playback session would
-  no longer tail the recording live -- catching up on brand-new content
-  would need a stop/replay to re-fetch a fresh snapshot. Not implemented
-  pending user sign-off on that trade-off.
+  The only known way to stop libavformat from applying live-edge-join
+  logic at all is to make the playlist look like a complete, closed VOD
+  list -- i.e., inject `#EXT-X-ENDLIST` into a copy of the playlist before
+  handing it to ffmpeg. VOD-shaped HLS is always demuxed from segment 0
+  with a full seek range, sidestepping `live_start_index` entirely rather
+  than trying to override it (there is no property this addon can set
+  that reaches it directly, confirmed via `GetFFMpegOptionsFromInput()`'s
+  source). Real, accepted trade-off: once marked `ENDLIST`, ffmpeg treats
+  the list as complete and stops polling for newly-appended segments, so a
+  single playback session no longer tails the recording live -- catching
+  up on brand-new content needs a stop/replay to re-fetch a fresh, larger
+  snapshot (and per the resume-point finding above, that replay starts
+  over from position 0 rather than where the last session left off).
+
+  **First implementation attempt -- a `data:` URI built from a one-time
+  fetch-and-rewrite of the playlist -- failed outright, and not for a
+  reason specific to this addon or ffmpegdirect.** Implemented
+  `GetInProgressRecordingStreamUrl()` to fetch the live playlist itself,
+  rewrite every segment reference to an absolute URL (a data: URI has no
+  base path for a relative reference to resolve against), append
+  `#EXT-X-ENDLIST`, base64-encode the result, and hand ffmpegdirect
+  `data:application/vnd.apple.mpegurl;base64,<payload>|!X-API-Key=<key>`
+  as STREAMURL. `kodi.log` confirmed the rewrite itself worked correctly
+  (the base64 payload decodes to a well-formed playlist with absolute
+  `http://` segment URLs and a trailing `#EXT-X-ENDLIST`), but ffmpegdirect
+  logged `Error, could not open file data:application/...` immediately.
+  Root-caused by reading Kodi's own `CURL::Parse()` (`xbmc/URL.cpp:72`):
+  it hard-requires the literal substring `"://"` to recognise a protocol
+  at all (`strURL.find("://")`) -- a standard `data:` URI, correctly per
+  RFC 2397, has no `"://"` anywhere in it, so Kodi's parser never
+  recognises it as a protocol and falls into a `.zip`/`.apk` archive-path
+  fallback that just treats the whole string as a literal filename
+  instead. This isn't a struct size limit (`INPUTSTREAM_PROPERTY`'s
+  `m_strValue`/`m_strURL` are plain `const char*`, not fixed buffers --
+  checked and ruled out first) or anything ffmpeg-side -- it's that
+  `PVR_STREAM_PROPERTY_STREAMURL`'s pipe-delimited
+  `url|option=value` convention is built entirely on top of Kodi's own
+  generic `CURL` class, which cannot represent a bare `data:` URI at all.
+  **A `data:` URI is therefore not viable through this property, full
+  stop -- not just for this addon, for any Kodi PVR/inputstream addon
+  using STREAMURL this way.**
+
+  **Implemented and confirmed working: a tiny local HTTP listener inside
+  this addon's own process (`LocalPlaylistServer`), serving the rewritten
+  playlist at `http://127.0.0.1:<port>/playlist/<id>.m3u8` instead of a
+  data: URI.** A real `http://` URL parses through Kodi's `CURL` class
+  exactly like the original live one did. Loopback-only, OS-assigned
+  ephemeral port (`bind()` to `INADDR_LOOPBACK`, port `0`, then
+  `getsockname()` for the actual port); started in `PVRDispatcharr`'s
+  constructor only when `enable_inprogress_playback` is on, stopped in the
+  destructor -- no listening socket held open for installs that never use
+  this feature. Raw sockets, not curl (curl is client-only and can't
+  listen): platform-conditional `winsock2.h`/`ws2tcpip.h` vs.
+  `sys/socket.h`/`unistd.h`, same pattern as `WebSocketClient.h`, reusing
+  the `ws2_32` link already added for that. Single connection at a time,
+  no keep-alive -- ffmpeg only fetches the manifest a handful of times per
+  playback, so this doesn't need to be more than a bare GET-request/
+  fixed-response responder serving whatever `SetPlaylist()` was last
+  called with for that recording id.
+
+  `GetInProgressRecordingStreamUrl()` now returns the rewritten playlist
+  *text* (not a URI); `PVRDispatcharr::GetRecordingStreamProperties()`
+  registers it with `m_playlistServer.SetPlaylist()` and builds STREAMURL
+  from the server's own loopback address, still with the `!X-API-Key`
+  pipe-option attached to that outer URL -- confirmed live this still
+  correctly reaches the real per-segment Dispatcharr requests (ffmpeg's
+  HLS demuxer shares one `avio_opts` dictionary across the manifest fetch
+  and every segment sub-fetch regardless of which host the manifest came
+  from), even though the local server itself neither needs nor checks
+  that header.
+
+  Verified live end-to-end against a real in-progress recording:
+  `ffmpegdirect`'s own `av_dump_format` line read
+  `Duration: 00:02:25.15, start: 1.411000, bitrate: 0 kb/s` -- a real,
+  finite duration (previously always `N/A` against the live playlist) and
+  a join point at the true beginning (a rounding/keyframe-alignment
+  artifact away from 0, not thousands of seconds in). `canseek: true`,
+  and `Player.Seek` to both 1:30 (forward) and back to 0:10 (rewind)
+  succeeded and continued playing correctly afterward. `kodi.log` showed
+  `adding user custom header option '!X-API-Key: ***********'` with no
+  401s across the whole session, confirming segment auth still works
+  through the local server. A screenshot during playback confirmed real
+  video rendering, not just correct-looking metadata. Same real, accepted
+  trade-off as before applies: this is a one-time snapshot, so a single
+  session doesn't tail brand-new segments recorded after it started, and
+  (per the resume-point finding above) re-opening doesn't resume where a
+  prior session left off.
 
   **The macOS-vs-Windows seek discrepancy investigated earlier is probably
   not a real platform difference -- more likely the same class of
