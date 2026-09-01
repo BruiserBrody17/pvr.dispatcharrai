@@ -52,12 +52,24 @@
 // playback consistently joined at very close to the recording's current
 // age (start: 118s on a ~2-minute-old recording, start: 734s on a
 // ~12-minute-old one) despite every request being correctly logged as
-// truncated-and-starting-from-seg_00000 on this addon's own side. A
-// small, bounded per-request growth step keeps every single reload's
-// segment count close to whatever the previous one was, so even if
-// libavformat's join computation gets re-applied more times than
-// expected during that settling window, it can never land far from
-// wherever it last was.
+// truncated-and-starting-from-seg_00000 on this addon's own side.
+//
+// A bounded per-request growth step alone turned out not to be quite
+// enough, either: confirmed live a second time, with the cap growing
+// immediately from the first request, that even a *second* application
+// of the join computation (still within the settling window, just one
+// reload later) using the grown-by-one-step count could land noticeably
+// off 0 -- a reproducible, exact 12-second offset (start: 13.4s instead
+// of 1.4s on the same recording), matching a live_start_index=-3 join
+// computed against a 6-segment response (the cap after exactly one
+// growth step from an initial 3) rather than the original 3-segment one.
+// Fixed by holding the cap at its initial value for several requests
+// (kHoldRequestsAtInitialCap) before starting to grow it at all, giving
+// libavformat's own settling process more chances to finish while the
+// cap -- and therefore the join computation's result, however many times
+// it actually gets re-applied during that window -- stays fixed at
+// exactly 0. Growth only begins once that hold period has passed, by
+// which point re-application is no longer occurring in practice.
 //
 // See FetchInProgressPlaylistSnapshot()'s comment for the rest of the
 // reasoning.
@@ -130,7 +142,7 @@ private:
 
   std::mutex m_providersMutex;
   std::map<int, PlaylistProvider> m_providers;
-  std::map<int, int> m_nextMaxSegments; // per-recording growth-step tracking
+  std::map<int, int> m_requestCount; // per-recording count of successful requests served so far
 };
 
 } // namespace dispatcharr

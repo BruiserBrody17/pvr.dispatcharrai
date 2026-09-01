@@ -800,6 +800,56 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   per-playback choice, not a persistent preference, and only appears at
   all when `enable_inprogress_playback` is already on.
 
+  **A real user report caught a second, more subtle bug in the gradual-cap
+  fix above: "Play live" could still start ~12 seconds into the recording
+  instead of at true position 0, specifically on the very first playback
+  attempt after the mode-choice dialog was added.** Reproduced precisely
+  via the same `av_dump_format` `start:` signal used throughout this
+  investigation: `start: 13.427` for "Play live" vs. `start: 1.427` for
+  "Play from start" on the same recording, back to back -- an exact
+  3-segment (12-second) offset, not a vague "somewhere off." Root cause:
+  the gradual-cap fix above grows the cap starting from the very first
+  request (`kInitialMaxSegments + kMaxSegmentsGrowthStep` on request two),
+  and it turns out even *one* step of growth is sometimes enough for a
+  second application of `select_cur_seq_no()`'s live-edge join computation
+  -- still occurring within libavformat's settling window, just one reload
+  later -- to use the grown 6-segment count instead of the original
+  3-segment one, landing `FFMAX(6-3,0)=3` segments (12s) off 0 instead of
+  0. Fixed by holding the cap at `kInitialMaxSegments` for several requests
+  (`kHoldRequestsAtInitialCap`, 4) before allowing any growth at all --
+  `LocalPlaylistServer` now tracks a per-recording request count rather
+  than a next-cap value, and a small `ComputeMaxSegments(requestIndex)`
+  helper derives the cap from it. Growth only starts once re-application of
+  the join computation is no longer occurring in practice, going by the
+  margin observed above the single re-application actually caught.
+  Re-verified end-to-end after the fix, same methodology: "Play live" and
+  "Play from start" opened back to back against the same in-progress
+  recording now both report `start: 1.400000` -- identical, not offset --
+  confirming the join computation landed on true position 0 for "Play
+  live" this time.
+
+  **Investigated, but not yet fixed: cancelling the mode-choice dialog
+  (pressing Cancel or Back) shows Kodi's native "Playback failed" OK
+  dialog, which has to be dismissed manually.** Confirmed via Kodi-core
+  source, not guessed: `CPVRPlaybackState::StartPlayback()` calls
+  `GetRecordingStreamProperties()` but never actually checks its
+  `PVR_ERROR` return value -- it only inspects whether any stream
+  properties were set. Returning `PVR_ERROR_FAILED` on cancel (as this
+  addon does) is therefore indistinguishable, from Kodi-core's point of
+  view, from any other kind of failure to produce stream properties: with
+  nothing to open, `CVideoPlayer::CloseFile()` sets `m_error = true`
+  (since this wasn't a user-initiated stop, `m_bCloseRequest` is false),
+  which fires `OnPlayBackError()` and, via
+  `GUI_MSG_PLAYBACK_ERROR`, Kodi's generic `HELPERS::ShowOKDialogText`
+  "Playback failed" dialog (strings #16026/#16027). There is no
+  cancel-safe value in Kodi's `PVR_ERROR` enum, and no separate
+  "user cancelled, don't report an error" signal available to a PVR client
+  addon at this call site -- this is an architectural gap in Kodi-core's
+  PVR playback path, not something fixable from this addon's side alone
+  without changing what "cancel" actually does (e.g. silently falling back
+  to a default mode instead of aborting, which would change cancel's
+  existing semantics and needs a product decision, not just a bug fix).
+
   Two secondary things noticed along the way, neither investigated
   further this session: the placeholder-duration behaviour described
   above (Dispatcharr-side, not confirmed against its own source, but
