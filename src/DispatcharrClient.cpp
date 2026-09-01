@@ -110,6 +110,54 @@ size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
   return size * nmemb;
 }
 
+// Rewrites an in-progress recording's HLS playlist so libavformat treats it
+// as a closed, definite-VOD playlist: every non-comment, non-blank line
+// (a segment or sub-playlist reference) that isn't already absolute gets
+// prefixed with `baseDir` (the playlist's own URL directory, since a
+// data: URI -- what this text is ultimately embedded into -- has no base
+// path for a relative reference to resolve against), and a trailing
+// #EXT-X-ENDLIST is appended if the playlist doesn't already have one.
+std::string RewritePlaylistAsVod(const std::string& playlistText, const std::string& baseDir)
+{
+  std::string out;
+  out.reserve(playlistText.size() + 32);
+  size_t pos = 0;
+  bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
+  while (pos <= playlistText.size())
+  {
+    size_t newlinePos = playlistText.find('\n', pos);
+    std::string line = (newlinePos == std::string::npos)
+                            ? playlistText.substr(pos)
+                            : playlistText.substr(pos, newlinePos - pos);
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+
+    if (line.empty() || line[0] == '#')
+    {
+      out += line;
+    }
+    else if (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
+    {
+      out += line;
+    }
+    else
+    {
+      out += baseDir;
+      out += line;
+    }
+    out += '\n';
+
+    if (newlinePos == std::string::npos)
+      break;
+    pos = newlinePos + 1;
+  }
+
+  if (!hasEndlist)
+    out += "#EXT-X-ENDLIST\n";
+
+  return out;
+}
+
 std::string IsoFromTime(time_t t)
 {
   char buf[32];
@@ -944,32 +992,84 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
   return res != CURLE_OK || httpCode != 401;
 }
 
-std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId)
+std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId, std::string& error)
 {
-  std::string path = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/index.m3u8";
+  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
+  std::string playlistUrl = baseDir + "index.m3u8";
 
-  // Proactive self-heal: confirmed via real multi-install testing that the
-  // key can already be stale by the time this is called (see this method's
-  // header comment for why nothing can retry after the fact here the way
-  // OpenRecordingStream()/ReadRecordingStream() do). Best-effort: if
-  // GenerateApiKey() itself fails, proceed with whatever key is on hand
-  // rather than blocking playback on this check entirely.
-  if (!m_config.apiKey.empty() && !IsApiKeyValidFor(path))
+  // Two attempts: the playlist fetch itself can self-heal on a 401, same
+  // pattern as OpenRecordingStream() -- unlike the key baked into the
+  // resulting data: URI below, which can't retry after the fact once
+  // handed to inputstream.ffmpegdirect (see this method's header comment).
+  std::string playlistText;
+  for (int attempt = 0; attempt < 2; ++attempt)
+  {
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+      error = "Failed to initialise libcurl";
+      return "";
+    }
+
+    struct curl_slist* headers = nullptr;
+    std::string apiKeyHeader;
+    if (!m_config.apiKey.empty())
+    {
+      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      headers = curl_slist_append(headers, apiKeyHeader.c_str());
+    }
+
+    playlistText.clear();
+    curl_easy_setopt(curl, CURLOPT_URL, playlistUrl.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &playlistText);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+    CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK)
+    {
+      error = std::string("HTTP request failed fetching playlist: ") + curl_easy_strerror(res);
+      return "";
+    }
+
+    if (httpCode == 401 && attempt == 0)
+    {
+      std::string regenKey, regenError;
+      if (GenerateApiKey(regenKey, regenError))
+        continue;
+    }
+
+    if (httpCode < 200 || httpCode >= 300)
+    {
+      error = "Dispatcharr returned HTTP " + std::to_string(httpCode) + " fetching in-progress playlist";
+      return "";
+    }
+    break;
+  }
+
+  std::string vodPlaylist = RewritePlaylistAsVod(playlistText, baseDir);
+
+  // Proactive self-heal for the key baked into the rewritten segment URLs:
+  // same pattern as before, checked against the original playlist URL as a
+  // stand-in for the per-segment URLs it's really protecting (see this
+  // method's header comment for why nothing can retry after the fact once
+  // this is handed to inputstream.ffmpegdirect).
+  if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
   {
     std::string regenKey, regenError;
     GenerateApiKey(regenKey, regenError);
   }
 
-  std::string url = path;
-  // ffmpegdirect's header mapping (CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput,
-  // confirmed against its source and a live failed attempt: it logged
-  // "ignoring header option 'X-API-Key'" without the prefix) only forwards a
-  // fixed allowlist of standard HTTP header names as real headers -- anything
-  // else needs a literal "!" prefix, which it strips before using the rest
-  // as the header name. X-API-Key isn't on that allowlist.
-  if (!m_config.apiKey.empty())
-    url += "|!X-API-Key=" + UrlEncode(m_config.apiKey);
-  return url;
+  return vodPlaylist;
 }
 
 bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)

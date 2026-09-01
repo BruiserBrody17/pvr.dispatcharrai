@@ -68,6 +68,14 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   StartRecordingRefreshThread();
   if (m_enableRealtimeUpdates)
     StartRealtimeUpdateThread();
+
+  if (m_enableInProgressPlayback)
+  {
+    std::string playlistServerError;
+    if (!m_playlistServer.Start(playlistServerError))
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to start local playlist server: %s",
+                playlistServerError.c_str());
+  }
 }
 
 PVRDispatcharr::~PVRDispatcharr()
@@ -87,6 +95,8 @@ PVRDispatcharr::~PVRDispatcharr()
   m_realtimeUpdateCv.notify_all();
   if (m_realtimeUpdateThread.joinable())
     m_realtimeUpdateThread.join();
+
+  m_playlistServer.Stop();
 }
 
 void PVRDispatcharr::StartRecordingRefreshThread()
@@ -711,9 +721,16 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   // own HLS demuxer -- not Kodi's native one -- handles segment fetches,
   // propagating the X-API-Key header from the URL to every segment, not
   // just the manifest. See GetInProgressRecordingStreamUrl()'s comment for
-  // why this needs open_mode forced to "ffmpeg" specifically, and why
-  // neither of the stream_mode values already tried (and reverted) for live
-  // TV/catch-up elsewhere in this addon apply here.
+  // why this needs open_mode forced to "ffmpeg" specifically, why neither
+  // of the stream_mode values already tried (and reverted) for live
+  // TV/catch-up elsewhere in this addon apply here, and why STREAMURL below
+  // points at this addon's own local loopback server rather than either
+  // Dispatcharr's live playlist URL directly (confirmed live: libavformat
+  // joins near the live edge instead of the true beginning that way,
+  // regardless of is_realtime_stream) or a data: URI (confirmed live and
+  // via source: Kodi's own CURL class can't parse one at all, since
+  // CURL::Parse() hard-requires a "://" that a standards-compliant data:
+  // URI never has).
   if (m_enableInProgressPlayback)
   {
     int id = std::atoi(recording.GetRecordingId().c_str());
@@ -735,31 +752,48 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
     if (inProgress)
     {
       std::string keyBefore = m_client.GetApiKey();
-      std::string streamUrl = m_client.GetInProgressRecordingStreamUrl(id);
+      std::string playlistText = m_client.GetInProgressRecordingStreamUrl(id, error);
       // See GetInProgressRecordingStreamUrl()'s comment: it may have just
-      // self-healed a stale key before building this URL. Persist it the
-      // same way OpenRecordedStream()/ReadRecordedStream() do, so a
-      // restart of this install doesn't immediately invalidate it again.
+      // self-healed a stale key while building this. Persist it the same
+      // way OpenRecordedStream()/ReadRecordedStream() do, so a restart of
+      // this install doesn't immediately invalidate it again.
       std::string keyAfter = m_client.GetApiKey();
       if (keyAfter != keyBefore)
         kodi::addon::SetSettingString("api_key", keyAfter);
 
-      // is_realtime_stream is deliberately "false" here, not "true": read
-      // from ffmpegdirect's actual source (FFmpegStream::GetCapabilities()),
+      if (playlistText.empty())
+        return PVR_ERROR_SERVER_ERROR;
+
+      int playlistServerPort = m_playlistServer.GetPort();
+      if (playlistServerPort == 0)
+        return PVR_ERROR_SERVER_ERROR;
+
+      m_playlistServer.SetPlaylist(id, playlistText);
+      std::string streamUrl =
+          "http://127.0.0.1:" + std::to_string(playlistServerPort) + "/playlist/" +
+          std::to_string(id) + ".m3u8";
+      // ffmpegdirect's header mapping (CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput,
+      // confirmed against its source and a live failed attempt: it logged
+      // "ignoring header option 'X-API-Key'" without the prefix) only forwards
+      // a fixed allowlist of standard HTTP header names as real headers --
+      // anything else needs a literal "!" prefix, which it strips before using
+      // the rest as the header name. This addon's own local playlist server
+      // ignores this header entirely -- it's attached here only because
+      // ffmpeg's HLS demuxer shares the same avio_opts dictionary across the
+      // manifest fetch and every real segment sub-fetch to Dispatcharr,
+      // regardless of which host the manifest itself came from.
+      std::string apiKey = m_client.GetApiKey();
+      if (!apiKey.empty())
+        streamUrl += "|!X-API-Key=" + apiKey;
+
+      // is_realtime_stream is deliberately "false", not "true": read from
+      // ffmpegdirect's actual source (FFmpegStream::GetCapabilities()),
       // INPUTSTREAM_SUPPORTS_SEEK/PAUSE/ITIME are only advertised when this
-      // is false, and Kodi only performs its normal "seek to start position"
-      // on open when seeking is advertised as supported -- with it true,
-      // Kodi never attempts that seek at all, so playback just starts
-      // wherever libavformat's HLS demuxer happens to land on open (near the
-      // live edge, per its own live_start_index default), which is exactly
-      // the "doesn't start at the beginning, can't FF/RW" symptom reported.
-      // Dispatcharr's in-progress-recording playlist has no #EXT-X-ENDLIST
-      // (still being appended to) regardless of this flag, so libavformat's
-      // own live-playlist handling -- picking up newly-added segments as the
-      // recording keeps growing -- is untouched by this change; it's driven
-      // by the playlist content, not by this Kodi/ffmpegdirect-level flag.
-      // It's also arguably more correct: this isn't really "live TV", it's a
-      // file still being appended to, closer to a growing VOD asset.
+      // is false, and Kodi only performs its normal "seek to start
+      // position" on open when seeking is advertised as supported. It's
+      // also arguably more correct here regardless: this is a rewritten,
+      // definite-VOD-shaped snapshot by the time it reaches ffmpegdirect,
+      // not a live stream.
       properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
       properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
       properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
