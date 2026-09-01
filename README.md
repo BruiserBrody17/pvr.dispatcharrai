@@ -36,10 +36,11 @@ This is a first working scaffold, not a finished addon. Implemented:
 - Optional in-progress recording playback (`enable_inprogress_playback`
   setting, off by default, experimental), also via
   `inputstream.ffmpegdirect` -- lets you start watching a recording before
-  Dispatcharr finishes writing it, from the true beginning, with seek/FF/RW
-  over the already-recorded portion. Seek/FF/RW is Windows-only for now --
-  confirmed working there, confirmed not working on macOS despite identical
-  Kodi/FFmpeg versions and config, root cause not yet found; see
+  Dispatcharr finishes writing it. **Known issue:** playback currently
+  joins near the live edge of the still-recording show rather than at its
+  true beginning, and isn't reliably seekable -- root cause confirmed
+  (libavformat's HLS demuxer live-edge-join behaviour, not fixed by this
+  addon's `is_realtime_stream` property), fix not yet implemented; see
   `docs/API_NOTES.md`
 - Optional real-time recording/timer updates (`enable_realtime_updates`
   setting, off by default, experimental) -- connects directly to
