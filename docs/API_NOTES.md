@@ -685,6 +685,63 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   content -- the opposite trade-off from the one-time-snapshot version it
   replaced, not a strict improvement on every axis.
 
+  **Revisited once the join-position bug above was fixed, to check whether
+  seek could now also be recovered without giving up live-tailing --
+  confirmed this is a genuine, inherent architectural trade-off, not
+  something left to fix.** Investigation initially chased a promising
+  alternative theory: a freshly-created recording's PVR-level `runtime`
+  can briefly show a tiny placeholder value (`5` seconds observed) rather
+  than its real scheduled duration, self-correcting a while later once
+  Dispatcharr's own async EPG-matching settles it (confirmed directly:
+  the same recording read `runtime: 5` moments after creation and
+  `runtime: 2394` -- matching its real ~40-minute scheduled length -- when
+  checked again later). This raised the possibility that every earlier
+  `canseek: false` result during live-tailing had been confounded by
+  testing against recordings still carrying that placeholder, rather than
+  reflecting the live-tailing design itself.
+  Ruled out by testing again against a recording confirmed to already
+  have its correct, settled PVR-level duration (`runtime: 1252`, sane) at
+  the moment of open: `canseek` was still `false`. The placeholder-
+  duration behaviour is real (worth fixing or at least being aware of
+  separately, since it can misrepresent a recording's length in Kodi's UI
+  for a while after creation) but is not what gates seek during live
+  playback.
+  Traced the real mechanism instead by reading `FFmpegStream`'s handling
+  of stream times directly: it only populates start/end time information
+  when `!IsRealTimeStream()` (always true here, since `is_realtime_stream`
+  is set to `false`), but the end time it reports is
+  `m_pFormatContext->duration` -- which stays unknown for as long as
+  libavformat's HLS demuxer doesn't know the playlist is finished, i.e.
+  for as long as `#EXT-X-ENDLIST` is withheld to keep live-tailing
+  working. So `GetCapabilities()` genuinely does advertise
+  `INPUTSTREAM_SUPPORTS_SEEK` throughout -- the addon-level capability
+  flag was never the blocker -- but Kodi-core, receiving that
+  capability alongside an unknown/invalid total duration, correctly
+  declines to actually offer seeking: there's no way to seek to a
+  percentage or timestamp of a length that isn't known.
+  This is a hard architectural conflict, not a bug: an HLS demuxer's
+  notion of duration is derived from summing the durations of every
+  segment *up to whatever the playlist currently lists as complete*, and
+  that concept is fundamentally incompatible with "duration unknown
+  because more might still be appended," which is exactly what
+  live-tailing depends on. Getting both simultaneously -- seek while a
+  recording is still actively being written -- isn't achievable within
+  this ffmpeg/libavformat-based approach; the two require contradictory
+  answers to "does this stream have a known end."
+  Two secondary things noticed along the way, neither investigated
+  further this session: the placeholder-duration behaviour described
+  above (Dispatcharr-side, not confirmed against its own source, but
+  consistent with the API_NOTES entry on this addon's own periodic-
+  refresh design existing partly to smooth over exactly this kind of
+  post-creation correction); and the real-time-updates WebSocket
+  appearing not to reconnect after a Dispatcharr outage-and-recovery
+  during this investigation (only one "connected" log line the whole
+  session, from well before the outage) -- if confirmed as a real gap in
+  the reconnect-on-drop logic (as opposed to, say, the connection
+  surviving the outage fine and just not having anything new to report),
+  it would mean an addon install stays silently on the periodic-refresh-
+  only fallback until restarted, worth a dedicated look later.
+
   **The macOS-vs-Windows seek discrepancy investigated earlier is probably
   not a real platform difference -- more likely the same class of
   duration-metadata issue described next, not yet re-tested under that
