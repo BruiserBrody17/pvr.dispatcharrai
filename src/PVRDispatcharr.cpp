@@ -624,12 +624,7 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
   // (byte offset computed first from duration/filesize outside any
   // format-specific logic, then handed to FFmpeg to resync) when no
   // PVR_STREAM_PROPERTY_INPUTSTREAM is set at all -- the plain STREAMURL
-  // path set above, still what plays when this setting is off. Leaving
-  // "open_mode" unset too: ffmpegdirect's
-  // own DEFAULT-mode detection lands on OpenMode::CURL for a plain http://
-  // URL with this mimetype (neither an HLS/DASH manifest type nor one of
-  // its listed non-http schemes) -- its own intended default for exactly
-  // this shape of URL, not something to override.
+  // path set above, still what plays when this setting is off.
   //
   // Requires the separate inputstream.ffmpegdirect addon to actually be
   // installed; if it isn't, this would fail to open the stream at all, so
@@ -641,16 +636,39 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
   // seek to 18:20 landing at 18:09, one to 5:00 landing at 5:15) and
   // playback resumes and continues normally afterward -- a real
   // improvement over the plain-STREAMURL path's known-imprecise byte-
-  // estimation seeking. One caveat worth recording rather than glossing
-  // over: a seek can occasionally take much longer than the ~10-20s
-  // typical case to actually land (one observed instance sat unmoved,
-  // confirmed via Kodi's own OSD position readout rather than just
-  // JSON-RPC, for 85+ seconds -- possibly settled eventually, possibly
-  // didn't; not conclusively resolved either way before testing moved on).
-  // Not reproduced on demand despite trying, so this is a real but
-  // apparently intermittent latency/reliability caveat on this path, not a
-  // hard blocker -- worth keeping an eye on rather than treating either as
-  // solved or as broken.
+  // estimation seeking.
+  //
+  // open_mode is deliberately left unset, deferring to ffmpegdirect's own
+  // DEFAULT-mode detection, which lands on OpenMode::CURL for a plain
+  // http:// URL with this mimetype. A companion session's macOS testing
+  // found a credible explanation for this path's intermittent
+  // multi-second-to-85+-second seek latency: OpenMode::CURL means
+  // ffmpegdirect's I/O still goes through Kodi-core's own CCurlFile/
+  // CFileCache rather than an independent connection, and a real macOS log
+  // showed libavformat's mpegts demuxer's normal PCR-probe seek algorithm
+  // (~15-30 probe-and-adjust reads, expected for a format with no real
+  // index) paying CFileCache's own "cache completely reset for seek to
+  // position X" cost on every single probe before the seek finally landed.
+  // Forcing open_mode to "ffmpeg" was tried as the fix (matching the
+  // in-progress-recording HLS path, for the same reasoning: bypass
+  // Kodi-core's cache layer by having FFmpeg's own native http:// protocol
+  // handler own the I/O instead) -- and made things measurably worse in
+  // direct, patient live testing on Windows, not better. A forward seek
+  // that would typically land within ~10-20s under CURL mode (worst case
+  // observed: 85+s) instead sat completely unmoved for nearly 5 minutes
+  // (280s) under forced "ffmpeg" mode before finally landing 68 seconds off
+  // target (21:08 for a 20:00 request) -- both slower to resolve and less
+  // precise once it did, confirmed via patient polling specifically
+  // designed not to repeat the mistake of giving up too early (a first,
+  // shorter attempt at this same test was called "stuck" after only 60s,
+  // which in hindsight wasn't long enough to tell the difference between
+  // "slow" and "actually stuck" -- a real lesson from this investigation:
+  // this path's seeks need patience on the order of minutes, not seconds,
+  // before concluding anything). Reverted for that reason and left here as
+  // a documented dead end -- the *diagnosis* of why CURL mode is
+  // occasionally slow is still credible, but this particular fix for it
+  // isn't, so a future attempt shouldn't retry forcing "ffmpeg" mode
+  // without knowing it was already tried and made things worse.
   if (m_enableCatchupFfmpegdirectSeek)
   {
     properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
