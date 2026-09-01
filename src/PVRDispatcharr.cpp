@@ -3,7 +3,7 @@
 #include "WebSocketClient.h"
 
 #include <kodi/AddonBase.h>
-#include <kodi/gui/dialogs/Select.h>
+#include <kodi/General.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -76,6 +76,11 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     if (!m_playlistServer.Start(playlistServerError))
       kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to start local playlist server: %s",
                 playlistServerError.c_str());
+
+    // See m_pendingLiveModeRecordingId's comment: plain Play on an
+    // in-progress recording goes straight to "Play from start" now, and
+    // this is the only way left to get "Play live" for one.
+    AddMenuHook(kodi::addon::PVRMenuhook(kMenuHookPlayLive, 30043, PVR_MENUHOOK_RECORDING));
   }
 }
 
@@ -762,20 +767,19 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
       // reasoning: Kodi won't offer seeking without a known total
       // duration, and the only way to get libavformat to report one is to
       // mark the playlist complete, which stops it from ever picking up
-      // segments recorded after that point). Ask which one the user wants
-      // for this playback session with a blocking selection dialog --
-      // confirmed safe to call from here: this is a normal synchronous
-      // addon callback triggered directly by the user pressing Play, the
-      // same way Kodi's own native resume-point prompt already blocks in
-      // a similar spot.
-      std::vector<std::string> playbackModeOptions = {
-          kodi::addon::GetLocalizedString(30043), kodi::addon::GetLocalizedString(30044)};
-      int playbackModeChoice = kodi::gui::dialogs::Select::Show(
-          kodi::addon::GetLocalizedString(30042), playbackModeOptions);
-      if (playbackModeChoice < 0)
-        return PVR_ERROR_FAILED; // user cancelled the prompt -- don't play anything
+      // segments recorded after that point). Which one this session gets
+      // is decided by m_pendingLiveModeRecordingId (see its comment) --
+      // consumed here whether or not it actually matches this id, since
+      // it's a one-shot arm/consume flag either way.
+      bool useLiveMode = false;
+      {
+        std::lock_guard<std::mutex> lock(m_pendingLiveModeMutex);
+        if (m_pendingLiveModeRecordingId == id)
+          useLiveMode = true;
+        m_pendingLiveModeRecordingId = -1;
+      }
 
-      if (playbackModeChoice == 1)
+      if (!useLiveMode)
       {
         // "Play from start (seek)": a one-time, definite-VOD-shaped
         // snapshot as of right now, not a live-tailing one -- fetched
@@ -869,6 +873,52 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   }
 
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::CallRecordingMenuHook(const kodi::addon::PVRMenuhook& menuhook,
+                                                 const kodi::addon::PVRRecording& item)
+{
+  if (menuhook.GetHookId() != kMenuHookPlayLive)
+    return PVR_ERROR_NOT_IMPLEMENTED;
+
+  // PVR_MENUHOOK_RECORDING has no per-item visibility hook -- confirmed
+  // against Kodi-core (PVRContextMenus.cpp's PVRClientMenuHook::IsVisible())
+  // that a recording-category hook shows on every recording's context menu,
+  // completed ones included. Silently no-op (with an explanatory
+  // notification) rather than arming anything for one that isn't actually
+  // in progress.
+  int id = std::atoi(item.GetRecordingId().c_str());
+  std::vector<Recording> recordings;
+  std::string error;
+  bool inProgress = false;
+  if (m_client.GetRecordings(recordings, error))
+  {
+    for (const auto& rec : recordings)
+    {
+      if (rec.id == id)
+      {
+        inProgress = rec.isInProgress;
+        break;
+      }
+    }
+  }
+
+  if (!inProgress)
+  {
+    kodi::QueueNotification(QUEUE_INFO, "", kodi::addon::GetLocalizedString(30046));
+    return PVR_ERROR_NO_ERROR;
+  }
+
+  // See m_pendingLiveModeRecordingId's comment: a binary PVR addon can't
+  // start playback itself, so this arms the next GetRecordingStreamProperties()
+  // call for this id rather than opening anything directly -- the user
+  // still has to press Play themselves right after.
+  {
+    std::lock_guard<std::mutex> lock(m_pendingLiveModeMutex);
+    m_pendingLiveModeRecordingId = id;
+  }
+  kodi::QueueNotification(QUEUE_INFO, "", kodi::addon::GetLocalizedString(30045));
   return PVR_ERROR_NO_ERROR;
 }
 
