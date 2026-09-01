@@ -458,14 +458,48 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   Verified end-to-end against a real in-progress recording: real video
   rendering (confirmed via screenshot, not just JSON-RPC state), playback
   time advancing in real time, and over a minute of continuous playback
-  with no stalls. Seeking does not work (`Player.Seek` returned an error,
-  though playback continued normally afterward) -- expected, since
-  `is_realtime_stream=true` is set (correctly: it genuinely is a live,
-  growing stream) and `inputstream.ffmpegdirect` only advertises seek
-  support for non-realtime streams. Not chased further, deliberately, for
-  the same reason the seek-focused catch-up attempts were abandoned
-  elsewhere in this addon: it's exactly the kind of complexity that's
-  already burned time here twice.
+  with no stalls.
+
+  **Follow-up fix: playback originally joined near the live edge instead
+  of at the true start, and seeking/FF/RW didn't work at all.** Both
+  symptoms turned out to be the same root cause, confirmed by reading
+  `FFmpegStream.cpp` directly: `GetCapabilities()` only advertises
+  `INPUTSTREAM_SUPPORTS_SEEK`/`PAUSE`/`ITIME` when `is_realtime_stream` is
+  false, and Kodi's `CVideoPlayer` only performs its normal "seek to the
+  requested start position on open" behaviour when seeking is advertised
+  as supported -- with it unsupported, Kodi never even attempted that
+  initial seek, so playback simply started wherever libavformat's HLS
+  demuxer happened to land when opening a playlist with no
+  `#EXT-X-ENDLIST` (near the live edge, per its own `live_start_index`
+  default), which is indistinguishable from "doesn't start at the
+  beginning" and also meant no seek bar. Fixed by setting both
+  `PVR_STREAM_PROPERTY_ISREALTIMESTREAM` and
+  `inputstream.ffmpegdirect.is_realtime_stream` to `false` instead of
+  `true`. This is arguably more correct anyway -- it isn't really "live
+  TV", it's a file still being appended to, closer to a growing VOD asset.
+  Confirmed via `GetFFMpegOptionsFromInput()`/`Properties.h` that there is
+  no reachable passthrough for arbitrary ffmpeg AVOptions (like
+  `live_start_index` itself) through any property this addon can set --
+  only a small fixed allowlist of names map straight to AVOptions, and the
+  `!`-prefix mechanism is header-only -- so flipping this one flag was the
+  only lever available, and it turned out to be sufficient on its own.
+  Whether Dispatcharr's in-progress playlist keeps being recognised as
+  still-growing (i.e., new segments keep appearing as the recording
+  continues) is governed entirely by the missing `#EXT-X-ENDLIST` tag in
+  the playlist content itself, which is independent of this flag -- so
+  that behaviour is unaffected by this change.
+  Verified live end-to-end via Kodi JSON-RPC against a real in-progress
+  recording (`Player.Open` on a recording several hours into a scheduled
+  ~3-hour show): played from true position 0 (not the live edge),
+  `Player.GetProperties` reported `canseek: true`, `Player.Seek` to both
+  5:00 (forward) and back to 1:00 (rewind) both succeeded and continued
+  playing correctly from the new position afterward, and `kodi.log` showed
+  `CVideoPlayer::CheckPlayerInit - dropping packet ... to get to start
+  point` -- Kodi's normal start-position-seek logic -- firing for this
+  stream, confirming the mechanism worked as theorized rather than by
+  coincidence. No auth errors across the session, confirming the
+  `!X-API-Key` header still applies correctly to segment fetches made
+  after a seek.
   Gap found by a companion session's real multi-install testing: unlike
   `OpenRecordingStream()`/`ReadRecordingStream()`, there's no way to
   self-heal a stale API key *after the fact* here -- the URL (with the
