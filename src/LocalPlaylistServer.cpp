@@ -191,10 +191,15 @@ void LocalPlaylistServer::Stop()
   m_port = 0;
 }
 
-void LocalPlaylistServer::SetPlaylist(int recordingId, const std::string& content)
+void LocalPlaylistServer::SetPlaylistProvider(int recordingId, PlaylistProvider provider)
 {
-  std::lock_guard<std::mutex> lock(m_playlistsMutex);
-  m_playlists[recordingId] = content;
+  std::lock_guard<std::mutex> lock(m_providersMutex);
+  m_providers[recordingId] = std::move(provider);
+  // Reset first-request tracking: a fresh call to
+  // GetRecordingStreamProperties() (a new playback attempt) should see its
+  // own first request truncated, even if this recording id was played
+  // before in this addon's lifetime.
+  m_servedOnce.erase(recordingId);
 }
 
 void LocalPlaylistServer::AcceptLoop()
@@ -247,12 +252,35 @@ void LocalPlaylistServer::HandleConnection(intptr_t clientSocketHandle)
   bool found = false;
   if (recordingId >= 0)
   {
-    std::lock_guard<std::mutex> lock(m_playlistsMutex);
-    auto it = m_playlists.find(recordingId);
-    if (it != m_playlists.end())
+    PlaylistProvider provider;
+    bool isFirstRequest = false;
     {
-      content = it->second;
-      found = true;
+      std::lock_guard<std::mutex> lock(m_providersMutex);
+      auto it = m_providers.find(recordingId);
+      if (it != m_providers.end())
+      {
+        provider = it->second;
+        isFirstRequest = m_servedOnce.find(recordingId) == m_servedOnce.end();
+      }
+    }
+
+    // Invoked outside the lock: this calls back into DispatcharrClient,
+    // which performs real network requests to Dispatcharr -- holding
+    // m_providersMutex for that would block SetPlaylistProvider() (and any
+    // other request on a different recording id, though this server only
+    // ever handles one connection at a time) for however long that takes.
+    if (provider)
+      content = provider(isFirstRequest);
+    found = !content.empty();
+
+    // Only counts as "served" once a fetch actually succeeds -- a
+    // transient failure on the true first request (network hiccup, a 401
+    // that couldn't self-heal in time) shouldn't cost this recording its
+    // one truncated, join-forcing response on the retry that follows it.
+    if (found && isFirstRequest)
+    {
+      std::lock_guard<std::mutex> lock(m_providersMutex);
+      m_servedOnce.insert(recordingId);
     }
   }
 
