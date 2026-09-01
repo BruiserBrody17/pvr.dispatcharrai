@@ -744,11 +744,27 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
       if (keyAfter != keyBefore)
         kodi::addon::SetSettingString("api_key", keyAfter);
 
+      // is_realtime_stream is deliberately "false" here, not "true": read
+      // from ffmpegdirect's actual source (FFmpegStream::GetCapabilities()),
+      // INPUTSTREAM_SUPPORTS_SEEK/PAUSE/ITIME are only advertised when this
+      // is false, and Kodi only performs its normal "seek to start position"
+      // on open when seeking is advertised as supported -- with it true,
+      // Kodi never attempts that seek at all, so playback just starts
+      // wherever libavformat's HLS demuxer happens to land on open (near the
+      // live edge, per its own live_start_index default), which is exactly
+      // the "doesn't start at the beginning, can't FF/RW" symptom reported.
+      // Dispatcharr's in-progress-recording playlist has no #EXT-X-ENDLIST
+      // (still being appended to) regardless of this flag, so libavformat's
+      // own live-playlist handling -- picking up newly-added segments as the
+      // recording keeps growing -- is untouched by this change; it's driven
+      // by the playlist content, not by this Kodi/ffmpegdirect-level flag.
+      // It's also arguably more correct: this isn't really "live TV", it's a
+      // file still being appended to, closer to a growing VOD asset.
       properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
       properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
       properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
-      properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
-      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+      properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
+      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "false");
       properties.emplace_back("inputstream.ffmpegdirect.open_mode", "ffmpeg");
       return PVR_ERROR_NO_ERROR;
     }
