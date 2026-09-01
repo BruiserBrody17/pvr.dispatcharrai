@@ -460,85 +460,98 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   time advancing in real time, and over a minute of continuous playback
   with no stalls.
 
-  **Follow-up fix: playback originally joined near the live edge instead
-  of at the true start, and seeking/FF/RW didn't work at all.** Both
-  symptoms turned out to be the same root cause, confirmed by reading
-  `FFmpegStream.cpp` directly: `GetCapabilities()` only advertises
+  **Follow-up attempt (`is_realtime_stream=false`) turned out to be
+  incomplete -- it fixed the advertised seek *capability* but not the
+  actual join *position*, and the earlier "verified working" claim below
+  was wrong.** Original theory, confirmed by reading `FFmpegStream.cpp`
+  directly: `GetCapabilities()` only advertises
   `INPUTSTREAM_SUPPORTS_SEEK`/`PAUSE`/`ITIME` when `is_realtime_stream` is
   false, and Kodi's `CVideoPlayer` only performs its normal "seek to the
   requested start position on open" behaviour when seeking is advertised
-  as supported -- with it unsupported, Kodi never even attempted that
-  initial seek, so playback simply started wherever libavformat's HLS
-  demuxer happened to land when opening a playlist with no
-  `#EXT-X-ENDLIST` (near the live edge, per its own `live_start_index`
-  default), which is indistinguishable from "doesn't start at the
-  beginning" and also meant no seek bar. Fixed by setting both
-  `PVR_STREAM_PROPERTY_ISREALTIMESTREAM` and
-  `inputstream.ffmpegdirect.is_realtime_stream` to `false` instead of
-  `true`. This is arguably more correct anyway -- it isn't really "live
-  TV", it's a file still being appended to, closer to a growing VOD asset.
-  Confirmed via `GetFFMpegOptionsFromInput()`/`Properties.h` that there is
-  no reachable passthrough for arbitrary ffmpeg AVOptions (like
-  `live_start_index` itself) through any property this addon can set --
-  only a small fixed allowlist of names map straight to AVOptions, and the
-  `!`-prefix mechanism is header-only -- so flipping this one flag was the
-  only lever available, and it turned out to be sufficient on its own.
-  Whether Dispatcharr's in-progress playlist keeps being recognised as
-  still-growing (i.e., new segments keep appearing as the recording
-  continues) is governed entirely by the missing `#EXT-X-ENDLIST` tag in
-  the playlist content itself, which is independent of this flag -- so
-  that behaviour is unaffected by this change.
-  Verified live end-to-end via Kodi JSON-RPC against a real in-progress
-  recording (`Player.Open` on a recording several hours into a scheduled
-  ~3-hour show): played from true position 0 (not the live edge),
-  `Player.GetProperties` reported `canseek: true`, `Player.Seek` to both
-  5:00 (forward) and back to 1:00 (rewind) both succeeded and continued
-  playing correctly from the new position afterward, and `kodi.log` showed
-  `CVideoPlayer::CheckPlayerInit - dropping packet ... to get to start
-  point` -- Kodi's normal start-position-seek logic -- firing for this
-  stream, confirming the mechanism worked as theorized rather than by
-  coincidence. No auth errors across the session, confirming the
-  `!X-API-Key` header still applies correctly to segment fetches made
-  after a seek.
+  as supported. Fixed by setting both `PVR_STREAM_PROPERTY_ISREALTIMESTREAM`
+  and `inputstream.ffmpegdirect.is_realtime_stream` to `false`. This part
+  held up: seeking genuinely works once this is set (see below).
 
-  **Known platform gap: seek/FF/RW works on Windows but not on macOS,
-  despite identical addon config, identical Kodi build, and identical
-  FFmpeg version.** Cross-verified independently on macOS (position-0
-  start confirmed working there too), but `Player.GetProperties` reports
-  `canseek: false` and `Player.Seek` is rejected outright with JSON-RPC
-  error -32100 -- rejected by Kodi's own dispatch layer before it ever
-  reaches the inputstream addon, meaning Kodi-core itself has decided the
-  stream isn't seekable rather than the addon failing to advertise it.
-  Considered and ruled out, in order:
-  - *Property not actually applying on macOS* -- ruled out; the macOS
-    `kodi.log` shows `inputstream.ffmpegdirect.is_realtime_stream = false`
-    logged correctly, in the correct causal order before
-    `GetCapabilities()` runs.
-  - *Kodi/FFmpeg version mismatch between the two machines* -- ruled out;
-    both machines log the identical build hash
-    (`Git:20251031-a3a448d26b`) and identical FFmpeg version
-    (`6.0.1-Kodi`).
-  - *Stale Kodi-core-side caching from testing under the old
-    `is_realtime_stream=true` code, before this fix* (the same class of
-    issue as the duration/codec-stats quirk elsewhere in this file) --
-    ruled out by a clean-room test: fully killed the Kodi process,
-    created a brand-new recording via the API while Kodi wasn't even
-    running, launched Kodi fresh, and opened that recording for the very
-    first time on that install. Same `canseek: false` / -32100 result.
-    There was no prior state for anything to be stale from.
-  With property-plumbing, version mismatch, and caching all eliminated,
-  this is a genuine macOS-specific behaviour difference somewhere below
-  the addon/ffmpegdirect-property layer -- most likely in how
-  libavformat's HLS demuxer or Kodi-core's own seek-permission gate
-  behaves on macOS specifically for a still-growing (no-`#EXT-X-ENDLIST`)
-  playlist, since `FFmpegStream::IsRealTimeStream()`'s own logic is a
-  platform-independent boolean expression that should produce the same
-  result given the same input on both platforms. Not something reachable
-  from this addon's code with the tools available for this investigation;
-  documented as a known limitation rather than chased further. Windows
-  users get full VCR controls over the already-recorded portion; macOS
-  users get correct position-0 start but no seek/FF/RW, same as before
-  this fix.
+  What didn't hold up: the "starts at the true beginning" verification.
+  It was checked only via Kodi's own JSON-RPC `Player.GetProperties`
+  (`time`/`percentage`), which display position *relative to wherever the
+  stream happens to begin*, not relative to the recording's true absolute
+  start -- so a demuxer that joins near the live edge still reports
+  `time: 0:11` right after open, because Kodi labels wherever playback
+  starts as "0". That's not evidence of anything; it's what Kodi always
+  shows at the start of any stream. The real join point is only visible in
+  ffmpegdirect's raw `av_dump_format` log line
+  (`Duration: N/A, start: <seconds>, ...`), which wasn't checked at the
+  time.
+
+  Caught when the user reported the bug still happening on a currently-
+  recording game, re-tested live, and that dump line read
+  `Duration: N/A, start: 9681.617944, bitrate: N/A`. Cross-checked against
+  the recording's real `start_time` from Dispatcharr's API
+  (`2026-08-31T23:39:00Z`) versus wall-clock time at the moment of the
+  test (~02:19 UTC next day): elapsed time since recording start was
+  ~2h40m (9600s), matching the logged `start: 9681.6` almost exactly.
+  **libavformat's HLS demuxer is joining the still-growing (no-
+  `#EXT-X-ENDLIST`) playlist at the current wall-clock live edge,
+  independent of `is_realtime_stream`.** That property only ever
+  controlled ffmpegdirect's *advertised* seek capability, never
+  libavformat's own automatic join-point selection for a no-`ENDLIST`
+  playlist (governed by its own `live_start_index` option, confirmed
+  earlier -- see the `GetFFMpegOptionsFromInput()` note above -- to have
+  no reachable passthrough through any property this addon can set).
+  Whichever recording happened to be tested when this was first "verified"
+  most likely also joined near its own live edge; it just wasn't caught
+  because the only check was Kodi's relative-position display.
+
+  Real fix has not been implemented yet. The only known way to stop
+  libavformat from applying live-edge-join logic at all is to make the
+  playlist look like a complete, closed VOD list -- i.e., inject
+  `#EXT-X-ENDLIST` into a copy of the playlist before handing it to
+  ffmpeg (e.g. as a `data:` URI built from a one-time fetch-and-rewrite of
+  the current playlist text, since ffmpegdirect exposes no way to pass a
+  rewritten playlist any other way). This is expected to fix both the
+  join-position and seek-range problems in one shot (VOD-shaped HLS is
+  always demuxed from segment 0 with a full seek range), at a real cost:
+  once marked `ENDLIST`, ffmpeg treats the list as complete and stops
+  polling for newly-appended segments, so a single playback session would
+  no longer tail the recording live -- catching up on brand-new content
+  would need a stop/replay to re-fetch a fresh snapshot. Not implemented
+  pending user sign-off on that trade-off.
+
+  **The macOS-vs-Windows seek discrepancy investigated earlier is probably
+  not a real platform difference -- more likely the same class of
+  duration-metadata issue described next, not yet re-tested under that
+  hypothesis.** `canseek` on Windows tracked whether Kodi had a sane,
+  already-known recording duration: `true` against a long-established
+  recording with a normal scheduled runtime, `false` against a recording
+  whose duration Kodi's PVR data showed as an obviously-wrong ~6 seconds
+  (see below) even though Dispatcharr's real `end_time` gave a normal
+  ~3h duration -- suggesting Kodi-core gates seek permission on having a
+  known total duration, independent of whatever the inputstream addon
+  advertises. The macOS clean-room test that ruled out caching used a
+  *brand-new* recording created via the API specifically for that test --
+  exactly the kind of recording most likely to still be carrying a
+  placeholder duration at open time (see below). Version mismatch and
+  property-plumbing were still correctly ruled out as explanations, but
+  "genuine macOS platform gap" was likely the wrong conclusion; worth
+  re-testing on macOS against a long-established recording with a
+  known-correct duration before trusting that conclusion further.
+
+  **Separately-noticed, likely pre-existing bug: a recording's Kodi-
+  visible duration can be stuck far too low (6 seconds observed against a
+  real ~3-hour scheduled game) even though Dispatcharr's own `start_time`/
+  `end_time` for that same recording are correct.** `TimeFromIso()`
+  parsing was checked directly against the real API response and is
+  correct (handles both the `Z` and `+00:00` suffix styles fine). Most
+  likely explanation: Dispatcharr sets a short placeholder `end_time` at
+  the moment a recording is created (e.g. for a manually-triggered "record
+  now" without a fixed stop time) and extends it shortly after via EPG
+  matching, and this addon's periodic refresh thread (`recording_refresh_
+  minutes`, default 5) or the real-time-updates feed hasn't caught the
+  correction yet by the time it's checked. Not confirmed against
+  Dispatcharr's own source, and not chased further this session -- flagged
+  here since it may explain some of the seek-capability inconsistency
+  above, not because it's confirmed as a real ongoing bug.
   Gap found by a companion session's real multi-install testing: unlike
   `OpenRecordingStream()`/`ReadRecordingStream()`, there's no way to
   self-heal a stale API key *after the fact* here -- the URL (with the
