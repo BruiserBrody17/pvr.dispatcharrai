@@ -728,6 +728,35 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   recording is still actively being written -- isn't achievable within
   this ffmpeg/libavformat-based approach; the two require contradictory
   answers to "does this stream have a known end."
+
+  **The same root cause also rules out Kodi automatically resuming
+  mid-session playback of a still-in-progress recording, confirmed by a
+  direct test, not just inferred.** Played an in-progress recording for
+  ~25 seconds (of a recording with well over 1000 seconds left on its
+  schedule -- nowhere near naturally ending), then stopped it via
+  `Player.Stop` -- a genuine mid-playback interruption, not the
+  natural-end-of-file case documented earlier in this file.
+  `PVR.GetRecordingDetails` afterward showed the exact same outcome as
+  that natural-EOF case: `playcount: 1`, `resume: {position: -1.0}` --
+  marked fully watched, no bookmark saved at all -- and reopening landed
+  back at true position 0, not ~25 seconds in. Kodi's own
+  save-a-bookmark-vs-mark-watched decision on stop is a comparison
+  against the total duration (how far in, as a fraction of the whole,
+  counts as "essentially finished" vs. "still partway through") -- and
+  that duration is unknown for exactly the same reason seeking doesn't
+  work, so Kodi can't tell a 2%-in stop from a 98%-in one and appears to
+  default to treating any stop as complete. Combined with the earlier,
+  separately-confirmed finding that there is no Kodi-exposed way to
+  write an arbitrary resume point for a `pvr://` path at all
+  (`Files.SetFileDetails` fails unconditionally for that scheme), this
+  means there is currently no way -- automatic or manual -- to have a
+  session resume from where an earlier one left off while the underlying
+  recording is still being written. The only two options while still in
+  progress are: start over from the true beginning each time (current
+  behaviour), or track the position yourself outside Kodi and seek to it
+  manually -- which itself doesn't work either, per the seek finding
+  above.
+
   Two secondary things noticed along the way, neither investigated
   further this session: the placeholder-duration behaviour described
   above (Dispatcharr-side, not confirmed against its own source, but
