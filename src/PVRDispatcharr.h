@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "DispatcharrClient.h"
+#include "LocalPlaylistServer.h"
 #include "XmlTvParser.h"
 
 class PVRDispatcharr : public kodi::addon::CInstancePVRClient
@@ -110,6 +111,15 @@ private:
   bool m_enableLiveTimeshift = false;
   bool m_enableInProgressPlayback = false;
   bool m_debugLogging = false;
+
+  // Backs in-progress recording playback's rewritten-playlist snapshot --
+  // see DispatcharrClient::GetInProgressRecordingStreamUrl()'s comment and
+  // LocalPlaylistServer.h for why STREAMURL can't just be a data: URI.
+  // Started in the constructor whenever m_enableInProgressPlayback is true
+  // (not unconditionally -- no reason to hold a loopback listening socket
+  // open for installs that never use this feature), stopped in the
+  // destructor.
+  dispatcharr::LocalPlaylistServer m_playlistServer;
 
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/

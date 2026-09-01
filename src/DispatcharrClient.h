@@ -285,52 +285,94 @@ public:
   int64_t GetRecordingStreamLength() const;
   void CloseRecordingStream();
 
-  // Builds the pipe-delimited HLS URL (with an X-API-Key header suffix,
-  // Kodi's "|key=value" stream URL syntax) for an in-progress recording, to
-  // be routed through inputstream.ffmpegdirect rather than
-  // OpenRecordingStream()/ReadRecordingStream() above. A recording still
-  // being written is served as a growing HLS playlist (confirmed against a
-  // live instance: {base}/api/channels/recordings/{id}/hls/index.m3u8,
-  // segments named seg_NNNNN.ts), not a single Range-seekable file, and
-  // each segment independently requires the same X-API-Key header --
+  // Fetches an in-progress recording's live HLS playlist and rewrites it
+  // into a definite-VOD-shaped snapshot: every segment reference becomes an
+  // absolute URL (the result is served from a local loopback HTTP server,
+  // not Dispatcharr itself, so it has no base path of its own for a
+  // relative reference to resolve against -- see LocalPlaylistServer.h),
+  // and a trailing #EXT-X-ENDLIST is appended if the playlist doesn't
+  // already have one. Returns the rewritten text (not a URL) -- the caller
+  // (PVRDispatcharr::GetRecordingStreamProperties()) registers it with its
+  // own LocalPlaylistServer instance and builds the actual STREAMURL from
+  // that server's loopback address, since a bare data: URI cannot be used
+  // here at all: PVR_STREAM_PROPERTY_STREAMURL's pipe-delimited
+  // "url|option=value" syntax is parsed by Kodi's own CURL class
+  // (xbmc/URL.cpp), which hard-requires the literal substring "://" to
+  // recognise a protocol -- confirmed via its source and a live failed
+  // attempt (ffmpegdirect logged "could not open file data:...") that a
+  // standard data: URI, having no "://" per RFC 2397, never gets
+  // recognised as a protocol at all and is instead mishandled as a literal
+  // filename.
+  //
+  // A recording still being written is served as a growing HLS playlist
+  // (confirmed against a live instance:
+  // {base}/api/channels/recordings/{id}/hls/index.m3u8, segments named
+  // seg_NNNNN.ts) with no #EXT-X-ENDLIST tag. Confirmed live (both via a
+  // direct av_dump_format log line and by cross-checking it against the
+  // recording's real start_time and wall-clock elapsed time) that pointing
+  // ffmpegdirect straight at that live URL makes libavformat's HLS demuxer
+  // join wherever it currently is -- effectively the live edge -- rather
+  // than at the true first segment, regardless of the is_realtime_stream
+  // property (that property only ever controls ffmpegdirect's own
+  // advertised seek capability, not libavformat's automatic join-point
+  // selection for a no-ENDLIST playlist, and there is no property this
+  // addon can set that reaches libavformat's own live_start_index option --
+  // confirmed via GetFFMpegOptionsFromInput()'s source, which only maps a
+  // small fixed allowlist of names to real AVOptions). A definite-VOD-
+  // shaped playlist is unconditionally demuxed from segment 0 with a full
+  // seek range in libavformat's HLS demuxer, sidestepping live_start_index
+  // entirely rather than trying to override it.
+  //
+  // Real, accepted trade-off: this is a one-time snapshot, not a live
+  // reference -- once marked ENDLIST, libavformat treats the playlist as
+  // complete and stops polling for segments appended after this call, so a
+  // single playback session no longer tails the recording as it keeps
+  // growing. Re-opening fetches a fresh, larger snapshot, but doesn't
+  // resume where a prior session left off (see docs/API_NOTES.md -- there
+  // is no Kodi-exposed way to write an arbitrary resume point for a pvr://
+  // path, confirmed via Files.SetFileDetails failing unconditionally for
+  // that scheme).
+  //
+  // Each segment independently requires the same X-API-Key header --
   // confirmed that query-param auth is NOT accepted as an alternative
-  // (both ?api_key= and ?X-API-Key= got 403; only the real header works),
-  // and Kodi's own native (non-ffmpeg) HLS handling has no mechanism to
-  // attach a custom header to the segment requests it discovers by parsing
-  // the playlist itself. ffmpegdirect's plain pass-through mode (no
-  // stream_mode set) instead delegates the whole thing to ffmpeg's own HLS
-  // demuxer, which does propagate custom headers to every segment fetch,
-  // not just the manifest -- confirmed by reading its source
-  // (FFmpegStream::OpenWithFFmpeg -> GetFFMpegOptionsFromInput()) -- PROVIDED
+  // (both ?api_key= and ?X-API-Key= got 403; only the real header works).
+  // ffmpegdirect's plain pass-through mode (no stream_mode set) delegates
+  // the whole thing to ffmpeg's own HLS demuxer, which does propagate
+  // custom headers to every segment fetch, not just the manifest --
+  // confirmed by reading its source (FFmpegStream::OpenWithFFmpeg ->
+  // GetFFMpegOptionsFromInput()) -- PROVIDED
   // inputstream.ffmpegdirect.open_mode is explicitly forced to "ffmpeg": a
   // plain http(s) URL otherwise defaults to its OpenWithCURL() path
   // instead, which sets no header options at all when opening the format
-  // context and would silently reproduce this exact failure. Also confirmed
-  // (both by reading GetFFMpegOptionsFromInput()'s source and by an actual
-  // failed attempt logging "ignoring header option 'X-API-Key'"): it only
-  // forwards a fixed allowlist of standard HTTP header names as real
-  // headers; anything else -- X-API-Key included -- needs a literal "!"
-  // prefix on the option name, which it strips before using the rest as the
-  // header name, hence "!X-API-Key" below rather than "X-API-Key". See
-  // GetRecordingStreamProperties() in PVRDispatcharr.cpp for the rest of
-  // the properties this needs alongside the URL. The URL is constructed
-  // directly here (not resolved via a live redirect probe the way
-  // OpenRecordingStream() does) since the caller has already independently
-  // confirmed in-progress status via GetRecordings() -- the same condition
-  // Dispatcharr's own /file/ endpoint uses to decide whether to redirect
-  // here at all.
+  // context. This addon's own local playlist server never sees or needs
+  // that header (it ignores it entirely -- the header is attached to the
+  // *outer* STREAMURL only because ffmpeg's HLS demuxer shares the same
+  // avio_opts dictionary across the manifest fetch and every segment
+  // sub-fetch regardless of which host the manifest itself came from), so
+  // it still reaches the real per-segment Dispatcharr requests exactly as
+  // it did when the outer URL was Dispatcharr's own live manifest. Also
+  // confirmed (both by reading GetFFMpegOptionsFromInput()'s source and by
+  // an actual failed attempt logging "ignoring header option
+  // 'X-API-Key'"): it only forwards a fixed allowlist of standard HTTP
+  // header names as real headers; anything else -- X-API-Key included --
+  // needs a literal "!" prefix on the option name, which it strips before
+  // using the rest as the header name, hence "!X-API-Key" in
+  // PVRDispatcharr.cpp rather than "X-API-Key".
   //
-  // Not const: unlike OpenRecordingStream()/ReadRecordingStream(), there's
-  // no callback into this addon if the key turns out to be stale -- the URL
-  // (with the key already baked in) is handed to inputstream.ffmpegdirect
-  // once, upfront, with no way for it to ask this addon to regenerate and
-  // retry the way this addon's own HTTP client does on a 401. Confirmed via
-  // real multi-install testing that the shared account-wide key (see
+  // Not const: proactively checks whether the current API key is still
+  // valid and regenerates it if not, same reasoning as
+  // OpenRecordingStream()'s reactive self-heal -- confirmed via real
+  // multi-install testing that the shared account-wide key (see
   // GenerateApiKey()'s comment) can already be stale by the time this is
-  // called, so this checks it live first and regenerates before baking in
-  // a key already known to be invalid, rather than baking it in blind and
-  // letting ffmpegdirect fail outright with no recovery.
-  std::string GetInProgressRecordingStreamUrl(int recordingId);
+  // called. The playlist fetch itself self-heals reactively on a 401, same
+  // pattern as OpenRecordingStream(); the proactive check additionally
+  // covers the key baked into the rewritten playlist's segment URLs for
+  // ffmpegdirect's own later segment fetches, which have no such retry
+  // hook once handed off.
+  //
+  // Returns an empty string and populates `error` on failure (a genuine
+  // network/HTTP failure fetching the playlist itself).
+  std::string GetInProgressRecordingStreamUrl(int recordingId, std::string& error);
 
 private:
   std::string BaseUrl() const;
