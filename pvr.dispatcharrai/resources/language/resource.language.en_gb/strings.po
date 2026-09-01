@@ -121,6 +121,14 @@ msgctxt "#30039"
 msgid "How often to ask Kodi to re-check its recordings and timers list on its own, without waiting for a local action (like starting or deleting a recording from this Kodi) to prompt it. Without this, a change made another way -- from a different Kodi install sharing this Dispatcharr account, directly through Dispatcharr itself, or a recording finishing on its own with nothing local to react to it -- would only ever show up after restarting Kodi."
 msgstr ""
 
+msgctxt "#30040"
+msgid "Enable real-time recording/timer updates (experimental)"
+msgstr ""
+
+msgctxt "#30041"
+msgid "Connects directly to Dispatcharr's own real-time update feed (the same one its own web interface uses -- no extra setup on the Dispatcharr side needed) so a change shows up in Kodi immediately instead of waiting for the refresh interval above. That interval keeps running as a fallback even with this on, in case the connection can't be made or drops and stays down. Experimental: this is new, hand-written networking code that hasn't seen the same real-world use as the rest of this addon -- leave off if you'd rather stick with the plain refresh interval."
+msgstr ""
+
 msgctxt "#30030"
 msgid "Advanced"
 msgstr ""

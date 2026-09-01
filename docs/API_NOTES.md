@@ -500,6 +500,59 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   the API again, confirmed it was still showing immediately afterward
   (reproducing the bug), then confirmed it disappeared on its own after
   the refresh interval elapsed with no Kodi restart.
+- **Real-time recording/timer updates (`enable_realtime_updates` setting,
+  off by default, experimental) -- no Dispatcharr plugin needed at all.**
+  The periodic refresh above is still a poll; asked to look at genuine
+  push instead, confirmed by reading Dispatcharr's own source
+  (`dispatcharr/consumers.py`, `dispatcharr/asgi.py`,
+  `dispatcharr/jwt_ws_auth.py`, `core/utils.py`) that its backend already
+  runs a real Django Channels WebSocket server at `ws(s)://host:port/ws/`,
+  authenticated by the *exact same JWT access token* this addon already
+  obtains via `/api/accounts/token/` (passed as a `?token=` query
+  parameter -- confirmed the token is only checked once, at connect time,
+  by `JWTAuthMiddleware`, so an already-open connection keeps working past
+  the token's own 30-minute expiry). This is the same channel Dispatcharr's
+  own frontend uses, not something added for this addon -- no plugin, no
+  server-side change, nothing to install or enable on the Dispatcharr side.
+  Confirmed (by reading `apps/channels/tasks.py`/`api_views.py`) that every
+  recording lifecycle event this addon cares about is already broadcast on
+  it, wrapped as `{"type": "update", "data": {..., "type": "<event>",
+  ...}}`: `recording_started`, `recording_ended`, `recording_stopped`,
+  `recording_extended`, `recording_updated`, `recording_cancelled`,
+  `recordings_refreshed`.
+  Implemented as a hand-rolled minimal RFC 6455 client
+  (`src/WebSocketClient.h`/`.cpp`) rather than using libcurl's own native
+  WebSocket support (`CURLOPT_WS_OPTIONS`/`curl_ws_recv()`), which needs
+  curl >= 7.86 (added October 2022) -- the prebuilt Windows curl this addon
+  links against (see `docs/BUILDING.md`) is 7.67.0, and Linux/macOS builds
+  link whatever system libcurl happens to be installed, not guaranteed to
+  have it either. Built instead on `CURLOPT_CONNECT_ONLY`, a much older,
+  stable curl feature that hands over a connected (and, for `wss://`,
+  already TLS-terminated) socket and lets the caller speak whatever
+  protocol it wants over `curl_easy_send()`/`curl_easy_recv()` -- works on
+  any curl new enough to build this addon at all. Implements just enough
+  of RFC 6455 to open a connection, receive text frames (with simple
+  fragmented-message reassembly), and answer ping frames; no
+  permessage-deflate, no client-initiated fragmentation, since Dispatcharr
+  needs neither for these small JSON payloads. On Windows this needed an
+  explicit `ws2_32` link (`CMakeLists.txt`) -- curl handles its own Winsock
+  linkage internally but doesn't propagate it to a consumer that also
+  calls raw Winsock functions (`select()`) itself.
+  Runs alongside, not instead of, the periodic-poll thread above: if the
+  WebSocket can't connect or a connection drops and stays down (reconnects
+  with exponential backoff, capped at 60s), the poll still gets there
+  eventually. Verified end-to-end against the live server: created a
+  recording directly via Dispatcharr's API (bypassing this addon
+  entirely) and saw the `recording_updated` push arrive **less than one
+  second** later, with the recording already visible in Kodi by the next
+  check; deleted it the same way and saw `recording_cancelled` arrive
+  **1 millisecond** after the delete call. The connection also correctly
+  reacted to unrelated events from other concurrent activity on the same
+  shared Dispatcharr account during testing (a `recording_started`/
+  `recording_ended` pair neither created nor expected), confirming it
+  reflects real account-wide activity, not just this install's own
+  actions -- exactly the cross-install gap the periodic refresh above was
+  built to narrow, now closed to sub-second latency when this is enabled.
 - **`ReadRecordingStream()` used to open a brand-new libcurl easy handle
   (fresh TCP connection, fresh TLS handshake if HTTPS) for every single
   demuxer read**, rather than reusing one across the life of an open
