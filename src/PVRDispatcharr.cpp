@@ -1,6 +1,9 @@
 #include "PVRDispatcharr.h"
 
+#include "WebSocketClient.h"
+
 #include <kodi/AddonBase.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <ctime>
@@ -40,6 +43,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
   m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
+  m_enableRealtimeUpdates = kodi::addon::GetSettingBoolean("enable_realtime_updates", false);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
   std::string error;
@@ -62,6 +66,8 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   }
 
   StartRecordingRefreshThread();
+  if (m_enableRealtimeUpdates)
+    StartRealtimeUpdateThread();
 }
 
 PVRDispatcharr::~PVRDispatcharr()
@@ -73,6 +79,14 @@ PVRDispatcharr::~PVRDispatcharr()
   m_recordingRefreshCv.notify_all();
   if (m_recordingRefreshThread.joinable())
     m_recordingRefreshThread.join();
+
+  {
+    std::lock_guard<std::mutex> lock(m_realtimeUpdateMutex);
+    m_stopRealtimeUpdateThread = true;
+  }
+  m_realtimeUpdateCv.notify_all();
+  if (m_realtimeUpdateThread.joinable())
+    m_realtimeUpdateThread.join();
 }
 
 void PVRDispatcharr::StartRecordingRefreshThread()
@@ -88,6 +102,114 @@ void PVRDispatcharr::StartRecordingRefreshThread()
         break;
       TriggerRecordingUpdate();
       TriggerTimerUpdate();
+    }
+  });
+}
+
+void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
+{
+  // Wire shape, confirmed by reading Dispatcharr's own consumers.py/utils.py:
+  // send_websocket_update('updates', 'update', {..., "type": "<event>", ...})
+  // is delivered to this socket as {"type": "update", "data": {..., "type":
+  // "<event>", ...}}. Only react to the recording/timer-relevant event
+  // names Dispatcharr actually sends (confirmed in apps/channels/tasks.py
+  // and api_views.py) -- everything else on this shared "updates" channel
+  // (EPG matching progress, M3U refresh, stream stats, ...) is irrelevant
+  // here and should be silently ignored, not treated as an error.
+  static const std::unordered_set<std::string> kRelevantEventTypes = {
+      "recording_started",   "recording_ended",     "recording_stopped",
+      "recording_extended",  "recording_updated",   "recording_cancelled",
+      "recordings_refreshed"};
+  try
+  {
+    nlohmann::json parsed = nlohmann::json::parse(message);
+    if (!parsed.contains("data") || !parsed["data"].is_object())
+      return;
+    const nlohmann::json& data = parsed["data"];
+    if (!data.contains("type") || !data["type"].is_string())
+      return;
+    std::string eventType = data["type"].get<std::string>();
+    if (kRelevantEventTypes.count(eventType) == 0)
+      return;
+
+    if (m_debugLogging)
+      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime update received: %s", eventType.c_str());
+    TriggerRecordingUpdate();
+    TriggerTimerUpdate();
+  }
+  catch (const nlohmann::json::exception&)
+  {
+    // Malformed/unexpected payload -- not this connection's problem to solve;
+    // just ignore it and keep listening.
+  }
+}
+
+void PVRDispatcharr::StartRealtimeUpdateThread()
+{
+  m_realtimeUpdateThread = std::thread([this]() {
+    constexpr int kInitialBackoffSeconds = 2;
+    constexpr int kMaxBackoffSeconds = 60;
+    constexpr int kMessageReadTimeoutSeconds = 5; // bounds how quickly a stop request is noticed
+    int backoffSeconds = kInitialBackoffSeconds;
+
+    auto shouldStop = [this]() {
+      std::lock_guard<std::mutex> lock(m_realtimeUpdateMutex);
+      return m_stopRealtimeUpdateThread.load();
+    };
+
+    while (!shouldStop())
+    {
+      Config config = LoadConfigFromSettings();
+      std::string token, error;
+      if (m_client.GetAccessToken(token, error))
+      {
+        WebSocketClient ws;
+        std::string pathAndQuery = "/ws/?token=" + token;
+        if (ws.Connect(config.host, config.port, config.useHttps, pathAndQuery, config.verifySsl,
+                       config.timeoutSeconds, error))
+        {
+          if (m_debugLogging)
+            kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: connected");
+          backoffSeconds = kInitialBackoffSeconds; // reset now that a connection actually worked
+
+          while (!shouldStop())
+          {
+            std::string message;
+            int result = ws.ReceiveTextMessage(message, kMessageReadTimeoutSeconds, error);
+            if (result == 1)
+              HandleRealtimeUpdateMessage(message);
+            else if (result < 0)
+            {
+              if (m_debugLogging)
+                kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: %s", error.c_str());
+              break; // reconnect
+            }
+            // result == 0: just a read timeout with nothing new -- loop and
+            // re-check shouldStop().
+          }
+          ws.Close();
+        }
+        else if (m_debugLogging)
+        {
+          kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: connect failed: %s",
+                    error.c_str());
+        }
+      }
+      else if (m_debugLogging)
+      {
+        kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: could not get an access token: %s",
+                  error.c_str());
+      }
+
+      if (shouldStop())
+        break;
+
+      std::unique_lock<std::mutex> lock(m_realtimeUpdateMutex);
+      bool stopped = m_realtimeUpdateCv.wait_for(lock, std::chrono::seconds(backoffSeconds),
+                                                  [this]() { return m_stopRealtimeUpdateThread.load(); });
+      if (stopped)
+        break;
+      backoffSeconds = std::min(backoffSeconds * 2, kMaxBackoffSeconds);
     }
   });
 }

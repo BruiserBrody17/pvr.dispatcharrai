@@ -37,6 +37,17 @@ This is a first working scaffold, not a finished addon. Implemented:
   setting, off by default, experimental), also via
   `inputstream.ffmpegdirect` -- lets you start watching a recording before
   Dispatcharr finishes writing it; see `docs/API_NOTES.md`
+- Optional real-time recording/timer updates (`enable_realtime_updates`
+  setting, off by default, experimental) -- connects directly to
+  Dispatcharr's own WebSocket push feed (the same one its web UI uses, no
+  plugin or server-side change needed) so a change shows up in Kodi within
+  about a second instead of waiting out the polling interval below; see
+  `docs/API_NOTES.md`
+- Periodic recordings/timers refresh (`recording_refresh_minutes` setting,
+  default 5) so a change made outside this specific Kodi's own actions --
+  another Kodi install sharing the account, a change made directly against
+  Dispatcharr, a recording finishing on its own -- still surfaces without a
+  restart, even without the real-time feature above enabled
 
 Not yet implemented / worth hardening next:
 

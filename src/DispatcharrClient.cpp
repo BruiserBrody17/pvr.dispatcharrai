@@ -439,6 +439,14 @@ bool DispatcharrClient::EnsureAuthenticated(std::string& error)
   return Login(error);
 }
 
+bool DispatcharrClient::GetAccessToken(std::string& tokenOut, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  tokenOut = m_accessToken;
+  return true;
+}
+
 bool DispatcharrClient::GetChannels(std::vector<Channel>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))

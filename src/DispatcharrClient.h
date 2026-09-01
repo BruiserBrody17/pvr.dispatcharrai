@@ -215,6 +215,15 @@ public:
   // True if Config::apiKey is already set. Callers use this to decide
   // whether GenerateApiKey() is worth calling at all.
   bool HasApiKey() const { return !m_config.apiKey.empty(); }
+  // A currently-valid JWT access token, for the real-time-updates
+  // WebSocket connection (see PVRDispatcharr's realtime-update thread) --
+  // logs in/refreshes first via EnsureAuthenticated() if needed.
+  // Dispatcharr's own WebSocket auth middleware only checks the token
+  // once, at connect time (confirmed by reading its JWTAuthMiddleware
+  // source), so an already-open connection keeps working past the
+  // token's own 30-minute expiry; a fresh one is only needed when
+  // (re)connecting.
+  bool GetAccessToken(std::string& tokenOut, std::string& error);
   // Current API key, e.g. to re-persist it after OpenRecordingStream()/
   // ReadRecordingStream() have silently regenerated a stale one (see their
   // comments below) -- this client has no knowledge of Kodi's settings

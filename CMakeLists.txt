@@ -58,12 +58,14 @@ set(DISPATCHARR_SOURCES
     src/PVRDispatcharr.cpp
     src/DispatcharrClient.cpp
     src/XmlTvParser.cpp
+    src/WebSocketClient.cpp
 )
 
 set(DISPATCHARR_HEADERS
     src/PVRDispatcharr.h
     src/DispatcharrClient.h
     src/XmlTvParser.h
+    src/WebSocketClient.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}
@@ -80,6 +82,16 @@ set(DEPLIBS
     nlohmann_json::nlohmann_json
     pugixml::pugixml
 )
+
+# WebSocketClient.cpp calls select()/SOCKET APIs directly (see its own
+# comment for why: curl's native WebSocket support needs curl >= 7.86,
+# newer than the prebuilt Windows curl dependency this addon links
+# against). curl handles its own Winsock linkage internally and doesn't
+# propagate it to consumers, so this addon needs its own explicit link
+# against ws2_32 now that it also calls raw Winsock functions itself.
+if(WIN32)
+  list(APPEND DEPLIBS ws2_32)
+endif()
 
 # Unlike Linux (system libcurl.so, resolved against whatever the user's distro
 # already has) and Kodi's own Windows build (which bundles libcurl.dll itself,
