@@ -537,6 +537,54 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   re-testing on macOS against a long-established recording with a
   known-correct duration before trusting that conclusion further.
 
+  **Confirmed via live testing: a natural end-of-file during in-progress
+  playback gets marked "watched" with no resume bookmark at all, and
+  there is no way to manually correct this through Kodi's exposed API.**
+  Reproduced live: started a fresh recording, waited 5 minutes (confirming
+  the live-edge-join bug above also applies to a very short recording --
+  the join point, `start: 349.86`, landed almost exactly at the 5-minute
+  mark, since with only ~5 minutes of content total there's barely any
+  "behind the live edge" room to join into), then stopped the recording
+  early to let it finalize and let playback run to a genuine end.
+  `kodi.log` showed a clean `CVideoPlayer::Process - eof reading from
+  demuxer` / `OnPlayBackEnded` (not an error, not a user-initiated stop),
+  followed immediately by `CSaveFileState::DoWork - Marking video item
+  ... as watched`. `PVR.GetRecordingDetails` afterward confirmed
+  `playcount: 1`, `resume: {position: -1.0, total: 0.0}` -- fully watched,
+  no bookmark, even though only a few minutes of real content ever
+  existed. Reaching a clean EOF, as opposed to a user-initiated
+  `Player.Stop`, is what triggers this "fully watched" classification.
+
+  Tried the obvious fix -- `Files.SetFileDetails` to write an explicit
+  `resume: {position, total}` directly -- and it fails unconditionally for
+  any `pvr://` path, confirmed architecturally, not just by trial and
+  error: `FileOperations.cpp`'s `SetFileDetails()` gates on
+  `CFileUtils::Exists(file)` before doing anything else, which calls
+  through to `CFile::Exists()` -- and `xbmc/filesystem/FileFactory.cpp`
+  explicitly returns `nullptr` for the `pvr://` protocol
+  (`else if (url.IsProtocol("pvr")) return nullptr;`), meaning Kodi's
+  generic VFS layer has no file handler for PVR paths at all. Verified
+  this is the actual cause (not a malformed request) by testing
+  progressively simpler calls -- even `{file, media}` alone, and even
+  against a deliberately fake path, produced the identical
+  `-32602 Invalid params` -- and by checking Kodi's own JSON-RPC error
+  codes confirm permission failures (`BadPermission`) are a distinct code
+  from this, ruling out a permission-tier explanation instead.
+
+  Net conclusion: there is currently no Kodi-exposed way to directly edit
+  a PVR recording's resume point to an arbitrary value. The only way to
+  get an accurate bookmark is to stop playback yourself (via
+  `Player.Stop`, or the normal "stop" remote/GUI action) *before* it
+  reaches a genuine end-of-file -- Kodi's ordinary mid-playback stop
+  bookmark-save behaviour does still work for PVR paths (that's the same
+  mechanism the normal "resume from where you left off" prompt already
+  relies on); it's only the JSON-RPC *write* path that's blocked for
+  `pvr://`. This has a real, if awkward, workaround for the in-progress-
+  playback UX problem described above: whatever eventually opens/manages
+  this playback should stop the player a little before it would naturally
+  hit the end of the current snapshot, rather than letting it run out on
+  its own.
+
   **Separately-noticed, likely pre-existing bug: a recording's Kodi-
   visible duration can be stuck far too low (6 seconds observed against a
   real ~3-hour scheduled game) even though Dispatcharr's own `start_time`/
