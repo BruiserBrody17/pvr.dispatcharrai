@@ -558,38 +558,89 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   listen): platform-conditional `winsock2.h`/`ws2tcpip.h` vs.
   `sys/socket.h`/`unistd.h`, same pattern as `WebSocketClient.h`, reusing
   the `ws2_32` link already added for that. Single connection at a time,
-  no keep-alive -- ffmpeg only fetches the manifest a handful of times per
-  playback, so this doesn't need to be more than a bare GET-request/
-  fixed-response responder serving whatever `SetPlaylist()` was last
-  called with for that recording id.
+  no keep-alive -- a fresh connection per request is simpler and
+  libavformat's HLS demuxer doesn't need one to reload a playlist
+  repeatedly.
 
-  `GetInProgressRecordingStreamUrl()` now returns the rewritten playlist
-  *text* (not a URI); `PVRDispatcharr::GetRecordingStreamProperties()`
-  registers it with `m_playlistServer.SetPlaylist()` and builds STREAMURL
-  from the server's own loopback address, still with the `!X-API-Key`
-  pipe-option attached to that outer URL -- confirmed live this still
-  correctly reaches the real per-segment Dispatcharr requests (ffmpeg's
-  HLS demuxer shares one `avio_opts` dictionary across the manifest fetch
-  and every segment sub-fetch regardless of which host the manifest came
-  from), even though the local server itself neither needs nor checks
-  that header.
+  First shipped version served one pre-computed snapshot per recording
+  (`SetPlaylist()`, called once from `GetRecordingStreamProperties()`),
+  fixing the join-position/seek problem at the cost of a session never
+  tailing new segments recorded after it started -- reopening got a
+  fresh, larger snapshot, but not the same session continuing to grow.
+  **Superseded by a dynamic, per-request design (`SetPlaylistProvider()`)
+  that fixes that too, confirmed working.** Read directly from
+  libavformat's own `hls.c` (not guessed) to find the mechanism:
+  `select_cur_seq_no()`'s live-edge-join computation --
+  `FFMAX(pls->n_segments + live_start_index, 0)`, `live_start_index`
+  defaulting to `-3` -- only ever runs on the very first segment
+  selection, and clamps to the true first segment whenever the playlist
+  has 3 or fewer segments listed *at that moment*, regardless of how much
+  has actually been recorded. Separately, as long as a playlist never
+  claims `#EXT-X-ENDLIST`, the same file's reload logic
+  (`!pls->finished` gating a reload-interval check) keeps re-fetching it
+  throughout playback on its own -- the actual mechanism newly-recorded
+  segments get picked up by, entirely independent of the one-time join
+  decision.
 
-  Verified live end-to-end against a real in-progress recording:
-  `ffmpegdirect`'s own `av_dump_format` line read
-  `Duration: 00:02:25.15, start: 1.411000, bitrate: 0 kb/s` -- a real,
-  finite duration (previously always `N/A` against the live playlist) and
-  a join point at the true beginning (a rounding/keyframe-alignment
-  artifact away from 0, not thousands of seconds in). `canseek: true`,
-  and `Player.Seek` to both 1:30 (forward) and back to 0:10 (rewind)
-  succeeded and continued playing correctly afterward. `kodi.log` showed
-  `adding user custom header option '!X-API-Key: ***********'` with no
-  401s across the whole session, confirming segment auth still works
-  through the local server. A screenshot during playback confirmed real
-  video rendering, not just correct-looking metadata. Same real, accepted
-  trade-off as before applies: this is a one-time snapshot, so a single
-  session doesn't tail brand-new segments recorded after it started, and
-  (per the resume-point finding above) re-opening doesn't resume where a
-  prior session left off.
+  `DispatcharrClient::FetchInProgressPlaylistSnapshot(recordingId,
+  truncateForInitialJoin, error)` (renamed from
+  `GetInProgressRecordingStreamUrl()`) is now called fresh on every HTTP
+  request `LocalPlaylistServer` receives for that recording, not once at
+  open: `truncateForInitialJoin` (true only for that recording's actual
+  first request, tracked by the server) caps the rewritten playlist to 3
+  segment entries to force the clamp above to land on the true first
+  segment; every request after that gets the full, untruncated history.
+  Whether to finally append `#EXT-X-ENDLIST` is decided fresh on every
+  call too, from a live `GetRecordings()` check of the recording's
+  current `isInProgress` state -- not fixed at open time -- so a session
+  that's still open when the underlying recording actually finishes
+  correctly transitions from "keep tailing" to "reach a clean end" on its
+  own, without needing to be reopened. `PVRDispatcharr` registers a
+  provider lambda wrapping this (still handling the api-key-persist
+  dance the old one-shot code did), and still attaches `!X-API-Key` as a
+  pipe-option on the outer STREAMURL for ffmpegdirect's own segment
+  fetches, exactly as before.
+
+  Verified live end-to-end against a real in-progress recording, with a
+  temporary debug-log line (kept, gated behind `debug_logging`) confirming
+  the mechanism directly rather than inferring it from playback behaviour
+  alone: first request logged `isFirstRequest=1, lines=13, hasEndlist=0,
+  containsSeg00000=1`; the very next request (66ms later, ffmpeg's own
+  immediate re-probe) logged `isFirstRequest=0, lines=49` -- the full
+  history revealed at once, safe because the one-time join decision had
+  already happened; subsequent requests every few seconds kept growing
+  (`53`, `55`, `57`, ... `111` lines) as the recording continued, with
+  `hasEndlist=0` throughout. `Player.GetProperties` showed continuous,
+  gapless 1x playback across that whole window (confirmed by polling
+  position against wall-clock elapsed time repeatedly over ~100 seconds,
+  well past where the old static-snapshot design would have hit a hard
+  stop) with no stalls and no 401s. Separately verified the finish
+  transition: stopped the underlying recording while a session was still
+  open on it, and the very next request logged `hasEndlist=1`, after
+  which `kodi.log` showed a clean `CVideoPlayer::Process - eof reading
+  from demuxer` / `OnPlayBackEnded` -- not an error, not a stall waiting
+  for segments that would never come.
+
+  **Real, accepted trade-off, and different from the one-time-snapshot
+  version's trade-off:** a still-growing (no-`ENDLIST`) playlist reports
+  an unknown duration to libavformat (`Duration: N/A` in its own
+  `av_dump_format` line, versus a real finite value once `ENDLIST`
+  finally appears), and per the duration-metadata finding elsewhere in
+  this file, Kodi's own PVR layer appears to gate `canseek` on having a
+  known total duration independent of what the inputstream addon
+  advertises -- confirmed live (`canseek: false` throughout an actively-
+  tailing session in this round of testing, where the prior static-
+  snapshot version's `canseek: true` came from always presenting a
+  finite, `ENDLIST`-terminated duration immediately). Kodi also queries
+  `GetCapabilities()` once, at open, and doesn't re-query it mid-session
+  -- so even though the *same* session correctly reaches a clean end once
+  the recording finishes and `ENDLIST` appears, it doesn't retroactively
+  gain seek support for whatever's left of that session; only a fresh
+  `Player.Open()` after the recording has actually finished gets normal
+  VOD treatment with seek. In short: this version trades seek-while-still-
+  recording for not needing to stop and reopen to keep watching new
+  content -- the opposite trade-off from the one-time-snapshot version it
+  replaced, not a strict improvement on every axis.
 
   **The macOS-vs-Windows seek discrepancy investigated earlier is probably
   not a real platform difference -- more likely the same class of

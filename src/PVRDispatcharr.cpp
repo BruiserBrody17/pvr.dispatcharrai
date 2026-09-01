@@ -720,7 +720,7 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   // instead, forced into its plain ffmpeg-native open mode so libavformat's
   // own HLS demuxer -- not Kodi's native one -- handles segment fetches,
   // propagating the X-API-Key header from the URL to every segment, not
-  // just the manifest. See GetInProgressRecordingStreamUrl()'s comment for
+  // just the manifest. See FetchInProgressPlaylistSnapshot()'s comment for
   // why this needs open_mode forced to "ffmpeg" specifically, why neither
   // of the stream_mode values already tried (and reverted) for live
   // TV/catch-up elsewhere in this addon apply here, and why STREAMURL below
@@ -751,24 +751,44 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
 
     if (inProgress)
     {
-      std::string keyBefore = m_client.GetApiKey();
-      std::string playlistText = m_client.GetInProgressRecordingStreamUrl(id, error);
-      // See GetInProgressRecordingStreamUrl()'s comment: it may have just
-      // self-healed a stale key while building this. Persist it the same
-      // way OpenRecordedStream()/ReadRecordedStream() do, so a restart of
-      // this install doesn't immediately invalidate it again.
-      std::string keyAfter = m_client.GetApiKey();
-      if (keyAfter != keyBefore)
-        kodi::addon::SetSettingString("api_key", keyAfter);
-
-      if (playlistText.empty())
-        return PVR_ERROR_SERVER_ERROR;
-
       int playlistServerPort = m_playlistServer.GetPort();
       if (playlistServerPort == 0)
         return PVR_ERROR_SERVER_ERROR;
 
-      m_playlistServer.SetPlaylist(id, playlistText);
+      // Registers a provider rather than fetching once here: libavformat
+      // calls back into this repeatedly over the whole playback session
+      // (see LocalPlaylistServer.h and FetchInProgressPlaylistSnapshot()'s
+      // comment for why a live re-fetch on every call, not a one-time
+      // snapshot, is what lets a single session keep tailing newly-
+      // recorded segments as the recording grows).
+      m_playlistServer.SetPlaylistProvider(id, [this, id](bool isFirstRequest) {
+        std::string keyBefore = m_client.GetApiKey();
+        std::string playlistText;
+        std::string fetchError;
+        playlistText = m_client.FetchInProgressPlaylistSnapshot(id, isFirstRequest, fetchError);
+        // May have just self-healed a stale key while building this.
+        // Persist it the same way OpenRecordedStream()/ReadRecordedStream()
+        // do, so a restart of this install doesn't immediately invalidate
+        // it again. Only fixes up this addon's own future fetches, not the
+        // X-API-Key header already baked into this STREAMURL for
+        // ffmpegdirect's own segment fetches -- see
+        // FetchInProgressPlaylistSnapshot()'s comment.
+        std::string keyAfter = m_client.GetApiKey();
+        if (keyAfter != keyBefore)
+          kodi::addon::SetSettingString("api_key", keyAfter);
+        if (m_debugLogging)
+        {
+          int lineCount = static_cast<int>(std::count(playlistText.begin(), playlistText.end(), '\n'));
+          bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
+          bool hasFirstSegment = playlistText.find("seg_00000.ts") != std::string::npos;
+          kodi::Log(ADDON_LOG_INFO,
+                    "pvr.dispatcharrai: playlist snapshot for recording %d: isFirstRequest=%d, "
+                    "lines=%d, hasEndlist=%d, containsSeg00000=%d",
+                    id, isFirstRequest ? 1 : 0, lineCount, hasEndlist ? 1 : 0, hasFirstSegment ? 1 : 0);
+        }
+        return playlistText;
+      });
+
       std::string streamUrl =
           "http://127.0.0.1:" + std::to_string(playlistServerPort) + "/playlist/" +
           std::to_string(id) + ".m3u8";

@@ -110,19 +110,45 @@ size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
   return size * nmemb;
 }
 
-// Rewrites an in-progress recording's HLS playlist so libavformat treats it
-// as a closed, definite-VOD playlist: every non-comment, non-blank line
-// (a segment or sub-playlist reference) that isn't already absolute gets
-// prefixed with `baseDir` (the playlist's own URL directory, since a
-// data: URI -- what this text is ultimately embedded into -- has no base
-// path for a relative reference to resolve against), and a trailing
-// #EXT-X-ENDLIST is appended if the playlist doesn't already have one.
-std::string RewritePlaylistAsVod(const std::string& playlistText, const std::string& baseDir)
+// Rewrites an in-progress recording's HLS playlist for serving through
+// LocalPlaylistServer: every non-comment, non-blank line (a segment or
+// sub-playlist reference) that isn't already absolute gets prefixed with
+// `baseDir` (Dispatcharr's own playlist URL directory -- LocalPlaylistServer
+// has no base path of its own for a relative reference to resolve against).
+//
+// `maxSegments`, if >= 0, stops output after that many segment-URI lines
+// (dropping anything after, including trailing tags with no following URI)
+// -- used only for the very first playlist a freshly-opened stream sees, to
+// force libavformat's live_start_index clamp to land on the true first
+// segment: confirmed via its own source (hls.c's select_cur_seq_no(), the
+// FFMAX(pls->n_segments + c->live_start_index, 0) computation only used the
+// very first time a segment is selected) that if the playlist has 3 or
+// fewer segments at that moment, the default live_start_index=-3 clamps to
+// 0 regardless of how much has actually been recorded. Every later reload
+// (which happens automatically, and only, while the playlist keeps
+// reporting itself as not finished -- see appendEndlist below) just appends
+// newly-discovered segments onto what libavformat already has, without
+// ever repeating that initial clamp -- so revealing the full, unthrottled
+// history from the second request onward is safe and is what actually
+// makes a session continue tailing new segments as the recording grows.
+//
+// `appendEndlist` controls whether a trailing #EXT-X-ENDLIST gets added
+// (skipped if the input already had one). Pass false while Dispatcharr
+// still reports the recording as in progress -- as long as libavformat
+// never sees ENDLIST, hls.c keeps reloading the playlist on its own
+// throughout playback (its `!pls->finished` reload-interval check), which
+// is the entire mechanism newly-recorded segments get picked up by. Pass
+// true once the recording has actually finished, so a session that's
+// caught up to the true end gets a normal, clean end-of-file instead of
+// libavformat waiting forever for segments that will never come.
+std::string RewritePlaylist(const std::string& playlistText, const std::string& baseDir,
+                            int maxSegments, bool appendEndlist)
 {
   std::string out;
   out.reserve(playlistText.size() + 32);
   size_t pos = 0;
   bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
+  int segmentsEmitted = 0;
   while (pos <= playlistText.size())
   {
     size_t newlinePos = playlistText.find('\n', pos);
@@ -136,14 +162,18 @@ std::string RewritePlaylistAsVod(const std::string& playlistText, const std::str
     {
       out += line;
     }
-    else if (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
-    {
-      out += line;
-    }
     else
     {
-      out += baseDir;
-      out += line;
+      if (maxSegments >= 0 && segmentsEmitted >= maxSegments)
+        break;
+      if (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
+        out += line;
+      else
+      {
+        out += baseDir;
+        out += line;
+      }
+      ++segmentsEmitted;
     }
     out += '\n';
 
@@ -152,7 +182,7 @@ std::string RewritePlaylistAsVod(const std::string& playlistText, const std::str
     pos = newlinePos + 1;
   }
 
-  if (!hasEndlist)
+  if (appendEndlist && !hasEndlist)
     out += "#EXT-X-ENDLIST\n";
 
   return out;
@@ -992,7 +1022,9 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
   return res != CURLE_OK || httpCode != 401;
 }
 
-std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId, std::string& error)
+std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId,
+                                                                bool truncateForInitialJoin,
+                                                                std::string& error)
 {
   std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
   std::string playlistUrl = baseDir + "index.m3u8";
@@ -1056,20 +1088,49 @@ std::string DispatcharrClient::GetInProgressRecordingStreamUrl(int recordingId, 
     break;
   }
 
-  std::string vodPlaylist = RewritePlaylistAsVod(playlistText, baseDir);
+  // Fresh in-progress check on every call (not just once at open): this is
+  // now invoked repeatedly over a playback session's lifetime (see
+  // LocalPlaylistServer.h), whenever libavformat reloads the playlist, not
+  // just at the very first fetch -- so whether to finally append
+  // #EXT-X-ENDLIST needs to reflect the recording's *current* state, not
+  // whatever was true when playback started.
+  bool stillInProgress = false;
+  std::vector<Recording> recordings;
+  std::string recordingsError;
+  if (GetRecordings(recordings, recordingsError))
+  {
+    for (const auto& rec : recordings)
+    {
+      if (rec.id == recordingId)
+      {
+        stillInProgress = rec.isInProgress;
+        break;
+      }
+    }
+  }
+
+  // Segment count small enough to force libavformat's live_start_index
+  // clamp to land on the true first segment -- see RewritePlaylist()'s
+  // comment for exactly why 3 (matching live_start_index's default
+  // magnitude) is the right number, not an arbitrary one.
+  constexpr int kInitialJoinSegmentLimit = 3;
+  int maxSegments = truncateForInitialJoin ? kInitialJoinSegmentLimit : -1;
+  std::string rewritten = RewritePlaylist(playlistText, baseDir, maxSegments, !stillInProgress);
 
   // Proactive self-heal for the key baked into the rewritten segment URLs:
   // same pattern as before, checked against the original playlist URL as a
   // stand-in for the per-segment URLs it's really protecting (see this
   // method's header comment for why nothing can retry after the fact once
-  // this is handed to inputstream.ffmpegdirect).
+  // this is handed to inputstream.ffmpegdirect). Run on every call now, not
+  // just once at open, which meaningfully shrinks the staleness window
+  // compared to the original one-shot design this replaced.
   if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
   {
     std::string regenKey, regenError;
     GenerateApiKey(regenKey, regenError);
   }
 
-  return vodPlaylist;
+  return rewritten;
 }
 
 bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
