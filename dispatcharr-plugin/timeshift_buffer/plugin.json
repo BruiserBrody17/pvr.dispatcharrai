@@ -51,7 +51,7 @@
       "label": "Internal base URL",
       "type": "string",
       "default": "http://127.0.0.1:9191",
-      "help_text": "How the plugin reaches Dispatcharr's own live proxy from inside the container. TODO(verify): confirm this is reachable for your deployment -- the modular docker-compose config routes the web service through a Unix socket behind nginx, not necessarily a plain TCP port; this default assumes nginx itself is reachable on this loopback address/port from within the same container. Adjust if your setup differs."
+      "help_text": "How the plugin reaches Dispatcharr's own live proxy from inside the container. The default works for a standard docker-compose setup; if your deployment routes the web service differently (e.g. through a Unix socket behind nginx rather than a plain TCP port), adjust this to match."
     },
     {
       "id": "http_port",
