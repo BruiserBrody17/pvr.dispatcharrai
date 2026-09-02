@@ -524,8 +524,10 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     # the same class of "don't reveal/rely on something about to move under
     # you" caution this project already applied to its own gradual-cap fix
     # for in-progress-recording playback (see pvr.dispatcharrai's
-    # LocalPlaylistServer.cpp), just via a size margin here instead of a
-    # request-count hold.
+    # docs/RECORDINGS.md -- that mechanism has since been replaced by a
+    # native-demuxer approach that doesn't need a cap at all, but the same
+    # underlying caution still applies here), just via a size margin here
+    # instead of a request-count hold.
     wrap_segments = visible_segments * 2
 
     channel_dir = _channel_dir(storage_path, channel_uuid)

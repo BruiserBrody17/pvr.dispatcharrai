@@ -298,8 +298,7 @@ public:
   // code path. GetRecordingStreamProperties() deliberately leaves STREAMURL
   // unset for a completed recording for that reason. Only supports a
   // completed recording (a real, Range-seekable file) -- an in-progress one
-  // is instead served via FetchInProgressPlaylistSnapshot() below, routed
-  // through inputstream.ffmpegdirect (opt-in), not through here at all.
+  // is instead served via OpenInProgressRecordingStream() below.
   bool OpenRecordingStream(int recordingId, std::string& error);
   int ReadRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekRecordingStream(int64_t position, int whence);
@@ -350,7 +349,7 @@ public:
   // and seek refinement" pattern as OpenLiveTimeshiftStream() above,
   // applied to a recording instead of a live channel. Replaced an earlier
   // STREAMURL + inputstream.ffmpegdirect approach (see git history /
-  // docs/INPROGRESS_RECORDINGS.md) that needed a "play from start (seek)"
+  // docs/RECORDINGS.md) that needed a "play from start (seek)"
   // vs. "play live (follow, no seek)" toggle -- a limitation of routing
   // through libavformat's own HLS demuxer, which won't offer seeking
   // without a #EXT-X-ENDLIST-terminated (i.e. static, no-longer-growing)
@@ -386,10 +385,10 @@ private:
   bool Login(std::string& error);
   bool RefreshAccessToken(std::string& error);
 
-  // Shared by FetchInProgressPlaylistSnapshot() and
-  // FetchInProgressRecordingSeekableSnapshot(): fetches the raw live
-  // playlist text for a recording, with a self-healing retry on a 401.
-  // Returns false (with `error` set) on a genuine network/HTTP failure.
+  // Fetches the raw HLS playlist text for an in-progress recording, with a
+  // self-healing retry on a 401. Returns false (with `error` set) on a
+  // genuine network/HTTP failure. Called from
+  // RefreshInProgressRecordingManifest().
   bool FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl,
                                    std::string& playlistText, std::string& error);
 
@@ -401,12 +400,11 @@ private:
   // <curl/curl.h>; defined in the .cpp, which does.
   void* GetCurlShare() const;
 
-  // A tiny ranged GET (mirrors OpenRecordingStream()'s own probe -- a HEAD
-  // request isn't confirmed to behave the same on this endpoint) with the
-  // current API key attached, used only to check the key is still live
-  // before FetchInProgressPlaylistSnapshot() bakes it into a URL that can't
-  // self-heal later. Returns true on anything but a 401 (a transport error
-  // or other status isn't this check's problem to solve -- fail open rather
+  // A tiny ranged GET with the current API key attached, used by
+  // RefreshInProgressRecordingManifest() as a proactive self-heal check
+  // (cheaper to catch a stale key here than mid-read of an actual
+  // segment). Returns true on anything but a 401 (a transport error or
+  // other status isn't this check's problem to solve -- fail open rather
   // than block playback on a check that was only ever a best-effort head
   // start on a problem the caller can't fully prevent anyway).
   bool IsApiKeyValidFor(const std::string& url) const;

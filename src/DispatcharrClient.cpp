@@ -1149,10 +1149,7 @@ bool DispatcharrClient::FetchRawInProgressPlaylist(int recordingId, const std::s
                                                     std::string& playlistText, std::string& error)
 {
   // Two attempts: the playlist fetch itself can self-heal on a 401, same
-  // pattern as OpenRecordingStream() -- unlike the key baked into the
-  // outer STREAMURL, which can't retry after the fact once handed to
-  // inputstream.ffmpegdirect (see FetchInProgressPlaylistSnapshot()'s
-  // header comment).
+  // pattern as OpenRecordingStream().
   for (int attempt = 0; attempt < 2; ++attempt)
   {
     CURL* curl = curl_easy_init();
@@ -1362,8 +1359,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   }
   m_inProgressRecordingStream.finished = !stillInProgress;
 
-  // Proactive self-heal, same reasoning as FetchInProgressPlaylistSnapshot()
-  // used to apply: cheaper to catch a stale key here than mid-Range-read.
+  // Proactive self-heal: cheaper to catch a stale key here than mid-read.
   if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
   {
     std::string regenKey, regenError;

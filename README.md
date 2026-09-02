@@ -91,15 +91,15 @@ This is a first working scaffold, not a finished addon. Implemented:
 Not yet implemented / worth hardening next:
 
 - Recurring (day-of-week) timer rules beyond simple series rules
-- Proper ISO-8601 date parsing for recording start times (currently a
-  known gap -- see `docs/API_NOTES.md`)
 - Background/async data loading (current version loads channels/EPG
   synchronously on first access, which is fine for a home server but
   could be made non-blocking)
-- A handful of Dispatcharr API paths and field names are best-effort
-  guesses pending verification against your instance's live Swagger --
-  all flagged in `docs/API_NOTES.md` and with inline `TODO(verify)`
-  comments in the source.
+- A small number of Dispatcharr API paths/field names remain genuinely
+  unconfirmed against a live instance (flagged as such, not silently
+  assumed, in `docs/API_NOTES.md`) -- most of what was originally
+  best-effort here has since been confirmed against real data over this
+  project's history and folded into `docs/API_NOTES.md` and the
+  topic-specific docs it indexes.
 
 ## Configuration
 
