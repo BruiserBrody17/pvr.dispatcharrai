@@ -117,13 +117,31 @@ explicitly stopped first, so the test genuinely exercised the new
 command): identical failure, same log signature, same stuck speed: 0.
 That rules out -reset_timestamps as the cause. The flag stays removed
 (continuous timestamps aren't harmful and are closer to normal HLS
-practice) but the actual root cause of the av_seek_frame failure is
-still unresolved. Decision: accept this as a known limitation rather
-than keep guessing -- "Instant replay from buffer" restarts playback
-from a fixed point in what's been buffered; it just can't be scrubbed
-once playing. Picking this back up would need real debugging inside the
-Dispatcharr container (verbose ffmpeg/curl logging, or instrumenting
-inputstream.ffmpegdirect itself), not another guess-and-redeploy cycle.
+practice) but the actual root cause of the av_seek_frame failure was
+never chased further, because the real fix turned out to be architectural,
+not another guess at ffmpegdirect's own seek internals -- see below.
+
+SUPERSEDED, not just patched: pvr.dispatcharrai no longer routes the live
+buffer through inputstream.ffmpegdirect (a STREAMURL) at all. It now
+exposes the buffer via Kodi's own PVR_STREAM_PROPERTY-free
+OpenLiveStream/ReadLiveStream/SeekLiveStream API instead, using Kodi's
+native internal demuxer for MPEG-TS parsing and seek refinement --
+the same mechanism this addon's completed-recording playback already
+relied on successfully throughout this whole history. That needed two
+things from this plugin: Range support in the file server (do_GET, see
+below -- individual segment files are Range-read directly, no HLS
+playlist involved at all for this path), and the get_live_manifest
+action (also below), which exposes the buffer's currently-known segments
+with a stable, HLS-media-sequence-derived `sequence` number so a client
+can merge repeated fetches into one consistent, growing byte-address
+space as the rolling window advances, instead of re-deriving fresh
+(and silently shifting) offsets on every call. Confirmed live: real
+pause/rewind/fast-forward/live-follow from plain Play on a real channel,
+including a 95-second rewind that spanned several manifest refreshes.
+The old snapshot_buffer/"Instant replay from buffer" workaround this
+section describes is retired on the pvr.dispatcharrai side (plain Play
+now gets everything it offered and more), though the action itself is
+left in this plugin as a standalone capability -- see its own docstring.
 """
 
 import json
@@ -224,11 +242,12 @@ _http_server_storage_path = None
 class _BufferRequestHandler(BaseHTTPRequestHandler):
     """Serves GET /<channel_uuid>/<filename> straight from storage_path.
 
-    No directory listing, no write support, no Range support (individual
-    segment files are small and short-lived enough that whole-file GETs are
-    fine -- there's no single large file here that would benefit from
-    Range the way a catch-up recording does).
-    """
+    No directory listing, no write support. Does support Range requests
+    (added for the growing-live-buffer byte-stream path -- see
+    get_live_manifest below and pvr.dispatcharrai's DispatcharrClient,
+    which mirrors its already-proven recording-playback Range-read pattern
+    against individual segment files here instead of one Dispatcharr-served
+    recording file)."""
 
     server_version = "TimeshiftBufferHTTP/0.1"
 
@@ -275,6 +294,35 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
             if logger:
                 logger.exception("timeshift_buffer: heartbeat-on-fetch failed for %s", channel_uuid)
 
+    @staticmethod
+    def _parse_range(range_header, file_size):
+        """Parses a single-range "bytes=X-Y" / "bytes=X-" header value.
+        Returns (start, end) inclusive, or None if absent/unparseable (caller
+        falls back to serving the whole file) or (False, False) if the range
+        is unsatisfiable (caller sends 416)."""
+        if not range_header or not range_header.startswith("bytes="):
+            return None
+        spec = range_header[len("bytes="):].split(",")[0].strip()  # first range only; multi-range unsupported
+        if "-" not in spec:
+            return None
+        start_str, _, end_str = spec.partition("-")
+        try:
+            if start_str == "":
+                # "bytes=-N" -- last N bytes.
+                suffix_len = int(end_str)
+                if suffix_len <= 0:
+                    return None
+                start = max(0, file_size - suffix_len)
+                end = file_size - 1
+            else:
+                start = int(start_str)
+                end = int(end_str) if end_str != "" else file_size - 1
+        except ValueError:
+            return None
+        if start < 0 or start >= file_size or end < start:
+            return False, False
+        return start, min(end, file_size - 1)
+
     def do_GET(self):
         channel_uuid, target = self._resolve_path()
         if target is None or not target.is_file():
@@ -289,7 +337,25 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         content_type = content_type or "application/octet-stream"
 
         try:
-            data = target.read_bytes()
+            file_size = target.stat().st_size
+            range_result = self._parse_range(self.headers.get("Range"), file_size)
+            if range_result == (False, False):
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.end_headers()
+                return
+
+            with target.open("rb") as f:
+                if range_result is None:
+                    data = f.read()
+                    status = 200
+                    content_range = None
+                else:
+                    start, end = range_result
+                    f.seek(start)
+                    data = f.read(end - start + 1)
+                    status = 206
+                    content_range = f"bytes {start}-{end}/{file_size}"
         except OSError:
             # Segment got recycled by ffmpeg's -segment_wrap between the
             # playlist listing it and this request reading it -- a real,
@@ -300,9 +366,12 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
 
         self._touch_heartbeat(channel_uuid)
 
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(len(data)))
+        if content_range:
+            self.send_header("Content-Range", content_range)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
@@ -315,6 +384,7 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         self._touch_heartbeat(channel_uuid)
         self.send_response(200)
         self.send_header("Content-Length", str(target.stat().st_size))
+        self.send_header("Accept-Ranges", "bytes")
         self.end_headers()
 
 
@@ -509,6 +579,96 @@ def _remove_channel_files(state: dict, logger):
         pass
     except OSError:
         logger.exception("timeshift_buffer: couldn't fully clean up %s", channel_dir)
+
+
+def _get_live_manifest(state: dict, logger) -> dict:
+    """Builds a byte-addressable manifest of the buffer's currently-listed
+    (live.m3u8) segments -- filename, byte size, duration, and cumulative
+    byte/time offsets -- so a client can treat the rolling live buffer as
+    one growing, seekable byte stream (Range-reading individual segment
+    files directly, see _BufferRequestHandler's Range support) instead of
+    going through inputstream.ffmpegdirect's HLS-seek machinery, which
+    pvr.dispatcharrai's docs/TIMESHIFT.md documents as confirmed broken for
+    this kind of buffer. Mirrors _create_snapshot's own live.m3u8 parsing
+    (see its comments for the recycling-race handling) but returns a
+    manifest instead of freezing a copy -- read fresh from disk on every
+    call rather than cached, since the whole point is reflecting how far
+    the buffer has grown since the caller last asked.
+
+    The rolling window means "byte offset 0" in THIS response corresponds
+    to whatever's currently oldest -- a later call's "byte offset 0" will
+    be different content once the window has advanced. A client that wants
+    a stable address space across repeated calls (pvr.dispatcharrai does,
+    to avoid its own position bookkeeping going stale mid-playback) can't
+    just concatenate offsets naively; each segment also carries an absolute
+    `sequence` number (HLS's own #EXT-X-MEDIA-SEQUENCE plus its position in
+    the list), which is stable for the life of the buffer regardless of how
+    the visible window slides, and is what a client should key its own
+    merged/cumulative table on instead of list position."""
+    channel_dir = Path(state["storage_path"]) / state["channel_uuid"]
+    live_playlist_path = channel_dir / "live.m3u8"
+    if not live_playlist_path.is_file():
+        raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
+
+    lines = live_playlist_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    media_sequence = 0
+    for line in lines:
+        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+            try:
+                media_sequence = int(line[len("#EXT-X-MEDIA-SEQUENCE:"):].strip())
+            except ValueError:
+                pass
+            break
+
+    segments = []
+    cumulative_bytes = 0
+    cumulative_ms = 0
+    list_index = 0  # position within the m3u8's own segment list, before any drops
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("#EXTINF:") and i + 1 < len(lines) and not lines[i + 1].startswith("#"):
+            seg_name = lines[i + 1].strip()
+            sequence = media_sequence + list_index
+            list_index += 1
+            try:
+                size = (channel_dir / seg_name).stat().st_size
+            except OSError:
+                # Recycled between the playlist listing it and this stat --
+                # the same race _create_snapshot already tolerates. Drop it
+                # rather than fail the whole manifest over one segment (but
+                # list_index/sequence still advanced above, so later
+                # segments keep their true, stable sequence numbers).
+                i += 2
+                continue
+            try:
+                duration_ms = int(round(float(line[len("#EXTINF:"):].rstrip(",")) * 1000))
+            except ValueError:
+                duration_ms = 0
+            segments.append({
+                "filename": seg_name,
+                "sequence": sequence,
+                "byte_offset": cumulative_bytes,
+                "byte_size": size,
+                "time_offset_ms": cumulative_ms,
+                "duration_ms": duration_ms,
+            })
+            cumulative_bytes += size
+            cumulative_ms += duration_ms
+            i += 2
+        else:
+            i += 1
+
+    if not segments:
+        raise RuntimeError("no segments currently available -- the buffer may be too new")
+
+    return {
+        "media_sequence": media_sequence,
+        "segments": segments,
+        "total_bytes": cumulative_bytes,
+        "total_duration_ms": cumulative_ms,
+    }
 
 
 def _create_snapshot(state: dict, logger) -> str:
@@ -785,6 +945,18 @@ class Plugin:
             "button_label": "Take Test Snapshot",
         },
         {
+            "id": "get_live_manifest", "label": "Get Live Manifest (manual test)",
+            "description": (
+                "Returns a byte-addressable manifest (segment filenames, byte sizes, durations, "
+                "cumulative offsets) of the buffer's currently-listed segments (params: channel_uuid, "
+                "required -- start_buffer must already be running). Used by pvr.dispatcharrai to treat "
+                "the rolling live buffer as one growing, seekable byte stream via Range reads against "
+                "individual segments, instead of routing through inputstream.ffmpegdirect's HLS-seek "
+                "path (confirmed broken for this kind of buffer, see docs/TIMESHIFT.md)."
+            ),
+            "button_label": "Get Test Manifest",
+        },
+        {
             "id": "list_buffers", "label": "List Active Buffers",
             "description": "Shows every currently-running buffer and its age.",
             "button_label": "Refresh List",
@@ -816,6 +988,8 @@ class Plugin:
             return self._heartbeat(params, settings_dict, logger)
         if action == "snapshot_buffer":
             return self._snapshot_buffer(params, settings_dict, logger)
+        if action == "get_live_manifest":
+            return self._get_live_manifest_action(params, settings_dict, logger)
         if action == "list_buffers":
             return self._list_buffers()
         if action == "stop_all":
@@ -941,6 +1115,36 @@ class Plugin:
         _set_buffer_state(channel_uuid, state)
 
         return {"status": "ok", "http_port": state["http_port"], "playlist_route": route}
+
+    def _get_live_manifest_action(self, params, settings_dict, logger):
+        channel_uuid = self._resolve_channel_uuid(params, settings_dict)
+        if not channel_uuid:
+            return {"status": "error", "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)"}
+
+        state = _get_buffer_state(channel_uuid)
+        if not state:
+            return {"status": "error", "message": "no buffer running for this channel -- call start_buffer first"}
+
+        try:
+            manifest = _get_live_manifest(state, logger)
+        except RuntimeError as exc:
+            return {"status": "error", "message": str(exc)}
+        except Exception as exc:
+            logger.exception("timeshift_buffer: manifest build failed for %s", channel_uuid)
+            return {"status": "error", "message": str(exc)}
+
+        # Same liveness-signal treatment as snapshot_buffer -- asking for the
+        # manifest is itself a sign this buffer is actively being watched.
+        state["last_heartbeat"] = time.time()
+        _set_buffer_state(channel_uuid, state)
+
+        return {
+            "status": "ok",
+            "http_port": state["http_port"],
+            "channel_uuid": channel_uuid,
+            "segment_route_prefix": f"/{channel_uuid}/",
+            **manifest,
+        }
 
     def _list_buffers(self):
         buffers = []

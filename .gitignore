@@ -9,3 +9,5 @@ CMakeCache.txt
 .vscode/
 *.user
 .claude/
+__pycache__/
+*.pyc
