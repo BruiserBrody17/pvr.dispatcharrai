@@ -1625,6 +1625,37 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     m_liveTimeshiftStream = LiveTimeshiftStreamState();
     return false;
   }
+
+  // Start near the live edge, not the earliest content still known about in
+  // the buffer's address space -- position defaults to 0, which without
+  // this would replay from whatever's oldest every time a channel is
+  // (re)opened, rather than resuming at "now" the way a plain live feed
+  // does. The OSD's rewind range still reaches all the way back to byte 0
+  // via GetStreamTimes()/SeekLiveStream(); this only changes where
+  // playback starts.
+  //
+  // Deliberately a few segments *behind* totalBytes, not exactly at it:
+  // ffmpeg only exposes a segment once it's fully closed (segment_seconds
+  // apart, 6s by default), so sitting exactly at the tail means there's
+  // nothing to read until the next segment closes -- confirmed live, this
+  // produced a periodic "stream stalled"/rebuffer cycle in Kodi tracking
+  // segment_seconds almost exactly, independent of channel bitrate (a
+  // fresh/small buffer has ~zero margin regardless of which channel it
+  // is, which is what actually explained the earlier channel-to-channel
+  // difference -- not a throughput problem, as first suspected). A few
+  // segments' cushion gives the demuxer's own read-ahead something to
+  // draw on between segment arrivals, while staying clearly "live" to the
+  // viewer -- comparable to the inherent latency any real live-TV/DVR
+  // service already has. Falls back to the true tail (0 margin) if fewer
+  // than that many segments exist yet, e.g. right after a cold
+  // StartTimeshiftBuffer() -- nothing to back up from yet in that case.
+  constexpr size_t kLiveEdgeMarginSegments = 3;
+  size_t segmentCount = m_liveTimeshiftStream.segments.size();
+  size_t marginIndex =
+      segmentCount > kLiveEdgeMarginSegments ? segmentCount - kLiveEdgeMarginSegments : 0;
+  m_liveTimeshiftStream.position = marginIndex < segmentCount
+                                        ? m_liveTimeshiftStream.segments[marginIndex].byteOffset
+                                        : m_liveTimeshiftStream.totalBytes;
   return true;
 }
 

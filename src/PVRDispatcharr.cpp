@@ -614,6 +614,18 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
   return PVR_ERROR_NO_ERROR;
 }
 
+PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
+{
+  // See the declaration comment in PVRDispatcharr.h -- without this, ffmpeg
+  // reads 4KB at a time from our HTTP-backed live-timeshift/recording
+  // streams, which measurably stalls higher-bitrate channels. 256KB cuts
+  // that to a handful of requests per second even for a ~14 Mbps stream,
+  // while staying well under a single timeshift segment's typical size so a
+  // read still resolves in one HTTP request in the common case.
+  chunksize = 256 * 1024;
+  return PVR_ERROR_NO_ERROR;
+}
+
 // ---------------------------------------------------------------------
 // EPG
 // ---------------------------------------------------------------------

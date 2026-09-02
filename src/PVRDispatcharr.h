@@ -57,6 +57,16 @@ public:
   bool CanSeekStream() override;
   bool IsRealTimeStream() override;
   PVR_ERROR GetStreamTimes(kodi::addon::PVRStreamTimes& times) override;
+  // Kodi's ffmpeg demuxer defaults its AVIO read buffer to a hardcoded 4096
+  // bytes (CDVDDemuxFFmpeg::CreateDemuxer, DVDDemuxFFmpeg.cpp) unless the
+  // PVR client overrides this -- and every read against our live-timeshift
+  // or recording streams costs one full HTTP round trip to the timeshift
+  // plugin's file server, so 4KB reads meant needing hundreds of requests
+  // per second to sustain a high-bitrate channel, causing periodic
+  // stall/rebuffer cycles on higher-bitrate channels. Applies to both live
+  // (server-side timeshift mode) and recording playback, both of which go
+  // through this same CInputStreamPVRBase-backed path.
+  PVR_ERROR GetStreamReadChunkSize(int& chunksize) override;
 
   // --- EPG ---
   PVR_ERROR GetEPGForChannel(int channelUid,
