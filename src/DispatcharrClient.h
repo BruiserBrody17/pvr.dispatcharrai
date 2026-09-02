@@ -199,6 +199,42 @@ public:
                             std::string& playbackUrlOut,
                             std::string& error);
 
+  // Starts (or, if already running, confirms) a server-side rolling live
+  // buffer for a channel via this addon's companion Dispatcharr plugin
+  // (dispatcharr-plugin/timeshift_buffer/ in this repo -- not built into
+  // Dispatcharr itself, must be installed and enabled separately). Returns
+  // a fully-qualified URL to the buffer's rolling HLS playlist, built from
+  // this client's own configured host plus the port/path the plugin
+  // reports back for its own file server -- deliberately always http://
+  // regardless of the use_https setting, since the plugin's minimal file
+  // server has no TLS of its own and isn't assumed to sit behind whatever
+  // reverse proxy/TLS termination the main API port might (see
+  // docs/API_NOTES.md for the limitation this implies if your setup splits
+  // those differently). Requires the Dispatcharr account this addon is
+  // configured with to be an admin account -- confirmed against
+  // Dispatcharr's own source (apps/accounts/permissions.py) that the
+  // plugin run endpoint requires IsAdmin (user_level >= 10) for POST, not
+  // just any authenticated user.
+  bool StartTimeshiftBuffer(const std::string& channelUuid,
+                            std::string& playlistUrlOut,
+                            std::string& error);
+
+  // Freezes the buffer's currently-recorded content into a real, finite,
+  // ENDLIST-terminated playlist a client can actually seek within -- the
+  // live buffer above deliberately never provides that (Duration: N/A is
+  // what lets it keep tailing new content), confirmed live that Kodi's PVR
+  // layer refuses to seek without a known finite duration regardless of
+  // what the inputstream addon itself advertises (see docs/API_NOTES.md,
+  // same root cause already documented there for in-progress-recording
+  // "Play live"). Requires StartTimeshiftBuffer() to already be running
+  // for this channel -- the plugin's own snapshot_buffer action fails with
+  // a clear message otherwise, which comes back through the normal `error`
+  // parameter like any other failure. The live buffer itself keeps
+  // recording in the background afterwards; only the snapshot is frozen.
+  bool SnapshotTimeshiftBuffer(const std::string& channelUuid,
+                               std::string& playlistUrlOut,
+                               std::string& error);
+
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   bool DeleteRecording(int recordingId, std::string& error);
   // Confirmed against the live schema: POST .../recordings/{id}/stop/
@@ -463,6 +499,26 @@ private:
                std::string& error,
                bool withAuth = true,
                int retryOnAuthFailure = 1);
+
+  // Confirmed live: a freshly-(re)started buffer's playlist URL can be
+  // unreachable for a real moment after CallTimeshiftPluginAction()
+  // returns it -- ffmpeg needs time to connect, probe, and write its first
+  // segment/playlist, and the plugin's own response comes back as soon as
+  // it's been launched, not once it's produced anything. Best-effort poll
+  // (a few seconds, small sleeps between tiny GETs against the playlist
+  // URL itself, no auth needed) so the common case doesn't race this;
+  // returns false rather than blocking indefinitely if it times out, but
+  // callers proceed with the URL regardless either way.
+  bool WaitForTimeshiftPlaylistReady(const std::string& playlistUrl);
+
+  // Shared body for StartTimeshiftBuffer()/SnapshotTimeshiftBuffer(): both
+  // POST the same shape to the same plugin endpoint and unwrap the same
+  // response envelope, differing only in the `action` string. See
+  // StartTimeshiftBuffer()'s comment for the response-shape reasoning.
+  bool CallTimeshiftPluginAction(const std::string& action,
+                                 const std::string& channelUuid,
+                                 std::string& playlistUrlOut,
+                                 std::string& error);
 
   Config m_config;
   std::mutex m_authMutex;

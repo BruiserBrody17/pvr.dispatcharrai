@@ -1,0 +1,118 @@
+{
+  "name": "Timeshift Buffer",
+  "version": "0.1.0",
+  "description": "Server-side rolling live-TV buffer per channel, so clients can pause/rewind live playback without a local on-device buffer.",
+  "author": "BruiserBrody17",
+  "help_url": "https://github.com/BruiserBrody17/pvr.dispatcharrai/tree/master/dispatcharr-plugin/timeshift_buffer",
+  "fields": [
+    {
+      "id": "about",
+      "label": "About",
+      "type": "info",
+      "description": "Started/stopped per channel by a client (e.g. pvr.dispatcharrai's live-timeshift setting) via the plugin run/ API, not usually by hand. The buttons below are for manual testing and emergency cleanup."
+    },
+    {
+      "id": "storage_path",
+      "label": "Buffer storage path",
+      "type": "string",
+      "default": "/data/timeshift",
+      "help_text": "Container path where segment files are written. Point this at a Docker volume mapped to real storage (the same way you'd map /data/recordings) -- do NOT leave this under Dispatcharr's own app directory, since continuous rolling writes don't belong on a small/fast appdata volume."
+    },
+    {
+      "id": "buffer_minutes",
+      "label": "Buffer length (minutes)",
+      "type": "number",
+      "default": 60,
+      "help_text": "How far back a viewer can rewind. Drives both segment_list_size (what the playlist advertises) and segment_wrap (when old segment files get reused) -- see plugin.py for why wrap is kept larger than the advertised window."
+    },
+    {
+      "id": "segment_seconds",
+      "label": "Segment length (seconds)",
+      "type": "number",
+      "default": 6,
+      "help_text": "ffmpeg -segment_time. Shorter segments seek more precisely but multiply the number of files on disk."
+    },
+    {
+      "id": "idle_timeout_seconds",
+      "label": "Idle timeout (seconds)",
+      "type": "number",
+      "default": 120,
+      "help_text": "Stop a channel's buffer automatically if no heartbeat action arrives for this long -- covers a client crashing or losing network before it can call stop_buffer."
+    },
+    {
+      "id": "max_concurrent_buffers",
+      "label": "Max concurrent channel buffers",
+      "type": "number",
+      "default": 4,
+      "help_text": "Safety cap. Each active buffer is a real ffmpeg process plus continuous disk writes -- bound how many can run at once regardless of how many clients ask."
+    },
+    {
+      "id": "internal_base_url",
+      "label": "Internal base URL",
+      "type": "string",
+      "default": "http://127.0.0.1:9191",
+      "help_text": "How the plugin reaches Dispatcharr's own live proxy from inside the container. TODO(verify): confirm this is reachable for your deployment -- the modular docker-compose config routes the web service through a Unix socket behind nginx, not necessarily a plain TCP port; this default assumes nginx itself is reachable on this loopback address/port from within the same container. Adjust if your setup differs."
+    },
+    {
+      "id": "http_port",
+      "label": "Buffer server port",
+      "type": "number",
+      "default": 9192,
+      "help_text": "Port this plugin's own file server listens on (playlists and segments are served directly by the plugin, not through Dispatcharr's normal web port -- confirmed live that Dispatcharr's /media/ static route is unreachable in this deployment mode, see plugin.py's module docstring). Must be mapped through your container config the same way 9191 already is, or clients outside the container can't reach it."
+    },
+    {
+      "id": "test_channel_uuid",
+      "label": "Test channel UUID",
+      "type": "string",
+      "default": "",
+      "help_text": "Only used for the manual-test buttons below, as a fallback when no channel_uuid param is supplied (plugin action buttons can't take click-time input) -- paste a channel's UUID here, save, then use Start/Stop Test Buffer. The real integration (a client calling run/ over the REST API) passes channel_uuid directly and ignores this field entirely."
+    },
+    {
+      "id": "active_buffers",
+      "label": "Active buffers",
+      "type": "info",
+      "description": "Run \"List Active Buffers\" to see current state."
+    }
+  ],
+  "actions": [
+    {
+      "id": "start_buffer",
+      "label": "Start Buffer (manual test)",
+      "description": "Starts a rolling buffer for a channel. Params: channel_uuid (required).",
+      "button_label": "Start Test Buffer"
+    },
+    {
+      "id": "stop_buffer",
+      "label": "Stop Buffer",
+      "description": "Stops a channel's buffer and removes its segment files. Params: channel_uuid (required).",
+      "button_label": "Stop Test Buffer",
+      "confirm": { "required": true, "title": "Stop buffer?", "message": "This ends the rolling buffer for the given channel and deletes its segment files." }
+    },
+    {
+      "id": "heartbeat",
+      "label": "Heartbeat",
+      "description": "Refreshes a channel's idle timeout. Params: channel_uuid (required). Not required for normal use -- every file fetch through this plugin's HTTP server already refreshes it. Kept for a client that wants to explicitly signal 'still active' without an in-flight request (e.g. mid-pause), and for manual testing."
+    },
+    {
+      "id": "snapshot_buffer",
+      "label": "Snapshot Buffer (manual test)",
+      "description": "Freezes the buffer's currently-recorded segments into a real, ENDLIST-terminated seekable playlist (params: channel_uuid, required -- start_buffer must already be running for it). The live buffer itself keeps recording in the background; this creates a separate, non-recycled snapshot that a client can seek within, at the cost of that snapshot not following new content -- the same trade-off as pvr.dispatcharrai's in-progress-recording 'Play from start' vs. 'Play live'.",
+      "button_label": "Take Test Snapshot"
+    },
+    {
+      "id": "list_buffers",
+      "label": "List Active Buffers",
+      "description": "Shows every currently-running buffer and its age.",
+      "button_label": "Refresh List"
+    },
+    {
+      "id": "stop_all",
+      "label": "Stop All Buffers",
+      "description": "Emergency cleanup: stops every active buffer and removes all segment files.",
+      "button_label": "Stop Everything",
+      "button_variant": "filled",
+      "button_color": "red",
+      "confirm": { "required": true, "title": "Stop all buffers?", "message": "This ends every active rolling buffer right now, for every channel and every viewer currently using one." }
+    }
+  ]
+}

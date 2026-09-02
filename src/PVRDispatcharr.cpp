@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <ctime>
 #include <functional>
 #include <thread>
@@ -41,7 +42,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
-  m_enableLiveTimeshift = kodi::addon::GetSettingBoolean("enable_live_timeshift", false);
+  m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
   m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
   m_enableCatchupFfmpegdirectSeek =
       kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
@@ -84,6 +85,13 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     // this is the only way left to get "Play live" for one.
     AddMenuHook(kodi::addon::PVRMenuhook(kMenuHookPlayLive, 30043, PVR_MENUHOOK_RECORDING));
   }
+
+  // See m_pendingSnapshotChannelUid's comment: only meaningful when
+  // server-side timeshift is the active mode, so only registered then --
+  // matches the same "only appears when the feature it's for is actually
+  // enabled" convention as the hook above.
+  if (m_liveTimeshiftMode == kLiveTimeshiftServer)
+    AddMenuHook(kodi::addon::PVRMenuhook(kMenuHookInstantReplay, 30054, PVR_MENUHOOK_CHANNEL));
 }
 
 PVRDispatcharr::~PVRDispatcharr()
@@ -459,12 +467,14 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
                                                       std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   std::string streamUrl;
+  std::string channelUuid;
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     const Channel* ch = FindChannelByUid(static_cast<int>(channel.GetUniqueId()));
     if (!ch)
       return PVR_ERROR_INVALID_PARAMETERS;
     streamUrl = m_client.GetLiveStreamUrl(*ch);
+    channelUuid = ch->uuid;
   }
 
   // Off (0) by default. Added while diagnosing a "channel N+1 never plays"
@@ -478,33 +488,94 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   if (m_channelSwitchDelaySeconds > 0)
     std::this_thread::sleep_for(std::chrono::seconds(m_channelSwitchDelaySeconds));
 
-  properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
-  properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
-  // Dispatcharr's default proxy output is MPEG-TS; if you've configured an
-  // HLS stream profile in Dispatcharr, override this in settings and adapt
-  // GetLiveStreamUrl() accordingly.
-  properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
-
-  // Live pause/rewind ("timeshift"), delegated entirely to the separate
-  // inputstream.ffmpegdirect addon rather than implemented here. Unlike the
-  // catch-up case (see GetEPGTagStreamProperties() below for why that one
-  // was reverted), this is exactly what ffmpegdirect's stream_mode:
-  // timeshift is built for: a genuinely live, continuously arriving source
-  // with no native pause/rewind of its own. It works independent of any
-  // Dispatcharr-side support -- Dispatcharr has no concept matching
-  // TVHeadend's server-side rolling live buffer, so this buffer instead
-  // lives as a local recording on-disk on the Kodi device itself (managed
-  // entirely by ffmpegdirect's own settings: buffer path, length limit,
-  // etc.), not on the Dispatcharr server. See docs/API_NOTES.md.
-  //
-  // Off by default: requires inputstream.ffmpegdirect to actually be
-  // installed, and unlike the catch-up case, getting this wrong here would
-  // break live channel playback entirely, not just catch-up.
-  if (m_enableLiveTimeshift)
+  // Live pause/rewind ("timeshift") has two mutually exclusive
+  // implementations, picked by live_timeshift_mode -- see docs/API_NOTES.md
+  // for the full history of why there are two rather than one replacing
+  // the other.
+  if (m_liveTimeshiftMode == kLiveTimeshiftServer)
   {
+    // Server-side: a rolling buffer recorded and served by this addon's
+    // companion Dispatcharr plugin (dispatcharr-plugin/timeshift_buffer/ in
+    // this repo -- a separate install from this addon itself, and from
+    // inputstream.ffmpegdirect). Which of the plugin's two playlist shapes
+    // gets used is decided by m_pendingSnapshotChannelUid (see its comment)
+    // -- consumed here whether or not it actually matches this channel,
+    // since it's a one-shot arm/consume flag either way, same pattern as
+    // m_pendingLiveModeRecordingId.
+    bool useSnapshot = false;
+    {
+      std::lock_guard<std::mutex> lock(m_pendingSnapshotMutex);
+      if (m_pendingSnapshotChannelUid == static_cast<int>(channel.GetUniqueId()))
+        useSnapshot = true;
+      m_pendingSnapshotChannelUid = -1;
+    }
+
+    std::string bufferUrl;
+    std::string error;
+    // The "Instant replay" menu hook already calls StartTimeshiftBuffer()
+    // itself before arming useSnapshot (see CallChannelMenuHook()), so
+    // SnapshotTimeshiftBuffer() here should always find a buffer already
+    // running -- but plain Play (useSnapshot false) still needs to call
+    // StartTimeshiftBuffer() itself, since that's the normal, un-armed
+    // path into this function.
+    bool ok = useSnapshot ? m_client.SnapshotTimeshiftBuffer(channelUuid, bufferUrl, error)
+                           : m_client.StartTimeshiftBuffer(channelUuid, bufferUrl, error);
+    if (!ok)
+    {
+      kodi::Log(ADDON_LOG_ERROR,
+                "pvr.dispatcharrai: server-side timeshift %s failed for channel %s: %s (confirm "
+                "the timeshift_buffer Dispatcharr plugin is installed and enabled, and that this "
+                "addon's configured account is a Dispatcharr admin)",
+                useSnapshot ? "snapshot" : "buffer start", channelUuid.c_str(), error.c_str());
+      // Fails loud rather than silently falling back to plain live or to
+      // local mode -- the user explicitly chose server mode (and, for the
+      // snapshot case, explicitly armed it via the context menu), so a
+      // mode they didn't choose succeeding instead would be more confusing
+      // than an honest failure here.
+      return PVR_ERROR_SERVER_ERROR;
+    }
+
+    // The plugin's HLS playlist shape differs between the two (live: no
+    // ENDLIST, Duration: N/A, no seek; snapshot: ENDLIST-terminated, a
+    // real finite duration, real seek -- see docs/API_NOTES.md), but both
+    // are served the same way (a plain URL through ffmpegdirect, same
+    // property recipe already proven for in-progress-recording "Play
+    // live"/"Play from start"), so no branching needed below this point.
+    properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, bufferUrl);
     properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
-    properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
-    properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+    properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
+    properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
+    properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "false");
+  }
+  else
+  {
+    properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
+    properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
+    // Dispatcharr's default proxy output is MPEG-TS; if you've configured
+    // an HLS stream profile in Dispatcharr, override this in settings and
+    // adapt GetLiveStreamUrl() accordingly.
+    properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
+
+    // Local: delegated entirely to the separate inputstream.ffmpegdirect
+    // addon rather than implemented here. Unlike the catch-up case (see
+    // GetEPGTagStreamProperties() below for why that one was reverted),
+    // this is exactly what ffmpegdirect's stream_mode: timeshift is built
+    // for: a genuinely live, continuously arriving source with no native
+    // pause/rewind of its own. It works independent of any Dispatcharr-side
+    // support -- the buffer lives as a local recording on-disk on the Kodi
+    // device itself (managed entirely by ffmpegdirect's own settings:
+    // buffer path, length limit, etc.), not on the Dispatcharr server. See
+    // docs/API_NOTES.md.
+    //
+    // Requires inputstream.ffmpegdirect to actually be installed, and
+    // unlike the catch-up case, getting this wrong here would break live
+    // channel playback entirely, not just catch-up.
+    if (m_liveTimeshiftMode == kLiveTimeshiftLocal)
+    {
+      properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
+      properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
+      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+    }
   }
   if (m_debugLogging)
   {
@@ -516,9 +587,120 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   return PVR_ERROR_NO_ERROR;
 }
 
+PVR_ERROR PVRDispatcharr::CallChannelMenuHook(const kodi::addon::PVRMenuhook& menuhook,
+                                               const kodi::addon::PVRChannel& item)
+{
+  if (menuhook.GetHookId() != kMenuHookInstantReplay)
+    return PVR_ERROR_NOT_IMPLEMENTED;
+
+  std::string channelUuid;
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    const Channel* ch = FindChannelByUid(static_cast<int>(item.GetUniqueId()));
+    if (!ch)
+      return PVR_ERROR_INVALID_PARAMETERS;
+    channelUuid = ch->uuid;
+  }
+
+  // Starts (or confirms) the buffer right now, before arming the pending
+  // flag -- see m_pendingSnapshotChannelUid's comment for why: a snapshot
+  // can only ever contain what's already been buffered, so this needs to
+  // begin recording immediately, not wait until the user actually presses
+  // Play. Deliberately the same StartTimeshiftBuffer() call plain Play
+  // itself uses -- if a buffer's already running for this channel (e.g.
+  // someone's already watching it live), this just confirms that rather
+  // than starting a second one.
+  std::string bufferUrl;
+  std::string error;
+  if (!m_client.StartTimeshiftBuffer(channelUuid, bufferUrl, error))
+  {
+    kodi::Log(ADDON_LOG_ERROR,
+              "pvr.dispatcharrai: couldn't start server-side buffering for channel %s: %s",
+              channelUuid.c_str(), error.c_str());
+    kodi::QueueNotification(QUEUE_ERROR, "", kodi::addon::GetLocalizedString(30056));
+    return PVR_ERROR_NO_ERROR;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(m_pendingSnapshotMutex);
+    m_pendingSnapshotChannelUid = static_cast<int>(item.GetUniqueId());
+  }
+  kodi::QueueNotification(QUEUE_INFO, "", kodi::addon::GetLocalizedString(30055));
+  return PVR_ERROR_NO_ERROR;
+}
+
 // ---------------------------------------------------------------------
 // EPG
 // ---------------------------------------------------------------------
+
+namespace
+{
+
+// Best-effort mapping from freeform XMLTV <category> text (Dispatcharr's own
+// categories, or whatever its Schedules Direct/XMLTV EPG sources use --
+// there's no fixed vocabulary) to Kodi's ETSI EN 300 468 content-mask genre
+// types. Kodi's default skin colour-codes the EPG grid by genre type when
+// it's one of these known masks rather than EPG_GENRE_USE_STRING, so this is
+// what gets this addon's EPG grid looking like TVHeadend's rather than a
+// flat single colour. Scans categories in order and returns the first
+// keyword hit found across any of them (not just the first category), since
+// Dispatcharr/Schedules Direct commonly lists a non-genre category like
+// "Series" before the actually-descriptive ones.
+bool MapCategoriesToGenreType(const std::vector<std::string>& categories, int& genreType)
+{
+  static const std::pair<const char*, int> kKeywordToMask[] = {
+      {"movie", EPG_EVENT_CONTENTMASK_MOVIEDRAMA},
+      {"film", EPG_EVENT_CONTENTMASK_MOVIEDRAMA},
+      {"drama", EPG_EVENT_CONTENTMASK_MOVIEDRAMA},
+      {"news", EPG_EVENT_CONTENTMASK_NEWSCURRENTAFFAIRS},
+      {"current affairs", EPG_EVENT_CONTENTMASK_NEWSCURRENTAFFAIRS},
+      {"sport", EPG_EVENT_CONTENTMASK_SPORTS},
+      {"children", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
+      {"kids", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
+      {"youth", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
+      {"cartoon", EPG_EVENT_CONTENTMASK_CHILDRENYOUTH},
+      {"music", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
+      {"ballet", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
+      {"dance", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
+      {"concert", EPG_EVENT_CONTENTMASK_MUSICBALLETDANCE},
+      {"arts", EPG_EVENT_CONTENTMASK_ARTSCULTURE},
+      {"culture", EPG_EVENT_CONTENTMASK_ARTSCULTURE},
+      {"politic", EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS},
+      {"social", EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS},
+      {"economic", EPG_EVENT_CONTENTMASK_SOCIALPOLITICALECONOMICS},
+      {"documentary", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
+      {"science", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
+      {"education", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
+      {"nature", EPG_EVENT_CONTENTMASK_EDUCATIONALSCIENCE},
+      {"travel", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
+      {"cooking", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
+      {"hobbies", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
+      {"leisure", EPG_EVENT_CONTENTMASK_LEISUREHOBBIES},
+      {"game show", EPG_EVENT_CONTENTMASK_SHOW},
+      {"talk show", EPG_EVENT_CONTENTMASK_SHOW},
+      {"reality", EPG_EVENT_CONTENTMASK_SHOW},
+      {"variety", EPG_EVENT_CONTENTMASK_SHOW},
+      {"comedy", EPG_EVENT_CONTENTMASK_SHOW},
+  };
+
+  for (const std::string& category : categories)
+  {
+    std::string lower = category;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                    [](unsigned char c) { return std::tolower(c); });
+    for (const auto& [keyword, mask] : kKeywordToMask)
+    {
+      if (lower.find(keyword) != std::string::npos)
+      {
+        genreType = mask;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+} // namespace
 
 PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
                                             time_t start,
@@ -551,15 +733,57 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
     tag.SetUniqueChannelId(static_cast<unsigned int>(channelUid));
     tag.SetTitle(entry.title);
     tag.SetPlotOutline(entry.subtitle);
+    tag.SetEpisodeName(entry.subtitle);
     tag.SetPlot(entry.description);
     tag.SetStartTime(entry.startTime);
     tag.SetEndTime(entry.endTime);
-    if (!entry.genre.empty())
-      tag.SetGenreDescription(entry.genre);
+    if (!entry.iconPath.empty())
+      tag.SetIconPath(entry.iconPath);
+    if (!entry.cast.empty())
+      tag.SetCast(entry.cast);
+    if (!entry.director.empty())
+      tag.SetDirector(entry.director);
+    if (!entry.writer.empty())
+      tag.SetWriter(entry.writer);
+    if (entry.year > 0)
+      tag.SetYear(entry.year);
+    if (!entry.firstAired.empty())
+      tag.SetFirstAired(entry.firstAired);
+
+    if (!entry.categories.empty())
+    {
+      std::string joinedCategories;
+      for (const std::string& category : entry.categories)
+      {
+        if (!joinedCategories.empty())
+          joinedCategories += EPG_STRING_TOKEN_SEPARATOR;
+        joinedCategories += category;
+      }
+      tag.SetGenreDescription(joinedCategories);
+
+      int genreType = EPG_GENRE_USE_STRING;
+      MapCategoriesToGenreType(entry.categories, genreType);
+      tag.SetGenreType(genreType);
+    }
+
     if (entry.seasonNumber > 0)
       tag.SetSeriesNumber(entry.seasonNumber);
     if (entry.episodeNumber > 0)
       tag.SetEpisodeNumber(entry.episodeNumber);
+
+    unsigned int flags = EPG_TAG_FLAG_UNDEFINED;
+    if (entry.isNew)
+      flags |= EPG_TAG_FLAG_IS_NEW;
+    if (entry.isPremiere)
+      flags |= EPG_TAG_FLAG_IS_PREMIERE;
+    if (entry.isLive)
+      flags |= EPG_TAG_FLAG_IS_LIVE;
+    bool categorySaysSeries = std::any_of(entry.categories.begin(), entry.categories.end(),
+                                           [](const std::string& c) { return c.find("Series") != std::string::npos; });
+    if (entry.seasonNumber > 0 || entry.episodeNumber > 0 || categorySaysSeries)
+      flags |= EPG_TAG_FLAG_IS_SERIES;
+    tag.SetFlags(flags);
+
     results.Add(tag);
   }
   return PVR_ERROR_NO_ERROR;

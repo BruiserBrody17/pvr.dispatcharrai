@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <thread>
 
 using json = nlohmann::json;
 
@@ -47,6 +48,13 @@ constexpr const char* kLogosPath = "/api/channels/logos/";
 // short-lived JWT directly in the stream URL.
 constexpr const char* kCatchupSessionsPath = "/api/catchup/sessions/";
 constexpr const char* kApiKeyGeneratePath = "/api/accounts/api-keys/generate/";
+// Fixed to this addon's own companion Dispatcharr plugin (see
+// dispatcharr-plugin/timeshift_buffer/ in this repo) -- "timeshift_buffer"
+// is that plugin's directory name, which Dispatcharr's loader uses
+// verbatim as its registry key. Confirmed against Dispatcharr's own source
+// (apps/plugins/api_urls.py) that the generic run endpoint takes the
+// plugin key as a URL segment, not a request body field.
+constexpr const char* kTimeshiftPluginRunPath = "/api/plugins/plugins/timeshift_buffer/run/";
 
 // Writes into a fixed-size caller-owned buffer, capping at its capacity --
 // used for recording stream reads, where the caller (Kodi's demuxer) owns
@@ -713,6 +721,131 @@ bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid,
 
   playbackUrlOut = std::move(playbackUrl);
   return true;
+}
+
+bool DispatcharrClient::WaitForTimeshiftPlaylistReady(const std::string& playlistUrl)
+{
+  // Confirmed live the hard way: the plugin's start_buffer response comes
+  // back as soon as ffmpeg has been launched, not once it's actually
+  // produced anything -- a fresh ffmpeg process (e.g. right after the
+  // previous one was idle-reaped) needs a real moment to connect to
+  // Dispatcharr's live proxy, probe the stream, and write its first
+  // segment and playlist. Handing STREAMURL to ffmpegdirect immediately
+  // raced that and failed outright ("Error, could not open file"), even
+  // though the exact same URL was trivially fetchable moments later by
+  // hand -- the file just didn't exist on disk yet at the moment
+  // ffmpegdirect tried. Polls the playlist URL itself (no auth needed --
+  // the plugin's own file server doesn't require any) rather than the
+  // Dispatcharr API, up to a few seconds, so GetChannelStreamProperties()
+  // only hands back a STREAMURL once there's actually something there to
+  // open. Best-effort: if it never becomes ready in time, still returns
+  // (false) rather than blocking indefinitely -- the caller proceeds with
+  // the URL regardless, on the chance it becomes ready a moment later
+  // anyway, but at least the common case no longer races this.
+  constexpr int kMaxAttempts = 20;
+  constexpr int kAttemptTimeoutMs = 500;
+  constexpr int kSleepBetweenMs = 250;
+
+  for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+  {
+    CURL* curl = curl_easy_init();
+    if (!curl)
+      return false;
+
+    std::string discard;
+    curl_easy_setopt(curl, CURLOPT_URL, playlistUrl.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &discard);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(kAttemptTimeoutMs));
+    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+    CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    curl_easy_cleanup(curl);
+
+    if (res == CURLE_OK && httpCode == 200)
+      return true;
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(kSleepBetweenMs));
+  }
+  return false;
+}
+
+bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
+                                                    const std::string& channelUuid,
+                                                    std::string& playlistUrlOut,
+                                                    std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json body = {
+      {"action", action},
+      {"params", {{"channel_uuid", channelUuid}}},
+  };
+
+  json response;
+  // Request() already turns any non-2xx (403 disabled-plugin/non-admin
+  // account, 404 plugin-not-installed, 500 exception inside the plugin's
+  // own run()) into a failure here, with the raw response body folded into
+  // `error` -- confirmed against apps/plugins/api_views.py's
+  // PluginRunAPIView that every one of those paths pairs "success": false
+  // with a matching non-2xx status, never 200. So this call only needs to
+  // handle the 200 case below: PluginRunAPIView always wraps whatever the
+  // plugin's own run() returned inside a top-level "result" key (alongside
+  // its own "success": true), and the plugin can still report its own
+  // *logical* failure (e.g. hitting max_concurrent_buffers, or -- for
+  // snapshot_buffer specifically -- no buffer running yet for this
+  // channel) as a normal 200 response with "result": {"status": "error",
+  // ...} rather than an exception -- that's the case the "result" parsing
+  // below actually exists to catch.
+  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+    return false;
+
+  if (!FieldOr(response, "success", false))
+  {
+    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
+    return false;
+  }
+
+  const json& result = response.contains("result") ? response["result"] : json();
+  if (FieldOr<std::string>(result, "status", "") != "ok")
+  {
+    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
+    return false;
+  }
+
+  int httpPort = FieldOr(result, "http_port", 0);
+  std::string playlistRoute = FieldOr<std::string>(result, "playlist_route", "");
+  if (httpPort <= 0 || playlistRoute.empty())
+  {
+    error = "timeshift_buffer plugin response was missing http_port/playlist_route";
+    return false;
+  }
+
+  playlistUrlOut = "http://" + m_config.host + ":" + std::to_string(httpPort) + playlistRoute;
+  WaitForTimeshiftPlaylistReady(playlistUrlOut); // best-effort; see its own comment
+  return true;
+}
+
+bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
+                                              std::string& playlistUrlOut,
+                                              std::string& error)
+{
+  return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error);
+}
+
+bool DispatcharrClient::SnapshotTimeshiftBuffer(const std::string& channelUuid,
+                                                 std::string& playlistUrlOut,
+                                                 std::string& error)
+{
+  // Requires start_buffer to already be running for this channel -- the
+  // plugin's own snapshot_buffer action fails with a clear "no buffer
+  // running for this channel" result.message otherwise, surfaced here via
+  // the normal error path rather than this method trying to detect and
+  // paper over that case itself.
+  return CallTimeshiftPluginAction("snapshot_buffer", channelUuid, playlistUrlOut, error);
 }
 
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
