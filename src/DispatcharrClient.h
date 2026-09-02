@@ -538,13 +538,23 @@ private:
   bool CallTimeshiftPluginAction(const std::string& action,
                                  const std::string& channelUuid,
                                  std::string& playlistUrlOut,
-                                 std::string& error);
+                                 std::string& error,
+                                 const nlohmann::json& extraParams);
 
   Config m_config;
   std::mutex m_authMutex;
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;
+  // Local IP curl reports (CURLINFO_LOCAL_IP) for the most recent
+  // successful Request() -- i.e. the interface this machine actually
+  // reaches Dispatcharr through. OpenLiveTimeshiftStream() passes this to
+  // start_buffer so the timeshift plugin's ffmpeg connection (which
+  // otherwise looks like it comes from Dispatcharr's own container, since
+  // it runs server-side) can be attributed to the real viewing device via
+  // an X-Forwarded-For-style header instead of showing 127.0.0.1.
+  std::mutex m_lastLocalIpMutex;
+  std::string m_lastLocalIp;
 
   // Opaque pointer to a small heap-allocated struct (CurlShareState, defined
   // in the .cpp) holding a CURLSH* and the mutexes that guard it. Every

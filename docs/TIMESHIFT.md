@@ -561,3 +561,33 @@ errors, no stalls), confirming the two `StopTimeshiftBuffer()` call sites
 (this one and `OpenLiveTimeshiftStream()`'s) don't interfere with each
 other in practice.
 
+## Buffers showed as "Anonymous" from "127.0.0.1" in Dispatcharr's Stats
+
+Because a server-side timeshift buffer's ffmpeg process reads from
+Dispatcharr's own live proxy from *inside* Dispatcharr's own container --
+not from the viewer's actual device -- its connection carried no
+credentials and no meaningful IP, so Dispatcharr's Stats screen showed
+every buffer as an anonymous client at `127.0.0.1`. Fixed entirely on the
+plugin side (see `dispatcharr-plugin/timeshift_buffer/plugin.py`'s
+`_stream_attribution_headers()` and its own detailed docstring for the two
+separate Dispatcharr-core mechanisms involved -- DRF/JWT auth for the
+user, and `get_client_ip()`'s `X-Real-IP` trust for the IP, the second of
+which took a real correction: an initial `X-Forwarded-For` attempt looked
+right but didn't work, because Dispatcharr's own XFF handling specifically
+skips any hop that's itself a private-range address, silently discarding a
+home-LAN client's own IP as if it were just another internal proxy).
+
+The addon's only role here is supplying the two values `start_buffer` uses:
+`OpenLiveTimeshiftStream()`/`StartTimeshiftBuffer()` pass `username` (the
+Dispatcharr account this addon is already configured with) and `client_ip`
+(cached from `CURLINFO_LOCAL_IP` on `Request()`'s own connection -- the
+local interface this machine actually reaches Dispatcharr through, not a
+separate platform-specific "what's my IP" lookup) as `start_buffer`
+params. No new addon setting and nothing new to configure -- it's derived
+from what was already there.
+
+**Confirmed live**: `/proxy/ts/status/<uuid>`'s client entry went from
+`user_id: "0"`, `ip_address: "127.0.0.1"` to the real account's id and the
+actual LAN IP of the machine running Kodi, both through a direct plugin
+action call and through actual Kodi playback.
+
