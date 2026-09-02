@@ -479,3 +479,53 @@ snapping, not a precision issue). A five-seek sequence (mixed forward and
 backward, small and large) left playback healthy afterward with zero
 stalls and zero "unknown position" errors.
 
+## Not a bug: JSON-RPC's Player.GetProperties "time"/"totaltime" is EPG-relative, not buffer-relative
+
+Testing this addon via JSON-RPC (as all of the above was), `Player.
+GetProperties`'s `time`/`totaltime`/`percentage` properties for a channel
+never match `GetStreamTimes()`'s own small, buffer-relative range -- they
+instead look like "how far into the current EPG programme are we" (e.g.
+showing ~38 minutes into a channel whose timeshift buffer has only existed
+for under a minute, with `totaltime` matching the EPG programme's own
+scheduled duration, e.g. a flat 1 or 2 hours). This is real, reproducible,
+and initially looked like a serious bug -- an absolute `Player.Seek`
+computed from that displayed value lands at/near the live edge every time,
+regardless of target, while a small buffer-relative target lands
+correctly. Confirmed by reading Kodi-core, not guessed: `PlayerOperations.cpp`
+(`GetPropertyValue`, the `"time"`/`"totaltime"`/`"percentage"` branches)
+hardcodes `epg->Progress()`/`epg->GetDuration()`/`epg->ProgressPercentage()`
+for *any* `IsPVRChannel()` item, unconditionally -- this is a Kodi-core,
+JSON-RPC-API-level design choice that applies to every PVR addon, not
+something this addon (or any addon) controls or can opt out of.
+
+**The real, in-GUI mechanism is unaffected and correct.** Kodi-core has a
+separate, dedicated set of info labels for genuinely timeshift-capable PVR
+streams (`PVR.TimeshiftSeekbar`, `PVR.TimeshiftProgress`, and friends,
+`GUIDialogSeekBar.cpp`/`PVRGUITimesInfo.cpp`), and traced its data flow
+end to end: `CPVRGUITimesInfo::UpdateTimeshiftData()` reads
+`CServiceBroker::GetDataCacheCore().GetPlayTimes()`, which `CVideoPlayer`
+populates directly from `state.time`/`state.timeMin`/`state.timeMax` --
+which, per `VideoPlayer.cpp`'s `UpdatePlayState()`, come from
+`m_pInputStream->GetITimes()`, i.e. `CInputStreamPVRBase::GetTimes()`,
+i.e. this addon's own `GetStreamTimes()`. The *generic*, skin-standard
+`Player.Time`/`Player.Duration` info labels (what virtually every skin's
+actual OSD and seek bar are built on -- distinct from the JSON-RPC
+`Player.GetProperties` properties above, a separate code path) come from
+that same `state.time`/`state.timeMax`. **Confirmed live**, not just from
+source: with a ~55s-old buffer, `Player.Time`/`Player.Duration` via
+`XBMC.GetInfoLabels` correctly showed `00:40`/`00:55` -- small and
+buffer-relative, nothing like the ~38-minute EPG figure `Player.
+GetProperties` shows for the same moment.
+
+**Practical takeaway for testing this addon (or any timeshift-capable PVR
+addon) via JSON-RPC**: don't compute an absolute `Player.Seek {"time":
+...}` target from `Player.GetProperties`'s `time`/`totaltime` on a PVR
+channel -- it's EPG-relative by Kodi-core design, not stream-relative, and
+feeding it back into an absolute seek silently targets the wrong domain
+entirely. Relative seeks (`Player.Seek {"seconds": N}`, used throughout
+all the testing above) are unaffected -- confirmed via `VideoPlayer.cpp`'s
+`SeekTimeRelative()`, which computes its target from the player's own
+internal clock, not from the EPG-derived display value. For precise
+absolute-position testing, read `Player.Time`/`Player.Duration` (or the
+`PVR.Timeshift*` labels) via `XBMC.GetInfoLabels` instead.
+
