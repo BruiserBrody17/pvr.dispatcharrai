@@ -85,14 +85,6 @@ msgctxt "#30024"
 msgid "How often to re-fetch the channel and group list from Dispatcharr."
 msgstr ""
 
-msgctxt "#30027"
-msgid "Live TV pause/rewind (timeshift)"
-msgstr ""
-
-msgctxt "#30028"
-msgid "Off: no pause/rewind on live channels. Server-side: real pause/rewind/fast-forward, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi, requires an admin account) -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs)."
-msgstr ""
-
 msgctxt "#30035"
 msgid "Recordings"
 msgstr ""
@@ -119,14 +111,6 @@ msgstr ""
 
 msgctxt "#30048"
 msgid "Routes catch-up/archive playback (play from guide) through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of Kodi's own built-in seeking, which can be imprecise for raw MPEG-TS over HTTP. Experimental -- requires inputstream.ffmpegdirect to be installed, or catch-up playback will fail outright with this on. Leave off to use Kodi's default catch-up playback."
-msgstr ""
-
-msgctxt "#30051"
-msgid "Off"
-msgstr ""
-
-msgctxt "#30053"
-msgid "Server-side (Dispatcharr plugin)"
 msgstr ""
 
 msgctxt "#30030"

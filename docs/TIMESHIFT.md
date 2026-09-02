@@ -18,11 +18,18 @@ this addon was still effectively single-user at the time). **Local was
 later removed** once server-side proved stable through real use -- one
 less thing to choose between, and one less dependency on a separate addon
 for live channel playback at all. `live_timeshift_mode`'s value `1` (what
-local used to mean) is deliberately left unreused rather than renumbering
-server-side down to `1`, so an existing install with `2` already saved
-keeps meaning server-side. The two descriptions below are kept as-written
-for the history of why server-side won, not as a currently-available
-choice.
+local used to mean) was deliberately left unreused at the time rather
+than renumbering server-side down to `1`. **`live_timeshift_mode` itself
+was later removed too, once server-side had proven stable through further
+real use -- server-side timeshift is now unconditional, not a setting at
+all, and `GetChannelStreamProperties()`/`OpenLiveStream()` no longer
+branch on anything.** A real consequence, not just an implementation
+detail: this addon now requires the companion plugin installed and
+enabled (and the configured account to be a Dispatcharr admin) for live
+TV playback to work *at all*, not just for pause/rewind -- there's no
+plain-STREAMURL fallback left to fall back to. The two descriptions below
+are kept as-written for the history of why server-side won, not as a
+currently-available choice.
 
 **Local** (`live_timeshift_mode = 1`): `GetChannelStreamProperties()`
 routes live channel playback through `inputstream.ffmpegdirect`'s

@@ -84,17 +84,6 @@
           </constraints>
           <control type="edit" format="integer" />
         </setting>
-        <setting id="live_timeshift_mode" type="integer" label="30027" help="30028">
-          <level>0</level>
-          <default>0</default>
-          <constraints>
-            <options>
-              <option label="30051">0</option>
-              <option label="30053">2</option>
-            </options>
-          </constraints>
-          <control type="list" format="integer" />
-        </setting>
         <setting id="enable_catchup_ffmpegdirect_seek" type="boolean" label="30047" help="30048">
           <level>1</level>
           <default>false</default>

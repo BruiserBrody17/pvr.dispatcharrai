@@ -26,8 +26,8 @@ This is a first working scaffold, not a finished addon. Implemented:
   live to match what TVHeadend's `pvr.hts` shows for the same kind of
   source; see `docs/API_NOTES.md` for exactly which XMLTV elements map to
   what, and what's deliberately not mapped
-- Live channel playback via Dispatcharr's stream proxy
-  (`/proxy/ts/stream/{uuid}`)
+- Live channel playback (see the live TV pause/rewind bullet below for the
+  current mechanism)
 - Recording listing, playback, and deletion
 - One-time and series timers, backed by Dispatcharr's recording and
   series-rule endpoints
@@ -41,25 +41,26 @@ This is a first working scaffold, not a finished addon. Implemented:
   `inputstream.ffmpegdirect` instead for noticeably more precise seeking,
   at the cost of occasionally-slow (usually ~10-20s, rarely longer) seeks
   -- requires `inputstream.ffmpegdirect` to be installed
-- Optional live TV pause/rewind ("timeshift"), via the `live_timeshift_mode`
-  setting (off by default): a server-side rolling buffer held by
-  Dispatcharr itself, via a companion Dispatcharr plugin shipped alongside
-  this addon (`dispatcharr-plugin/timeshift_buffer/` in this repo,
-  installed separately on your Dispatcharr instance, not through Kodi;
-  requires the Dispatcharr account configured above to be an admin
+- Live TV pause/rewind ("timeshift") via a server-side rolling buffer held
+  by Dispatcharr itself, via a companion Dispatcharr plugin shipped
+  alongside this addon (`dispatcharr-plugin/timeshift_buffer/` in this
+  repo, installed separately on your Dispatcharr instance, not through
+  Kodi; requires the Dispatcharr account configured above to be an admin
   account). Real pause/rewind/fast-forward from a plain Play, no extra
-  step -- exposes the Dispatcharr-held buffer through this addon's own
-  `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` implementation so
-  Kodi's native demuxer handles seeking directly, rather than routing
-  through the separate `inputstream.ffmpegdirect` addon (an earlier
-  approach that did that, and was confirmed live to have unfixable
+  step or setting -- exposes the Dispatcharr-held buffer through this
+  addon's own `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream`
+  implementation so Kodi's native demuxer handles seeking directly, rather
+  than routing through the separate `inputstream.ffmpegdirect` addon (an
+  earlier approach that did that, and was confirmed live to have unfixable
   seeking -- see `docs/TIMESHIFT.md` for that investigation and the
-  architecture that replaced it). This addon also used to offer a second,
-  local mode buffered to Kodi-device disk via `inputstream.ffmpegdirect`
-  instead; removed once server-side proved stable, so there's now one
-  real implementation rather than a choice between two. Confirmed live
-  end-to-end, including a 95-second rewind spanning several buffer
-  refreshes. See `docs/TIMESHIFT.md` and that plugin's own `README.md`
+  architecture that replaced it). **Unconditional as of this addon's
+  current version -- it used to be opt-in via a `live_timeshift_mode`
+  setting (off, local-device, or server-side), removed once server-side
+  proved stable, so this addon now requires the companion plugin to be
+  installed and enabled for live TV playback to work at all, not just for
+  pause/rewind.** Confirmed live end-to-end, including a 95-second rewind
+  spanning several buffer refreshes. See `docs/TIMESHIFT.md` and that
+  plugin's own `README.md`
 - In-progress recording playback -- lets you start watching a recording
   before Dispatcharr finishes writing it, from the true beginning, with
   real pause/rewind/fast-forward *and* live-follow together in the same
@@ -109,7 +110,11 @@ Not yet implemented / worth hardening next:
 
 Set these in Kodi's addon settings once installed: Dispatcharr host, port,
 HTTPS toggle, username, and password. The account needs permission to read
-channels/EPG and manage recordings on your Dispatcharr instance.
+channels/EPG and manage recordings on your Dispatcharr instance, and --
+since live TV playback requires server-side timeshift, which is
+unconditional -- must be a Dispatcharr **admin** account, with the
+companion `dispatcharr-plugin/timeshift_buffer/` plugin (see above)
+installed and enabled on your Dispatcharr instance.
 
 ## Building
 

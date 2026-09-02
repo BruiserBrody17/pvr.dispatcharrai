@@ -624,19 +624,6 @@ bool DispatcharrClient::GetXmlTvGuide(std::string& xmlOut, std::string& error)
   return true;
 }
 
-std::string DispatcharrClient::GetLiveStreamUrl(const Channel& channel) const
-{
-  // `|Connection=close` is a real Kodi/CCurlFile URL option (see
-  // xbmc/filesystem/CurlFile.cpp's protocol option handling) that adds a
-  // literal `Connection: close` request header. This was tried while
-  // diagnosing a "channel N+1 never plays" failure, on the theory that Kodi
-  // was reusing/pooling a still-closing connection to the same host -- it
-  // didn't fix that (the real cause turned out to be an unreachable IPv6
-  // route to the host, see docs/API_NOTES.md), but it's harmless to leave
-  // in place and does prevent connection reuse in general.
-  return BaseUrl() + "/proxy/ts/stream/" + channel.uuid + "|Connection=close";
-}
-
 std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const
 {
   return BaseUrl() + kLogosPath + std::to_string(logoId) + "/cache/";
