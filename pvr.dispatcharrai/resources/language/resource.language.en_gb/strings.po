@@ -90,19 +90,11 @@ msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Off: no pause/rewind on live channels. Local: real pause/rewind, buffered on this device via the separate inputstream.ffmpegdirect addon (Kodi's official repository, must be installed) -- doesn't persist across a Kodi restart or follow you to another device. Server-side: real pause/rewind/fast-forward too, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi, requires an admin account) instead of on this device -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs)."
+msgid "Off: no pause/rewind on live channels. Server-side: real pause/rewind/fast-forward, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi, requires an admin account) -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs)."
 msgstr ""
 
 msgctxt "#30035"
 msgid "Recordings"
-msgstr ""
-
-msgctxt "#30036"
-msgid "Enable in-progress recording playback"
-msgstr ""
-
-msgctxt "#30037"
-msgid "Lets you play a recording while Dispatcharr is still actively writing it, with real pause/rewind/fast-forward and live-follow together -- the same growing-buffer approach this addon uses for server-side live TV timeshifting, applied to the recording itself, no separate addon required. Leave off to keep the existing behaviour of waiting for a recording to finish before playing it."
 msgstr ""
 
 msgctxt "#30038"
@@ -131,10 +123,6 @@ msgstr ""
 
 msgctxt "#30051"
 msgid "Off"
-msgstr ""
-
-msgctxt "#30052"
-msgid "Local (this device)"
 msgstr ""
 
 msgctxt "#30053"

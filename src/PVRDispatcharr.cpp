@@ -36,7 +36,6 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
-  m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
   m_enableCatchupFfmpegdirectSeek =
       kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
@@ -450,10 +449,10 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
     streamUrl = m_client.GetLiveStreamUrl(*ch);
   }
 
-  // Live pause/rewind ("timeshift") has two mutually exclusive
-  // implementations, picked by live_timeshift_mode -- see docs/TIMESHIFT.md
-  // for the full history of why there are two rather than one replacing
-  // the other.
+  // Live pause/rewind ("timeshift") is opt-in via live_timeshift_mode --
+  // see docs/TIMESHIFT.md for the full history, including the earlier
+  // local (inputstream.ffmpegdirect on-device buffer) mode this addon
+  // used to also offer, removed once server-side proved stable.
   if (m_liveTimeshiftMode == kLiveTimeshiftServer)
   {
     // Server-side: deliberately leaves STREAMURL unset (confirmed elsewhere
@@ -476,33 +475,15 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   }
   else
   {
+    // Off: a plain live stream, no pause/rewind -- Kodi's generic CCurlFile
+    // opens streamUrl directly, no inputstream addon or addon-side stream
+    // callback involved at all.
     properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
     properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
     // Dispatcharr's default proxy output is MPEG-TS; if you've configured
     // an HLS stream profile in Dispatcharr, override this in settings and
     // adapt GetLiveStreamUrl() accordingly.
     properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
-
-    // Local: delegated entirely to the separate inputstream.ffmpegdirect
-    // addon rather than implemented here. Unlike the catch-up case (see
-    // GetEPGTagStreamProperties() below for why that one was reverted),
-    // this is exactly what ffmpegdirect's stream_mode: timeshift is built
-    // for: a genuinely live, continuously arriving source with no native
-    // pause/rewind of its own. It works independent of any Dispatcharr-side
-    // support -- the buffer lives as a local recording on-disk on the Kodi
-    // device itself (managed entirely by ffmpegdirect's own settings:
-    // buffer path, length limit, etc.), not on the Dispatcharr server. See
-    // docs/API_NOTES.md.
-    //
-    // Requires inputstream.ffmpegdirect to actually be installed, and
-    // unlike the catch-up case, getting this wrong here would break live
-    // channel playback entirely, not just catch-up.
-    if (m_liveTimeshiftMode == kLiveTimeshiftLocal)
-    {
-      properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
-      properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
-      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
-    }
   }
   if (m_debugLogging)
   {
@@ -1021,7 +1002,6 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   // this no longer needs its own STREAMURL/inputstream.ffmpegdirect
   // properties at all.
   bool isRealTime = false;
-  if (m_enableInProgressPlayback)
   {
     int id = std::atoi(recording.GetRecordingId().c_str());
     std::vector<Recording> recordings;
@@ -1069,7 +1049,6 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   // isn't the right one to have started with if it was in progress right
   // now).
   bool inProgress = false;
-  if (m_enableInProgressPlayback)
   {
     std::vector<Recording> recordings;
     std::string recError;
