@@ -94,11 +94,11 @@ msgid "Off (0) by default. If switching channels fails or times out, first check
 msgstr ""
 
 msgctxt "#30027"
-msgid "Enable live TV pause/rewind (timeshift)"
+msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Lets you pause, rewind, and fast-forward live channels. Requires the separate inputstream.ffmpegdirect addon (Kodi's official repository) to be installed -- if it isn't, live channels will fail to play, so leave this off until it is. The buffer is recorded to local disk on this device (managed by ffmpegdirect's own settings), not held on the Dispatcharr server -- it does not persist across a Kodi restart or follow you to another device."
+msgid "Off: no pause/rewind on live channels. Local: real pause/rewind, buffered on this device via the separate inputstream.ffmpegdirect addon (Kodi's official repository, must be installed) -- doesn't persist across a Kodi restart or follow you to another device. Server-side: buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi, requires an admin account) -- NOT real seek/rewind: the channel's context menu offers \"Instant replay from buffer\", which restarts playback from a fixed point in what's been buffered, but scrubbing within that playback does not currently work (a known, unresolved inputstream.ffmpegdirect limitation, not a channel-specific bug). Both modes require ffmpegdirect regardless."
 msgstr ""
 
 msgctxt "#30035"
@@ -147,6 +147,30 @@ msgstr ""
 
 msgctxt "#30048"
 msgid "Routes catch-up/archive playback (play from guide) through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of Kodi's own built-in seeking, which can be imprecise for raw MPEG-TS over HTTP. Experimental -- requires inputstream.ffmpegdirect to be installed, or catch-up playback will fail outright with this on. Leave off to use Kodi's default catch-up playback."
+msgstr ""
+
+msgctxt "#30051"
+msgid "Off"
+msgstr ""
+
+msgctxt "#30052"
+msgid "Local (this device)"
+msgstr ""
+
+msgctxt "#30053"
+msgid "Server-side (Dispatcharr plugin)"
+msgstr ""
+
+msgctxt "#30054"
+msgid "Instant replay from buffer"
+msgstr ""
+
+msgctxt "#30055"
+msgid "Instant replay armed -- press Play now, or wait a bit first to buffer more"
+msgstr ""
+
+msgctxt "#30056"
+msgid "Couldn't start server-side buffering for this channel -- see the Kodi log for details"
 msgstr ""
 
 msgctxt "#30030"

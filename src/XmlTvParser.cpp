@@ -108,6 +108,17 @@ void ParseEpisodeNum(const std::string& value, int& season, int& episode)
   }
 }
 
+// Appends a name to a comma-joined credits string (EPG_STRING_TOKEN_SEPARATOR),
+// skipping empty names.
+void AppendCredit(std::string& joined, const std::string& name)
+{
+  if (name.empty())
+    return;
+  if (!joined.empty())
+    joined += ",";
+  joined += name;
+}
+
 } // namespace
 
 bool XmlTvParser::Parse(const std::string& xmlContent,
@@ -145,7 +156,51 @@ bool XmlTvParser::Parse(const std::string& xmlContent,
     entry.title = programme.child("title").text().as_string();
     entry.subtitle = programme.child("sub-title").text().as_string();
     entry.description = programme.child("desc").text().as_string();
-    entry.genre = programme.child("category").text().as_string();
+
+    for (pugi::xml_node category : programme.children("category"))
+    {
+      std::string value = category.text().as_string();
+      if (!value.empty())
+        entry.categories.push_back(std::move(value));
+    }
+
+    entry.iconPath = programme.child("icon").attribute("src").as_string();
+
+    pugi::xml_node credits = programme.child("credits");
+    if (credits)
+    {
+      for (pugi::xml_node director : credits.children("director"))
+        AppendCredit(entry.director, director.text().as_string());
+      for (pugi::xml_node writer : credits.children("writer"))
+        AppendCredit(entry.writer, writer.text().as_string());
+      for (pugi::xml_node adapter : credits.children("adapter"))
+        AppendCredit(entry.writer, adapter.text().as_string());
+      // Everyone else visible on screen (as opposed to behind the camera)
+      // goes into "cast", matching how most PVR clients bucket xmltv credits.
+      for (const char* role : {"actor", "presenter", "guest", "producer", "commentator", "composer", "editor"})
+      {
+        for (pugi::xml_node person : credits.children(role))
+          AppendCredit(entry.cast, person.text().as_string());
+      }
+    }
+
+    std::string dateStr = programme.child("date").text().as_string();
+    if (dateStr.size() >= 4)
+    {
+      entry.firstAired = dateStr;
+      try
+      {
+        entry.year = std::stoi(dateStr.substr(0, 4));
+      }
+      catch (const std::exception&)
+      {
+        entry.year = 0;
+      }
+    }
+
+    entry.isNew = static_cast<bool>(programme.child("new"));
+    entry.isPremiere = static_cast<bool>(programme.child("premiere"));
+    entry.isLive = static_cast<bool>(programme.child("live"));
 
     for (pugi::xml_node episodeNum : programme.children("episode-num"))
     {
