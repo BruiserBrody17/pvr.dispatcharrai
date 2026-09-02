@@ -264,3 +264,57 @@ could) with no extra step, the same way Local mode always has. The
 plugin's `snapshot_buffer` action remains in the plugin as a standalone
 capability -- see its own README -- but this addon no longer calls it.
 
+## Two follow-up bugs found via real use, and their actual root causes
+
+The initial confirmation above was a single, freshly-started session per
+channel. Real day-to-day use surfaced two bugs that scenario didn't cover:
+a higher-bitrate channel (ESPN 1080p) hitching every few seconds, and
+reopening a channel after Stop resuming from the old stale position
+instead of live. Both traced back to the same place --
+`OpenLiveTimeshiftStream()` -- and both are fixed by the same change.
+
+**First hypothesis, tested and ruled out:** the hitching looked like a
+throughput problem, and there was a real (separate) one to fix --
+`CDVDDemuxFFmpeg::CreateDemuxer()` defaults its AVIO read buffer to a
+hardcoded 4096 bytes unless the PVR client implements
+`GetStreamReadChunkSize()`, which this addon didn't. Every ffmpeg demux
+read was therefore one full HTTP round trip to the timeshift plugin's file
+server per 4KB, confirmed in Kodi's own source
+(`DVDDemuxFFmpeg.cpp:356-360`, `InputStreamPVRBase.cpp`'s `GetBlockSize()`).
+Implemented it (256KB now, applies to both live and recording playback,
+both going through the same `CInputStreamPVRBase`-backed path) -- a real
+improvement, kept, but confirmed live it did **not** fix the hitching: the
+exact same stall pattern persisted afterward, unchanged.
+
+**Actual root cause:** `OpenLiveTimeshiftStream()` left `position` at its
+default-constructed `0` -- the start of whatever's still known in the
+buffer's fixed-origin address space, not "now". For a channel whose buffer
+had just been started (or one whose buffer happened to be small), `0` is
+also very close to `totalBytes` -- i.e., playback was starting essentially
+at the live edge either way, with ~zero cushion. ffmpeg's segmenter only
+exposes a segment once it's fully closed (`segment_seconds`, 6s by
+default), so sitting right at the tail means there is *nothing* to read
+until the next segment closes -- confirmed by the stall period tracking
+`segment_seconds` almost exactly (a repeating "stream stalled" -> buffering
+-> resume cycle roughly every 4-5 seconds in the actual test log). MLB
+Network's buffer, still running from earlier testing, had simply
+accumulated more backlog by the time it was opened -- explaining the
+apparent channel-to-channel difference without any real bitrate
+dependency. The same zero-margin `position` is also exactly why reopening
+resumed from the old position instead of live: `0` never moved, so every
+open replayed from the same spot.
+
+The fix (`OpenLiveTimeshiftStream()`): after the initial manifest fetch,
+set `position` to the byte offset of the segment 3 segments behind the
+current tail (or the true tail if fewer than that many segments exist yet,
+e.g. right after a cold `StartTimeshiftBuffer()`) -- a real cushion of
+already-available data for the demuxer's read-ahead to draw on between
+segment arrivals, while staying clearly "live" to the viewer, comparable
+to the inherent latency any real live-TV/DVR service already has.
+
+**Confirmed live**, ESPN (1080p): 60+ seconds of continuous playback, zero
+"stream stalled" events (was multiple per minute before), a -30s seek
+landed cleanly and playback continued. MLB Network: played ~40s, Stop,
+waited a few seconds, reopened -- resumed near the current live edge
+(matching elapsed real time), not the original stale start position.
+
