@@ -420,6 +420,15 @@ bool DispatcharrClient::Request(const std::string& method,
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  if (res == CURLE_OK)
+  {
+    char* localIp = nullptr;
+    if (curl_easy_getinfo(curl, CURLINFO_LOCAL_IP, &localIp) == CURLE_OK && localIp && *localIp)
+    {
+      std::lock_guard<std::mutex> lock(m_lastLocalIpMutex);
+      m_lastLocalIp = localIp;
+    }
+  }
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
 
@@ -768,14 +777,17 @@ bool DispatcharrClient::WaitForTimeshiftPlaylistReady(const std::string& playlis
 bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
                                                     const std::string& channelUuid,
                                                     std::string& playlistUrlOut,
-                                                    std::string& error)
+                                                    std::string& error,
+                                                    const json& extraParams)
 {
   if (!EnsureAuthenticated(error))
     return false;
 
+  json params = {{"channel_uuid", channelUuid}};
+  params.update(extraParams);
   json body = {
       {"action", action},
-      {"params", {{"channel_uuid", channelUuid}}},
+      {"params", params},
   };
 
   json response;
@@ -826,7 +838,22 @@ bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
                                               std::string& playlistUrlOut,
                                               std::string& error)
 {
-  return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error);
+  // Passed through so the plugin's ffmpeg connection (which otherwise
+  // looks anonymous and container-local in Dispatcharr's own Stats screen,
+  // since it runs server-side rather than from the viewer's own device --
+  // confirmed live) can be attributed properly: username to the same
+  // Dispatcharr account this addon is already configured with (no separate
+  // plugin-side setting to keep in sync), client_ip to whichever local
+  // interface this machine actually reaches Dispatcharr through (from
+  // Request()'s own CURLINFO_LOCAL_IP, not a platform-specific "what's my
+  // IP" lookup).
+  json extraParams = {{"username", m_config.username}};
+  {
+    std::lock_guard<std::mutex> lock(m_lastLocalIpMutex);
+    if (!m_lastLocalIp.empty())
+      extraParams["client_ip"] = m_lastLocalIp;
+  }
+  return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error, extraParams);
 }
 
 bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, std::string& error)
