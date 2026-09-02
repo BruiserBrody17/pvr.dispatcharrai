@@ -168,8 +168,6 @@ public:
   explicit DispatcharrClient(Config config);
   ~DispatcharrClient();
 
-  void UpdateConfig(Config config);
-
   // Logs in with username/password and stores the JWT pair. Safe to call
   // repeatedly; it is a no-op if a still-valid token is already held.
   bool EnsureAuthenticated(std::string& error);

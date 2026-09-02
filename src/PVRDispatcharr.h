@@ -1,12 +1,7 @@
 #pragma once
 
 // This targets the kodi-dev-kit C++ PVR API as it stands for Kodi 20
-// (Nexus) through 22 (in development at the time of writing). The overall
-// data flow (settings -> DispatcharrClient -> Kodi result-sets) is solid,
-// but a handful of exact enum/method names on PVRTimerType and PVRCapabilities
-// are marked TODO(verify) below and should be checked against your locally
-// installed <kodi/addon-instance/PVR.h> on first build -- Kodi's binary PVR
-// API is versioned and does drift slightly between releases.
+// (Nexus) through 22 (in development at the time of writing).
 
 #include <kodi/addon-instance/PVR.h>
 
