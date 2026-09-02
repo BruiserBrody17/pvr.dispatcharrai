@@ -48,19 +48,17 @@ This is a first working scaffold, not a finished addon. Implemented:
   shipped alongside this addon (`dispatcharr-plugin/timeshift_buffer/` in
   this repo, installed separately on your Dispatcharr instance, not through
   Kodi; requires the Dispatcharr account configured above to be an admin
-  account). The server-side live buffer plays back cleanly end-to-end,
-  confirmed live, but genuinely can't seek -- a real Kodi-core limitation
-  (seeking needs a known, finite duration; a perpetually-growing live
-  buffer can't offer one), not a bug. A context-menu action on the channel,
-  "Instant replay from buffer", restarts playback from a fixed point in
-  what's been buffered so far -- confirmed live end-to-end. **This is a
-  fixed-point replay, not real seek/rewind:** attempting to scrub within
-  that playback currently hangs it (confirmed via multiple live tests and
-  one fix attempt, all failing identically -- a real, unresolved
-  `inputstream.ffmpegdirect` limitation, not a bug in this addon's own
-  code; see `docs/API_NOTES.md` for the full investigation). If you want
-  actual pause/rewind on live TV, use Local mode instead, which has it.
-  See `docs/API_NOTES.md` and that plugin's own `README.md`
+  account). Both modes give real pause/rewind/fast-forward from a plain
+  Play, no extra step -- server-side mode does this by exposing the
+  Dispatcharr-held buffer through this addon's own
+  `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` implementation so
+  Kodi's native demuxer handles seeking directly, rather than routing
+  through `inputstream.ffmpegdirect` (an earlier approach that did that,
+  and was confirmed live to have unfixable seeking -- see
+  `docs/TIMESHIFT.md` for that investigation and the architecture that
+  replaced it). Confirmed live end-to-end, including a 95-second rewind
+  spanning several buffer refreshes. See `docs/TIMESHIFT.md` and that
+  plugin's own `README.md`
 - Optional in-progress recording playback (`enable_inprogress_playback`
   setting, off by default, experimental), also via
   `inputstream.ffmpegdirect` -- lets you start watching a recording before

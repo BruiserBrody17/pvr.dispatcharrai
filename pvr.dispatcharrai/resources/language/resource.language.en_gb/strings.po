@@ -90,7 +90,7 @@ msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Off: no pause/rewind on live channels. Local: real pause/rewind, buffered on this device via the separate inputstream.ffmpegdirect addon (Kodi's official repository, must be installed) -- doesn't persist across a Kodi restart or follow you to another device. Server-side: buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi, requires an admin account) -- NOT real seek/rewind: the channel's context menu offers \"Instant replay from buffer\", which restarts playback from a fixed point in what's been buffered, but scrubbing within that playback does not currently work (a known, unresolved inputstream.ffmpegdirect limitation, not a channel-specific bug). Both modes require ffmpegdirect regardless."
+msgid "Off: no pause/rewind on live channels. Local: real pause/rewind, buffered on this device via the separate inputstream.ffmpegdirect addon (Kodi's official repository, must be installed) -- doesn't persist across a Kodi restart or follow you to another device. Server-side: real pause/rewind/fast-forward too, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi, requires an admin account) instead of on this device -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs)."
 msgstr ""
 
 msgctxt "#30035"
@@ -151,18 +151,6 @@ msgstr ""
 
 msgctxt "#30053"
 msgid "Server-side (Dispatcharr plugin)"
-msgstr ""
-
-msgctxt "#30054"
-msgid "Instant replay from buffer"
-msgstr ""
-
-msgctxt "#30055"
-msgid "Instant replay armed -- press Play now, or wait a bit first to buffer more"
-msgstr ""
-
-msgctxt "#30056"
-msgid "Couldn't start server-side buffering for this channel -- see the Kodi log for details"
 msgstr ""
 
 msgctxt "#30030"

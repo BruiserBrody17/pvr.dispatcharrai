@@ -4,40 +4,33 @@ Server-side rolling live-TV buffer per channel, held by Dispatcharr itself
 -- an alternative to `pvr.dispatcharrai`'s local (`inputstream.ffmpegdirect`
 `stream_mode: timeshift`) buffering, which lives on the Kodi device instead.
 
-**Status: the full live-vs-snapshot design is now confirmed live,
-end-to-end, against a real Dispatcharr instance and a real
-`pvr.dispatcharrai` build.** `start_buffer`'s live playlist plays cleanly
-but genuinely can't seek (`canseek: false`, a `Player.Seek` call failing
-outright, confirmed live) -- not a bug, the identical root cause
-`pvr.dispatcharrai`'s own docs already document for in-progress-recording
-"Play live": Kodi's PVR layer requires a known, *finite* duration to permit
-seeking at all, and the live playlist is deliberately `Duration: N/A` --
-that's what lets it keep tailing new content. `snapshot_buffer` freezes the
-buffer into something with a real, finite duration, and **confirmed live
-it plays back correctly as a real seekable file**. The Kodi addon-side
-integration (context-menu "Instant replay from buffer" arming a snapshot
-open on the next Play) is also now built and confirmed live end-to-end --
-see `pvr.dispatcharrai`'s own `docs/API_NOTES.md`.
+**Status: confirmed live, end-to-end, including real seeking.**
+`start_buffer`'s live playlist itself still can't be seeked directly
+(`canseek: false` if you open it as a plain HLS URL -- Kodi's PVR layer
+requires a known, finite duration, and the live playlist is deliberately
+`Duration: N/A` so it can keep tailing new content). Two earlier
+approaches to work around that -- a `snapshot_buffer` freeze-and-seek
+(the "Instant replay from buffer" workflow) and a `-reset_timestamps`
+fix attempt for direct live seeking -- were both built, tested live, and
+found genuinely broken (`inputstream.ffmpegdirect`'s generic HLS seek
+path failing 100% of the time; full trace in `pvr.dispatcharrai`'s
+`docs/TIMESHIFT.md` if you want the history).
 
-**Known, confirmed-unfixable-for-now limitation: seeking within a
-snapshot does not work.** Four separate live tests -- different
-directions, different positions, all comfortably inside the snapshot's
-real duration -- failed identically: `inputstream.ffmpegdirect` logs
-`SeekTime - unknown position after seek`, then the demuxer immediately
-hits EOF and playback sticks. Root-caused (not just observed) by reading
-`inputstream.ffmpegdirect`'s own source: this project's server-side
-stream properties never set `stream_mode`, so ffmpegdirect falls back to
-a generic seek path that this addon's catch-up and local-timeshift
-features both avoid by setting `stream_mode: catchup` / `timeshift`
-instead. A real fix attempt -- removing `_start_ffmpeg`'s
-`-reset_timestamps 1`, on the theory that per-segment PTS resets were
-defeating the seek's target-PTS search -- was built, deployed, and
-re-tested live: **identical failure**, so that theory is ruled out and
-the flag was left removed (harmless, more standard HLS practice) without
-resolving the actual cause. Decision: treat "Instant replay from buffer"
-as exactly that -- restart from a fixed point, not scrubbable -- rather
-than keep guessing at fixes. See `pvr.dispatcharrai`'s `docs/API_NOTES.md`
-for the full trace if you want to pick this back up.
+**The actual fix was architectural, not another seek-path patch:**
+`pvr.dispatcharrai` no longer opens this buffer through
+`inputstream.ffmpegdirect`/a `STREAMURL` at all. It exposes the buffer via
+Kodi's own `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` PVR API
+instead, so Kodi's *native* internal demuxer handles MPEG-TS parsing and
+seek refinement -- the same mechanism that's always worked reliably for
+this addon's completed-recording playback. This plugin's role in that:
+`get_live_manifest` (below) and Range support in the file server, so the
+addon can treat the rolling buffer as one growing, byte-seekable stream
+instead of an HLS playlist. **Confirmed live**: real pause/rewind/
+fast-forward/live-follow from plain Play on a real channel, including a
+95-second rewind spanning several manifest refreshes. `snapshot_buffer`
+is left in this plugin as a standalone action (still works, still a
+legitimate capability), but `pvr.dispatcharrai` itself no longer uses it
+-- plain Play now gets everything that workflow offered and more.
 
 ## How it works
 
@@ -91,18 +84,38 @@ for the full trace if you want to pick this back up.
    already running for that channel) **copies** the buffer's
    currently-listed segment files into a separate, non-recycled `snapshot/`
    subdirectory and writes an `ENDLIST`-terminated playlist referencing the
-   copies -- a real, finite, seekable window into what's been buffered so
-   far. Copies rather than just re-listing the live files in a different
-   shape because the live buffer's own `-segment_wrap` keeps recycling
-   those original files in the background for as long as it keeps running,
-   which would risk a segment getting overwritten while a client watching
-   the "frozen" snapshot still had it queued up. The live buffer itself
-   keeps recording in the background after a snapshot is taken -- only the
-   snapshot's own copied files are frozen. **Confirmed live**: playback of
-   a snapshot works correctly as a real, seekable file (`canseek: true`
-   is reported), but actually seeking within it does not work -- see the
-   status note above for the confirmed failure mode and the ruled-out fix
-   attempt.
+   copies -- a real, finite window into what's been buffered so far. Copies
+   rather than just re-listing the live files in a different shape because
+   the live buffer's own `-segment_wrap` keeps recycling those original
+   files in the background for as long as it keeps running, which would
+   risk a segment getting overwritten while a client watching the "frozen"
+   snapshot still had it queued up. The live buffer itself keeps recording
+   in the background after a snapshot is taken -- only the snapshot's own
+   copied files are frozen. **Confirmed live**: playback of a snapshot
+   works correctly as a real, seekable file (`canseek: true` is reported).
+   Not used by `pvr.dispatcharrai` itself anymore (see the status note
+   above), kept as a standalone action.
+6. `get_live_manifest` (`{"channel_uuid": "..."}`, requires `start_buffer`
+   already running) is what `pvr.dispatcharrai` actually uses for real
+   live seeking: returns the buffer's currently-listed segments (filename,
+   byte size, duration) plus a `media_sequence`/per-segment `sequence`
+   derived from HLS's own `#EXT-X-MEDIA-SEQUENCE`. That sequence number is
+   the point -- the rolling window means a fresh fetch's own byte/time
+   offsets shift to newer content over time (segment 0 today isn't segment
+   0 an hour from now), so a client that wants a *stable* address space
+   across repeated calls needs to merge by sequence, not by re-deriving
+   offsets fresh each time. Read live from `live.m3u8` + `os.path.getsize()`
+   on every call (not cached), same recycling-race handling as
+   `_create_snapshot`.
+7. The file server's `do_GET` supports HTTP Range requests (`Range:
+   bytes=X-Y`, standard 206/`Content-Range` handling) against any file
+   under `storage_path`, not just whole-file GETs -- what actually lets a
+   client read a growing buffer as a byte-seekable stream: `get_live_manifest`
+   says which segment covers a given byte range, and a Range GET against
+   that one segment file returns exactly the bytes needed. **Confirmed
+   both locally (a standalone unit-style test of the handler) and live**
+   (206 responses with correct `Content-Range` against a real running
+   buffer).
 
 ## Installing
 
@@ -139,23 +152,37 @@ for the full trace if you want to pick this back up.
 
 ## Testing manually
 
-Use the "Start Test Buffer" / "Take Test Snapshot" / "List Active Buffers"
-/ "Stop Test Buffer" buttons on the Plugins page (paste a channel's UUID
-into the `test_channel_uuid` setting first and save -- action buttons can't
-take click-time input) to confirm segments and a playlist actually appear
-under `storage_path`, and that
+Use the "Start Test Buffer" / "Take Test Snapshot" / "Get Test Manifest" /
+"List Active Buffers" / "Stop Test Buffer" buttons on the Plugins page
+(paste a channel's UUID into the `test_channel_uuid` setting first and
+save -- action buttons can't take click-time input) to confirm segments
+and a playlist actually appear under `storage_path`, and that
 `http://<dispatcharr-host>:<http_port><playlist_route>` (the pieces
 `start_buffer`/`snapshot_buffer`/`list_buffers` return) is fetchable.
 "Stop All Buffers" is there for cleanup if something's stuck.
 
+**A real operational gotcha hit while developing this, worth knowing
+before you go looking for a bug that isn't one:** redeploying this plugin
+(re-importing the zip with changes, even via Dispatcharr's own "overwrite"
+flow) does not reliably make every already-running worker process pick up
+the new code. `apps/plugins/loader.py` creates a fresh Python module and
+swaps it into `sys.modules` on reload, but doesn't stop whatever the *old*
+module's code already started -- this plugin's own background HTTP file
+server (a thread bound to a port) is exactly that kind of already-started
+state, so it can keep answering requests with stale code indefinitely
+after a redeploy, even across a plain plugin disable/enable toggle. What
+actually forced every worker to pick up new code reliably: Dispatcharr's
+own dedicated reload endpoint (`POST /api/plugins/plugins/reload/`, no
+plugin key needed -- reloads all plugins), *not* the per-plugin enable/
+disable toggle or a redeploy-with-overwrite alone, both of which were
+tried first and didn't fix it. If a code change to this plugin doesn't
+seem to be taking effect, reach for that endpoint (or restart Dispatcharr
+outright) before assuming the change itself is wrong.
+
 ## What's still not done
 
-The addon-side integration described above (live buffer playback, the
-"Instant replay from buffer" context-menu action, snapshot playback) is
-built and confirmed live. Seeking within a snapshot is a known, currently
-unresolved limitation -- confirmed broken (not just imprecise) across
-multiple live tests and one real fix attempt, both ruled out -- see the
-status note at the top of this file. Treated as accepted for now rather
-than actively worked on; picking it back up would need real debugging
-inside the Dispatcharr container (verbose ffmpeg/curl logging, or
-instrumenting `inputstream.ffmpegdirect` itself), not another guess.
+The addon-side integration -- live buffer playback, real seeking via
+`get_live_manifest` + Range reads, `snapshot_buffer` as a standalone
+capability -- is built and confirmed live, including pause/rewind/
+fast-forward/live-follow on a real channel. Nothing outstanding is
+currently tracked for this plugin.

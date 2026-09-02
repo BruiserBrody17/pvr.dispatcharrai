@@ -78,13 +78,6 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     // this is the only way left to get "Play live" for one.
     AddMenuHook(kodi::addon::PVRMenuhook(kMenuHookPlayLive, 30043, PVR_MENUHOOK_RECORDING));
   }
-
-  // See m_pendingSnapshotChannelUid's comment: only meaningful when
-  // server-side timeshift is the active mode, so only registered then --
-  // matches the same "only appears when the feature it's for is actually
-  // enabled" convention as the hook above.
-  if (m_liveTimeshiftMode == kLiveTimeshiftServer)
-    AddMenuHook(kodi::addon::PVRMenuhook(kMenuHookInstantReplay, 30054, PVR_MENUHOOK_CHANNEL));
 }
 
 PVRDispatcharr::~PVRDispatcharr()
@@ -249,6 +242,13 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   capabilities.SetSupportsRecordingPlayCount(false);
   capabilities.SetSupportsRecordingEdl(false);
   capabilities.SetSupportsDescrambleInfo(false);
+  // For server-side timeshift's OpenLiveStream()/ReadLiveStream()/
+  // SeekLiveStream() (see GetChannelStreamProperties()). Declared
+  // unconditionally rather than toggled by live_timeshift_mode -- it's safe
+  // to declare regardless, since Kodi only actually calls these when a
+  // given channel's GetChannelStreamProperties() left STREAMURL unset,
+  // which only server-side timeshift ever does.
+  capabilities.SetHandlesInputStream(true);
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -457,74 +457,37 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
                                                       std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   std::string streamUrl;
-  std::string channelUuid;
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     const Channel* ch = FindChannelByUid(static_cast<int>(channel.GetUniqueId()));
     if (!ch)
       return PVR_ERROR_INVALID_PARAMETERS;
     streamUrl = m_client.GetLiveStreamUrl(*ch);
-    channelUuid = ch->uuid;
   }
 
   // Live pause/rewind ("timeshift") has two mutually exclusive
-  // implementations, picked by live_timeshift_mode -- see docs/API_NOTES.md
+  // implementations, picked by live_timeshift_mode -- see docs/TIMESHIFT.md
   // for the full history of why there are two rather than one replacing
   // the other.
   if (m_liveTimeshiftMode == kLiveTimeshiftServer)
   {
-    // Server-side: a rolling buffer recorded and served by this addon's
-    // companion Dispatcharr plugin (dispatcharr-plugin/timeshift_buffer/ in
-    // this repo -- a separate install from this addon itself, and from
-    // inputstream.ffmpegdirect). Which of the plugin's two playlist shapes
-    // gets used is decided by m_pendingSnapshotChannelUid (see its comment)
-    // -- consumed here whether or not it actually matches this channel,
-    // since it's a one-shot arm/consume flag either way, same pattern as
-    // m_pendingLiveModeRecordingId.
-    bool useSnapshot = false;
-    {
-      std::lock_guard<std::mutex> lock(m_pendingSnapshotMutex);
-      if (m_pendingSnapshotChannelUid == static_cast<int>(channel.GetUniqueId()))
-        useSnapshot = true;
-      m_pendingSnapshotChannelUid = -1;
-    }
-
-    std::string bufferUrl;
-    std::string error;
-    // The "Instant replay" menu hook already calls StartTimeshiftBuffer()
-    // itself before arming useSnapshot (see CallChannelMenuHook()), so
-    // SnapshotTimeshiftBuffer() here should always find a buffer already
-    // running -- but plain Play (useSnapshot false) still needs to call
-    // StartTimeshiftBuffer() itself, since that's the normal, un-armed
-    // path into this function.
-    bool ok = useSnapshot ? m_client.SnapshotTimeshiftBuffer(channelUuid, bufferUrl, error)
-                           : m_client.StartTimeshiftBuffer(channelUuid, bufferUrl, error);
-    if (!ok)
-    {
-      kodi::Log(ADDON_LOG_ERROR,
-                "pvr.dispatcharrai: server-side timeshift %s failed for channel %s: %s (confirm "
-                "the timeshift_buffer Dispatcharr plugin is installed and enabled, and that this "
-                "addon's configured account is a Dispatcharr admin)",
-                useSnapshot ? "snapshot" : "buffer start", channelUuid.c_str(), error.c_str());
-      // Fails loud rather than silently falling back to plain live or to
-      // local mode -- the user explicitly chose server mode (and, for the
-      // snapshot case, explicitly armed it via the context menu), so a
-      // mode they didn't choose succeeding instead would be more confusing
-      // than an honest failure here.
-      return PVR_ERROR_SERVER_ERROR;
-    }
-
-    // The plugin's HLS playlist shape differs between the two (live: no
-    // ENDLIST, Duration: N/A, no seek; snapshot: ENDLIST-terminated, a
-    // real finite duration, real seek -- see docs/API_NOTES.md), but both
-    // are served the same way (a plain URL through ffmpegdirect, same
-    // property recipe already proven for in-progress-recording "Play
-    // live"/"Play from start"), so no branching needed below this point.
-    properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, bufferUrl);
-    properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
-    properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
-    properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
-    properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "false");
+    // Server-side: deliberately leaves STREAMURL unset (confirmed elsewhere
+    // in this addon, see GetRecordingStreamProperties()'s comment, that
+    // Kodi uses STREAMURL directly via its generic CCurlFile when it's set,
+    // bypassing addon stream callbacks entirely) so Kodi falls through to
+    // this addon's own OpenLiveStream()/ReadLiveStream()/SeekLiveStream()
+    // (PVRCapabilities::SetHandlesInputStream(), set in GetCapabilities())
+    // instead of routing through inputstream.ffmpegdirect via a plain URL.
+    // That's the whole point: ffmpegdirect's generic HLS seek is confirmed
+    // broken for this addon's rolling server-side buffer (see
+    // docs/TIMESHIFT.md's seek investigation), the same way it would be for
+    // any plain STREAMURL here, so this addon demuxes it via Kodi's own
+    // internal demuxer instead, the same proven pattern already used for
+    // completed-recording playback (OpenRecordedStream() et al.) -- just
+    // against the companion plugin's growing buffer instead of one
+    // Dispatcharr-served file. The actual buffer-start call happens in
+    // OpenLiveStream(), not here.
+    properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
   }
   else
   {
@@ -566,45 +529,88 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR PVRDispatcharr::CallChannelMenuHook(const kodi::addon::PVRMenuhook& menuhook,
-                                               const kodi::addon::PVRChannel& item)
+bool PVRDispatcharr::OpenLiveStream(const kodi::addon::PVRChannel& channel)
 {
-  if (menuhook.GetHookId() != kMenuHookInstantReplay)
-    return PVR_ERROR_NOT_IMPLEMENTED;
+  // Only ever actually called for a server-side-timeshift channel -- see
+  // GetChannelStreamProperties(), which is the only mode that leaves
+  // STREAMURL unset. The mode check here is just defense in depth.
+  if (m_liveTimeshiftMode != kLiveTimeshiftServer)
+    return false;
 
   std::string channelUuid;
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
-    const Channel* ch = FindChannelByUid(static_cast<int>(item.GetUniqueId()));
+    const Channel* ch = FindChannelByUid(static_cast<int>(channel.GetUniqueId()));
     if (!ch)
-      return PVR_ERROR_INVALID_PARAMETERS;
+      return false;
     channelUuid = ch->uuid;
   }
 
-  // Starts (or confirms) the buffer right now, before arming the pending
-  // flag -- see m_pendingSnapshotChannelUid's comment for why: a snapshot
-  // can only ever contain what's already been buffered, so this needs to
-  // begin recording immediately, not wait until the user actually presses
-  // Play. Deliberately the same StartTimeshiftBuffer() call plain Play
-  // itself uses -- if a buffer's already running for this channel (e.g.
-  // someone's already watching it live), this just confirms that rather
-  // than starting a second one.
-  std::string bufferUrl;
   std::string error;
-  if (!m_client.StartTimeshiftBuffer(channelUuid, bufferUrl, error))
+  if (!m_client.OpenLiveTimeshiftStream(channelUuid, error))
   {
     kodi::Log(ADDON_LOG_ERROR,
-              "pvr.dispatcharrai: couldn't start server-side buffering for channel %s: %s",
+              "pvr.dispatcharrai: failed to open server-side timeshift stream for channel %s: "
+              "%s (confirm the timeshift_buffer Dispatcharr plugin is installed and enabled, and "
+              "that this addon's configured account is a Dispatcharr admin)",
               channelUuid.c_str(), error.c_str());
-    kodi::QueueNotification(QUEUE_ERROR, "", kodi::addon::GetLocalizedString(30056));
-    return PVR_ERROR_NO_ERROR;
+    return false;
   }
+  return true;
+}
 
-  {
-    std::lock_guard<std::mutex> lock(m_pendingSnapshotMutex);
-    m_pendingSnapshotChannelUid = static_cast<int>(item.GetUniqueId());
-  }
-  kodi::QueueNotification(QUEUE_INFO, "", kodi::addon::GetLocalizedString(30055));
+void PVRDispatcharr::CloseLiveStream()
+{
+  m_client.CloseLiveTimeshiftStream();
+}
+
+int PVRDispatcharr::ReadLiveStream(unsigned char* buffer, unsigned int size)
+{
+  return m_client.ReadLiveTimeshiftStream(buffer, size);
+}
+
+int64_t PVRDispatcharr::SeekLiveStream(int64_t position, int whence)
+{
+  return m_client.SeekLiveTimeshiftStream(position, whence);
+}
+
+int64_t PVRDispatcharr::LengthLiveStream()
+{
+  return m_client.GetLiveTimeshiftStreamLength();
+}
+
+bool PVRDispatcharr::CanPauseStream()
+{
+  return m_liveTimeshiftMode == kLiveTimeshiftServer;
+}
+
+bool PVRDispatcharr::CanSeekStream()
+{
+  return m_liveTimeshiftMode == kLiveTimeshiftServer;
+}
+
+bool PVRDispatcharr::IsRealTimeStream()
+{
+  return m_liveTimeshiftMode == kLiveTimeshiftServer;
+}
+
+PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
+{
+  if (m_liveTimeshiftMode != kLiveTimeshiftServer)
+    return PVR_ERROR_NOT_IMPLEMENTED;
+
+  // startTime/ptsStart both zero: no meaningful wall-clock "show start" for
+  // a rolling buffer the way a scheduled EPG programme would have, so pts
+  // values here are purely self-relative rather than UTC-anchored -- see
+  // kodi-dev-kit's own PVRStreamTimes doc comments. ptsEnd is in
+  // microseconds and grows on every call as DispatcharrClient refreshes its
+  // manifest -- that growth, reported live, is what gives this mode real
+  // pause/rewind/live-follow instead of the fixed-duration-or-nothing
+  // ffmpegdirect route this replaces (see docs/TIMESHIFT.md).
+  times.SetStartTime(0);
+  times.SetPTSStart(0);
+  times.SetPTSBegin(0);
+  times.SetPTSEnd(m_client.GetLiveTimeshiftStreamDurationMs() * 1000);
   return PVR_ERROR_NO_ERROR;
 }
 

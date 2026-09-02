@@ -40,17 +40,23 @@ public:
   PVR_ERROR GetChannels(bool radio, kodi::addon::PVRChannelsResultSet& results) override;
   PVR_ERROR GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
                                        std::vector<kodi::addon::PVRStreamProperty>& properties) override;
-  // Backs the "Instant replay from buffer" context-menu entry on live
-  // channels when live_timeshift_mode is server-side -- see
-  // m_pendingSnapshotChannelUid's comment for why this exists: a PVR addon
-  // using plain STREAMURL passthrough for live channels (as this one does)
-  // gets no callback at all when the user presses pause/rewind
-  // mid-playback, so a true "press rewind while watching live" gesture
-  // isn't achievable from here regardless of what the server-side buffer
-  // itself can do -- this is a deliberate "instant replay from whatever's
-  // already buffered", armed before Play, not a mid-playback pause.
-  PVR_ERROR CallChannelMenuHook(const kodi::addon::PVRMenuhook& menuhook,
-                                const kodi::addon::PVRChannel& item) override;
+
+  // Server-side timeshift's actual playback path: GetChannelStreamProperties()
+  // leaves STREAMURL unset for that mode specifically so Kodi calls these
+  // instead of routing through inputstream.ffmpegdirect -- see its own
+  // comment and docs/TIMESHIFT.md. Mirrors OpenRecordedStream()/
+  // ReadRecordedStream()/SeekRecordedStream()/LengthRecordedStream() below
+  // almost exactly, just against DispatcharrClient's live-timeshift-stream
+  // methods instead of its recording-stream ones.
+  bool OpenLiveStream(const kodi::addon::PVRChannel& channel) override;
+  void CloseLiveStream() override;
+  int ReadLiveStream(unsigned char* buffer, unsigned int size) override;
+  int64_t SeekLiveStream(int64_t position, int whence) override;
+  int64_t LengthLiveStream() override;
+  bool CanPauseStream() override;
+  bool CanSeekStream() override;
+  bool IsRealTimeStream() override;
+  PVR_ERROR GetStreamTimes(kodi::addon::PVRStreamTimes& times) override;
 
   // --- EPG ---
   PVR_ERROR GetEPGForChannel(int channelUid,
@@ -100,7 +106,6 @@ private:
   static constexpr int kTimerTypeSeries = 2;
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
   static constexpr unsigned int kMenuHookPlayLive = 1;
-  static constexpr unsigned int kMenuHookInstantReplay = 2;
   static constexpr int kLiveTimeshiftOff = 0;
   static constexpr int kLiveTimeshiftLocal = 1;
   static constexpr int kLiveTimeshiftServer = 2;
@@ -170,22 +175,6 @@ private:
 
   // Same one-shot arm/consume pattern as m_pendingLiveModeRecordingId
   // above, for the analogous problem on the channel (not recording) side:
-  // GetChannelStreamProperties() in server-side timeshift mode normally
-  // opens the live, unbounded buffer (tails forever, no seek -- see
-  // docs/API_NOTES.md). The "Instant replay from buffer" context-menu
-  // entry (CallChannelMenuHook()) arms this with the channel's uniqueId
-  // instead of opening anything itself (a binary PVR addon can't start
-  // playback directly, same constraint as the recording case) -- but
-  // unlike that case, it also starts the server-side buffer recording
-  // right away, before the user gets around to pressing Play: a snapshot
-  // can only ever contain what's already been buffered, so arming this
-  // without also kicking off recording immediately would make "instant
-  // replay" mean "replay of nothing" the first time a channel is used this
-  // way. The next GetChannelStreamProperties() call for that same channel
-  // then takes a snapshot instead of opening the live tail.
-  std::mutex m_pendingSnapshotMutex;
-  int m_pendingSnapshotChannelUid = -1;
-
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/
   // EPG above, there's no lazy "check staleness next time Kodi asks"
