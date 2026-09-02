@@ -601,14 +601,35 @@ private:
     std::chrono::steady_clock::time_point lastSeekTime{};
     int64_t lastShortGiveUpPosition = -1;
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
+    // Whole-segment cache for ReadInProgressRecordingStream() -- required,
+    // not just an optimisation: unlike the completed-recording `/file/`
+    // endpoint, Dispatcharr's in-progress-recording HLS segment endpoint
+    // ignores the Range header entirely and always serves the full segment
+    // body from its own byte 0 regardless of what was requested (confirmed
+    // live -- see ProbeSegmentByteSize()'s own comment for the same finding
+    // against a HEAD/ranged-GET probe). A per-read ranged GET against that
+    // endpoint would therefore silently hand back the segment's own leading
+    // bytes on every read past the first, corrupting the reconstructed
+    // stream from the second read of each segment onward -- confirmed live
+    // by a companion session as continuous H.264 decode errors and growing
+    // audio desync from the very start of playback. Fetching each segment's
+    // full body exactly once and serving every read against it from memory
+    // sidesteps the server's lack of Range support entirely, the same way
+    // the HEAD-based size probe does for sizing. cachedSegmentByteOffset is
+    // that segment's own byteOffset (its address in this stream's
+    // fixed-origin space), -1 when nothing is cached; only ever holds the
+    // one segment current reads are landing in, evicted (replaced) the
+    // moment position moves to a different segment.
+    std::vector<uint8_t> cachedSegmentBytes;
+    int64_t cachedSegmentByteOffset = -1;
   };
   InProgressRecordingStreamState m_inProgressRecordingStream;
 
   // Fetches the recording's current HLS playlist (FetchRawInProgressPlaylist)
   // and merges any segments not already known into
   // m_inProgressRecordingStream, extending its fixed-origin address space,
-  // probing each newly-discovered segment's byte size with a tiny ranged
-  // GET (HLS playlists carry durations via #EXTINF, never byte sizes) --
+  // probing each newly-discovered segment's byte size with a tiny HEAD
+  // request (HLS playlists carry durations via #EXTINF, never byte sizes) --
   // same pattern as RefreshLiveManifest(), adapted for a plain HLS text
   // response instead of the timeshift plugin's own JSON manifest action.
   // `force` bypasses the small throttle that keeps a tight demux-read loop

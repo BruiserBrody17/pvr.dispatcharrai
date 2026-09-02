@@ -1073,4 +1073,65 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
      Regression-tested a completed recording immediately after and
      confirmed it still takes the original, unaffected code path
      (`inProgress=0` in the log) with its own correct fixed duration.
+  3. **A third, more serious bug shipped alongside the two above and
+     wasn't caught by that verification pass: `ReadInProgressRecordingStream()`
+     silently corrupted playback from the second read of every segment
+     onward, on every platform, not just the one it was first noticed on.**
+     Caught by a companion session doing real macOS verification who
+     checked `kodi.log` for actual decode errors rather than only
+     `Player.GetProperties` state -- continuous `ffmpeg[h264]: No frame
+     decoded?`/`hardware accelerator failed to decode picture` from open
+     through 70+ seconds of playback, `ActiveAE - large audio sync error`
+     climbing past -15000ms, and `time` barely advancing (18s to 28s over
+     70+ real seconds) despite `speed: 1` -- while `canseek`/`totaltime`
+     looked completely correct throughout, which is exactly why the
+     original verification pass above missed it: it never looked past
+     JSON-RPC player state to the actual decode log or watched real
+     playback quality. Cleanly isolated by playing the *completed* version
+     of the same freshly-recorded content through the unaffected
+     `OpenRecordingStream()` path immediately after: zero decode errors,
+     exact real-time progression. Checked this addon's own Windows
+     `kodi.log` from the verification pass above and found the identical
+     1381 decode-error lines already present there too, missed for the
+     same reason -- confirmed not platform-specific.
+     Root cause: `ReadInProgressRecordingStream()` issued a ranged GET
+     (`CURLOPT_RANGE`) per demuxer read, mirroring the completed-recording
+     path's own per-read ranged reads against `/file/` -- but unlike that
+     endpoint, Dispatcharr's in-progress-recording HLS segment endpoint
+     ignores `Range` entirely and always returns the *full* segment body
+     from its own byte 0 (the same finding fix #1 above already made
+     against a `HEAD`/ranged-GET size probe, just not yet applied to the
+     actual data-reading path when that fix shipped). Every read therefore
+     silently received that segment's own leading bytes, correct only for
+     the very first read of each segment and wrong -- not an error, just
+     quietly incorrect data handed to the demuxer -- for every read after
+     that, corrupting the reconstructed stream from partway through the
+     first segment onward. This also explains the near-stalled real-time
+     progression: since the server always sends the complete segment body
+     regardless of the requested range, and the old write callback
+     (`FixedBufferWriteCallback`) let curl keep streaming the full response
+     while only copying the first `wantSize` bytes into the caller's
+     buffer, *every single small demuxer read re-downloaded the entire
+     multi-MB segment over the network*, not just the requested slice.
+     Fixed by adding a whole-segment cache to `InProgressRecordingStreamState`
+     (`cachedSegmentBytes`/`cachedSegmentByteOffset`): the first read
+     landing in a given segment fetches that segment's full body exactly
+     once (a plain GET, no `Range`, into the cache), and every read against
+     that segment -- however many the demuxer issues -- is served directly
+     from memory afterward, correctly sliced client-side by
+     `offsetInSegment` instead of trusting the server to honor a `Range`
+     header it ignores. The cache holds only the one segment current reads
+     are landing in (replaced, not accumulated, the moment `position`
+     moves into a different one), so memory use stays bounded to a single
+     segment's size regardless of recording length; a seek into an
+     already-cached segment is free, a seek into a new one costs one fresh
+     full-segment fetch, matching the seek-cost tradeoff already accepted
+     elsewhere in this addon. Re-verified live end-to-end after the fix:
+     zero decode errors across a 74-second continuous playback session (vs.
+     1381 before), real-time progression throughout (`time` advancing ~66s
+     over a 65-second wall-clock window), and a `Player.Seek` to 1:00
+     landing at 58.99s (`CDVDDemuxFFmpeg::SeekTime`) with zero decode
+     errors afterward either, confirming a seek into a freshly-cached
+     segment works correctly too, not just sequential reads within one
+     already cached.
 
