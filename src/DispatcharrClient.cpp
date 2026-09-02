@@ -1508,68 +1508,82 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     return 0; // shouldn't happen (no rolling eviction here), but nothing safely readable if it did
 
   int64_t offsetInSegment = m_inProgressRecordingStream.position - seg->byteOffset;
-  int64_t available = seg->byteSize - offsetInSegment;
-  unsigned int wantSize = static_cast<unsigned int>(std::min<int64_t>(size, available));
 
-  int64_t rangeEnd = offsetInSegment + static_cast<int64_t>(wantSize) - 1;
-  std::string range = std::to_string(offsetInSegment) + "-" + std::to_string(rangeEnd);
-
-  for (int attempt = 0; attempt < 2; ++attempt)
+  // Fetch this segment's full body once and cache it, rather than issuing a
+  // ranged GET per read -- see InProgressRecordingStreamState's own comment
+  // on cachedSegmentBytes for why a ranged read against this specific
+  // endpoint would silently return the wrong bytes, not just be wasteful.
+  if (m_inProgressRecordingStream.cachedSegmentByteOffset != seg->byteOffset)
   {
-    CURL* curl = static_cast<CURL*>(m_inProgressRecordingStream.curl);
-    if (!curl)
+    for (int attempt = 0; attempt < 2; ++attempt)
     {
-      curl = curl_easy_init();
+      CURL* curl = static_cast<CURL*>(m_inProgressRecordingStream.curl);
       if (!curl)
+      {
+        curl = curl_easy_init();
+        if (!curl)
+          return -1;
+        m_inProgressRecordingStream.curl = curl;
+      }
+
+      struct curl_slist* headers = nullptr;
+      std::string apiKeyHeader;
+      if (!m_config.apiKey.empty())
+      {
+        apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+        headers = curl_slist_append(headers, apiKeyHeader.c_str());
+      }
+
+      std::string body;
+      body.reserve(static_cast<size_t>(seg->byteSize));
+      curl_easy_setopt(curl, CURLOPT_URL, seg->url.c_str());
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+      curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+      curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+      CURLcode res = curl_easy_perform(curl);
+      long httpCode = 0;
+      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+      curl_slist_free_all(headers);
+
+      if (httpCode == 401 && attempt == 0)
+      {
+        std::string regenKey, regenError;
+        if (GenerateApiKey(regenKey, regenError))
+          continue;
+      }
+
+      if (res != CURLE_OK)
+      {
+        // Same "reused connection went stale" handling as ReadRecordingStream().
+        curl_easy_cleanup(curl);
+        m_inProgressRecordingStream.curl = nullptr;
         return -1;
-      m_inProgressRecordingStream.curl = curl;
+      }
+      if (httpCode != 200)
+        return -1;
+
+      m_inProgressRecordingStream.cachedSegmentBytes.assign(body.begin(), body.end());
+      m_inProgressRecordingStream.cachedSegmentByteOffset = seg->byteOffset;
+      break;
     }
-
-    struct curl_slist* headers = nullptr;
-    std::string apiKeyHeader;
-    if (!m_config.apiKey.empty())
-    {
-      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
-      headers = curl_slist_append(headers, apiKeyHeader.c_str());
-    }
-
-    FixedBufferSink sink{buffer, wantSize, 0};
-    curl_easy_setopt(curl, CURLOPT_URL, seg->url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
-
-    CURLcode res = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_slist_free_all(headers);
-
-    if (httpCode == 401 && attempt == 0)
-    {
-      std::string regenKey, regenError;
-      if (GenerateApiKey(regenKey, regenError))
-        continue;
-    }
-
-    if (res != CURLE_OK)
-    {
-      // Same "reused connection went stale" handling as ReadRecordingStream().
-      curl_easy_cleanup(curl);
-      m_inProgressRecordingStream.curl = nullptr;
-      return -1;
-    }
-    if (httpCode != 200 && httpCode != 206)
-      return -1;
-
-    m_inProgressRecordingStream.position += static_cast<int64_t>(sink.written);
-    return static_cast<int>(sink.written);
+    if (m_inProgressRecordingStream.cachedSegmentByteOffset != seg->byteOffset)
+      return -1; // both attempts failed
   }
-  return -1;
+
+  const auto& cached = m_inProgressRecordingStream.cachedSegmentBytes;
+  if (offsetInSegment < 0 || static_cast<size_t>(offsetInSegment) >= cached.size())
+    return 0; // segment turned out smaller than the probed byteSize -- nothing left to give
+
+  int64_t available = static_cast<int64_t>(cached.size()) - offsetInSegment;
+  unsigned int wantSize = static_cast<unsigned int>(std::min<int64_t>(size, available));
+  std::memcpy(buffer, cached.data() + offsetInSegment, wantSize);
+  m_inProgressRecordingStream.position += static_cast<int64_t>(wantSize);
+  return static_cast<int>(wantSize);
 }
 
 int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int whence)
