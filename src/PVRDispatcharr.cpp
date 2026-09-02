@@ -65,19 +65,6 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   StartRecordingRefreshThread();
   if (m_enableRealtimeUpdates)
     StartRealtimeUpdateThread();
-
-  if (m_enableInProgressPlayback)
-  {
-    std::string playlistServerError;
-    if (!m_playlistServer.Start(playlistServerError))
-      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to start local playlist server: %s",
-                playlistServerError.c_str());
-
-    // See m_pendingLiveModeRecordingId's comment: plain Play on an
-    // in-progress recording goes straight to "Play from start" now, and
-    // this is the only way left to get "Play live" for one.
-    AddMenuHook(kodi::addon::PVRMenuhook(kMenuHookPlayLive, 30043, PVR_MENUHOOK_RECORDING));
-  }
 }
 
 PVRDispatcharr::~PVRDispatcharr()
@@ -97,8 +84,6 @@ PVRDispatcharr::~PVRDispatcharr()
   m_realtimeUpdateCv.notify_all();
   if (m_realtimeUpdateThread.joinable())
     m_realtimeUpdateThread.join();
-
-  m_playlistServer.Stop();
 }
 
 void PVRDispatcharr::StartRecordingRefreshThread()
@@ -581,37 +566,66 @@ int64_t PVRDispatcharr::LengthLiveStream()
 
 bool PVRDispatcharr::CanPauseStream()
 {
-  return m_liveTimeshiftMode == kLiveTimeshiftServer;
+  return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
 }
 
 bool PVRDispatcharr::CanSeekStream()
 {
-  return m_liveTimeshiftMode == kLiveTimeshiftServer;
+  return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
 }
 
 bool PVRDispatcharr::IsRealTimeStream()
 {
-  return m_liveTimeshiftMode == kLiveTimeshiftServer;
+  return m_client.IsLiveTimeshiftStreamOpen() || m_client.IsInProgressRecordingStreamOpen();
 }
 
 PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
 {
-  if (m_liveTimeshiftMode != kLiveTimeshiftServer)
-    return PVR_ERROR_NOT_IMPLEMENTED;
-
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharrai: GetStreamTimes called: liveTimeshiftOpen=%d inProgressOpen=%d "
+            "durationMs=%lld",
+            m_client.IsLiveTimeshiftStreamOpen() ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0,
+            static_cast<long long>(m_client.GetInProgressRecordingStreamDurationMs()));
   // startTime/ptsStart both zero: no meaningful wall-clock "show start" for
-  // a rolling buffer the way a scheduled EPG programme would have, so pts
-  // values here are purely self-relative rather than UTC-anchored -- see
-  // kodi-dev-kit's own PVRStreamTimes doc comments. ptsEnd is in
-  // microseconds and grows on every call as DispatcharrClient refreshes its
-  // manifest -- that growth, reported live, is what gives this mode real
-  // pause/rewind/live-follow instead of the fixed-duration-or-nothing
-  // ffmpegdirect route this replaces (see docs/TIMESHIFT.md).
-  times.SetStartTime(0);
-  times.SetPTSStart(0);
-  times.SetPTSBegin(0);
-  times.SetPTSEnd(m_client.GetLiveTimeshiftStreamDurationMs() * 1000);
-  return PVR_ERROR_NO_ERROR;
+  // a growing buffer/recording the way a scheduled EPG programme would
+  // have, so pts values here are purely self-relative rather than
+  // UTC-anchored -- see kodi-dev-kit's own PVRStreamTimes doc comments.
+  // ptsEnd is in microseconds and grows on every call as the growing
+  // source's own manifest gets refreshed -- that growth, reported live, is
+  // what gives real pause/rewind/live-follow instead of the
+  // fixed-duration-or-nothing ffmpegdirect route this replaced (see
+  // docs/TIMESHIFT.md and docs/INPROGRESS_RECORDINGS.md).
+  //
+  // CInputStreamPVRRecording extends the same CInputStreamPVRBase as
+  // CInputStreamPVRChannel (confirmed in Kodi-core source), so this same
+  // callback drives both a live-timeshift channel and an in-progress
+  // recording -- only one of the two is ever open at once, so checking
+  // both here is safe and simplest. Checking the *setting*
+  // (m_liveTimeshiftMode == kLiveTimeshiftServer) here instead of actual
+  // open state was a real bug, not just imprecision: that setting doesn't
+  // change once a stream closes, so it stayed true while an in-progress
+  // recording was playing with server-side timeshift also enabled,
+  // permanently shadowing the recording branch below and reporting
+  // GetLiveTimeshiftStreamDurationMs()'s 0 (no live stream open) as ptsEnd
+  // instead -- confirmed live: canseek/totaltime stayed false/0 despite
+  // GetInProgressRecordingStreamDurationMs() correctly growing every call.
+  if (m_client.IsLiveTimeshiftStreamOpen())
+  {
+    times.SetStartTime(0);
+    times.SetPTSStart(0);
+    times.SetPTSBegin(0);
+    times.SetPTSEnd(m_client.GetLiveTimeshiftStreamDurationMs() * 1000);
+    return PVR_ERROR_NO_ERROR;
+  }
+  if (m_client.IsInProgressRecordingStreamOpen())
+  {
+    times.SetStartTime(0);
+    times.SetPTSStart(0);
+    times.SetPTSBegin(0);
+    times.SetPTSEnd(m_client.GetInProgressRecordingStreamDurationMs() * 1000);
+    return PVR_ERROR_NO_ERROR;
+  }
+  return PVR_ERROR_NOT_IMPLEMENTED;
 }
 
 PVR_ERROR PVRDispatcharr::GetStreamReadChunkSize(int& chunksize)
@@ -994,220 +1008,37 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
 PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                                         std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
-  // The claim this used to make here -- that Kodi never actually consults
-  // STREAMURL for a pvr://recordings/... item, always routing through
-  // CInputStreamPVRRecording's OpenRecordedStream()/ReadRecordedStream()/etc.
-  // below instead -- turned out to be wrong in practice: a live kodi.log
-  // from a real failed playback showed Kodi's generic CCurlFile opening
-  // this exact pipe-delimited STREAMURL directly (bypassing our addon's
-  // OpenRecordedStream() entirely, including its 401-retry/API-key-regen
-  // logic, which never even ran). Leave STREAMURL unset for a completed
-  // recording for that reason, so Kodi has no choice but to use the addon
-  // callbacks below.
-  //
-  // An in-progress recording is different: OpenRecordingStream() rejects it
-  // outright (it's a growing HLS playlist, not a Range-seekable file), so
-  // there's no existing behaviour to preserve by leaving STREAMURL unset.
-  // If enabled (opt-in, off by default -- see settings.xml/strings.po: this
-  // hasn't seen the real-world use the completed-recording path has, and
-  // ffmpegdirect has already needed reverting twice elsewhere in this addon
-  // for unrelated reasons), route it through inputstream.ffmpegdirect
-  // instead, forced into its plain ffmpeg-native open mode so libavformat's
-  // own HLS demuxer -- not Kodi's native one -- handles segment fetches,
-  // propagating the X-API-Key header from the URL to every segment, not
-  // just the manifest. See FetchInProgressPlaylistSnapshot()'s comment for
-  // why this needs open_mode forced to "ffmpeg" specifically, why neither
-  // of the stream_mode values already tried (and reverted) for live
-  // TV/catch-up elsewhere in this addon apply here, and why STREAMURL below
-  // points at this addon's own local loopback server rather than either
-  // Dispatcharr's live playlist URL directly (confirmed live: libavformat
-  // joins near the live edge instead of the true beginning that way,
-  // regardless of is_realtime_stream) or a data: URI (confirmed live and
-  // via source: Kodi's own CURL class can't parse one at all, since
-  // CURL::Parse() hard-requires a "://" that a standards-compliant data:
-  // URI never has).
+  // Confirmed against a real failed playback (a live kodi.log showed
+  // Kodi's generic CCurlFile opening a populated STREAMURL directly,
+  // bypassing this addon's own OpenRecordedStream() entirely, including
+  // its 401-retry/API-key-regen logic) that leaving STREAMURL unset is
+  // what actually forces Kodi through CInputStreamPVRRecording's
+  // OpenRecordedStream()/ReadRecordedStream()/etc. below -- true for a
+  // completed recording, and, since the growing-buffer approach proven
+  // for live-timeshift replaced the old ffmpegdirect-routed in-progress
+  // mechanism, now equally true for an in-progress one: see
+  // DispatcharrClient::OpenInProgressRecordingStream()'s comment for why
+  // this no longer needs its own STREAMURL/inputstream.ffmpegdirect
+  // properties at all.
+  bool isRealTime = false;
   if (m_enableInProgressPlayback)
   {
     int id = std::atoi(recording.GetRecordingId().c_str());
     std::vector<Recording> recordings;
     std::string error;
-    bool inProgress = false;
     if (m_client.GetRecordings(recordings, error))
     {
       for (const auto& rec : recordings)
       {
         if (rec.id == id)
         {
-          inProgress = rec.isInProgress;
+          isRealTime = rec.isInProgress;
           break;
         }
       }
     }
-
-    if (inProgress)
-    {
-      int playlistServerPort = m_playlistServer.GetPort();
-      if (playlistServerPort == 0)
-        return PVR_ERROR_SERVER_ERROR;
-
-      // Seek and live-tailing are mutually exclusive here (see
-      // FetchInProgressPlaylistSnapshot()'s and
-      // FetchInProgressRecordingSeekableSnapshot()'s comments for the full
-      // reasoning: Kodi won't offer seeking without a known total
-      // duration, and the only way to get libavformat to report one is to
-      // mark the playlist complete, which stops it from ever picking up
-      // segments recorded after that point). Which one this session gets
-      // is decided by m_pendingLiveModeRecordingId (see its comment) --
-      // consumed here whether or not it actually matches this id, since
-      // it's a one-shot arm/consume flag either way.
-      bool useLiveMode = false;
-      {
-        std::lock_guard<std::mutex> lock(m_pendingLiveModeMutex);
-        if (m_pendingLiveModeRecordingId == id)
-          useLiveMode = true;
-        m_pendingLiveModeRecordingId = -1;
-      }
-
-      if (!useLiveMode)
-      {
-        // "Play from start (seek)": a one-time, definite-VOD-shaped
-        // snapshot as of right now, not a live-tailing one -- fetched
-        // once here rather than via a provider callback, since
-        // libavformat never reloads an ENDLIST-terminated playlist and
-        // this will only ever be asked for once per session anyway.
-        std::string keyBefore = m_client.GetApiKey();
-        std::string seekError;
-        std::string playlistText =
-            m_client.FetchInProgressRecordingSeekableSnapshot(id, seekError);
-        std::string keyAfter = m_client.GetApiKey();
-        if (keyAfter != keyBefore)
-          kodi::addon::SetSettingString("api_key", keyAfter);
-        if (playlistText.empty())
-          return PVR_ERROR_SERVER_ERROR;
-
-        m_playlistServer.SetPlaylistProvider(
-            id, [playlistText](int /*maxSegments*/) { return playlistText; });
-      }
-      else
-      {
-        // "Play live": registers a provider rather than fetching once
-        // here -- libavformat calls back into this repeatedly over the
-        // whole playback session (see LocalPlaylistServer.h and
-        // FetchInProgressPlaylistSnapshot()'s comment for why a live
-        // re-fetch on every call, not a one-time snapshot, is what lets a
-        // single session keep tailing newly-recorded segments as the
-        // recording grows).
-        m_playlistServer.SetPlaylistProvider(id, [this, id](int maxSegments) {
-          std::string keyBefore = m_client.GetApiKey();
-          std::string playlistText;
-          std::string fetchError;
-          playlistText = m_client.FetchInProgressPlaylistSnapshot(id, maxSegments, fetchError);
-          // May have just self-healed a stale key while building this.
-          // Persist it the same way OpenRecordedStream()/ReadRecordedStream()
-          // do, so a restart of this install doesn't immediately invalidate
-          // it again. Only fixes up this addon's own future fetches, not the
-          // X-API-Key header already baked into this STREAMURL for
-          // ffmpegdirect's own segment fetches -- see
-          // FetchInProgressPlaylistSnapshot()'s comment.
-          std::string keyAfter = m_client.GetApiKey();
-          if (keyAfter != keyBefore)
-            kodi::addon::SetSettingString("api_key", keyAfter);
-          if (m_debugLogging)
-          {
-            int lineCount = static_cast<int>(std::count(playlistText.begin(), playlistText.end(), '\n'));
-            bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
-            bool hasFirstSegment = playlistText.find("seg_00000.ts") != std::string::npos;
-            kodi::Log(ADDON_LOG_INFO,
-                      "pvr.dispatcharrai: playlist snapshot for recording %d: maxSegments=%d, "
-                      "lines=%d, hasEndlist=%d, containsSeg00000=%d",
-                      id, maxSegments, lineCount, hasEndlist ? 1 : 0, hasFirstSegment ? 1 : 0);
-          }
-          return playlistText;
-        });
-      }
-
-      std::string streamUrl =
-          "http://127.0.0.1:" + std::to_string(playlistServerPort) + "/playlist/" +
-          std::to_string(id) + ".m3u8";
-      // ffmpegdirect's header mapping (CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput,
-      // confirmed against its source and a live failed attempt: it logged
-      // "ignoring header option 'X-API-Key'" without the prefix) only forwards
-      // a fixed allowlist of standard HTTP header names as real headers --
-      // anything else needs a literal "!" prefix, which it strips before using
-      // the rest as the header name. This addon's own local playlist server
-      // ignores this header entirely -- it's attached here only because
-      // ffmpeg's HLS demuxer shares the same avio_opts dictionary across the
-      // manifest fetch and every real segment sub-fetch to Dispatcharr,
-      // regardless of which host the manifest itself came from.
-      std::string apiKey = m_client.GetApiKey();
-      if (!apiKey.empty())
-        streamUrl += "|!X-API-Key=" + apiKey;
-
-      // is_realtime_stream is deliberately "false", not "true": read from
-      // ffmpegdirect's actual source (FFmpegStream::GetCapabilities()),
-      // INPUTSTREAM_SUPPORTS_SEEK/PAUSE/ITIME are only advertised when this
-      // is false, and Kodi only performs its normal "seek to start
-      // position" on open when seeking is advertised as supported. It's
-      // also arguably more correct here regardless: this is a rewritten,
-      // definite-VOD-shaped snapshot by the time it reaches ffmpegdirect,
-      // not a live stream.
-      properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
-      properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
-      properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "application/x-mpegURL");
-      properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
-      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "false");
-      properties.emplace_back("inputstream.ffmpegdirect.open_mode", "ffmpeg");
-      return PVR_ERROR_NO_ERROR;
-    }
   }
-
-  properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "false");
-  return PVR_ERROR_NO_ERROR;
-}
-
-PVR_ERROR PVRDispatcharr::CallRecordingMenuHook(const kodi::addon::PVRMenuhook& menuhook,
-                                                 const kodi::addon::PVRRecording& item)
-{
-  if (menuhook.GetHookId() != kMenuHookPlayLive)
-    return PVR_ERROR_NOT_IMPLEMENTED;
-
-  // PVR_MENUHOOK_RECORDING has no per-item visibility hook -- confirmed
-  // against Kodi-core (PVRContextMenus.cpp's PVRClientMenuHook::IsVisible())
-  // that a recording-category hook shows on every recording's context menu,
-  // completed ones included. Silently no-op (with an explanatory
-  // notification) rather than arming anything for one that isn't actually
-  // in progress.
-  int id = std::atoi(item.GetRecordingId().c_str());
-  std::vector<Recording> recordings;
-  std::string error;
-  bool inProgress = false;
-  if (m_client.GetRecordings(recordings, error))
-  {
-    for (const auto& rec : recordings)
-    {
-      if (rec.id == id)
-      {
-        inProgress = rec.isInProgress;
-        break;
-      }
-    }
-  }
-
-  if (!inProgress)
-  {
-    kodi::QueueNotification(QUEUE_INFO, "", kodi::addon::GetLocalizedString(30046));
-    return PVR_ERROR_NO_ERROR;
-  }
-
-  // See m_pendingLiveModeRecordingId's comment: a binary PVR addon can't
-  // start playback itself, so this arms the next GetRecordingStreamProperties()
-  // call for this id rather than opening anything directly -- the user
-  // still has to press Play themselves right after.
-  {
-    std::lock_guard<std::mutex> lock(m_pendingLiveModeMutex);
-    m_pendingLiveModeRecordingId = id;
-  }
-  kodi::QueueNotification(QUEUE_INFO, "", kodi::addon::GetLocalizedString(30045));
+  properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, isRealTime ? "true" : "false");
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -1229,13 +1060,47 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   int id = std::atoi(recording.GetRecordingId().c_str());
   std::string error;
   std::string keyBefore = m_client.GetApiKey();
-  if (!m_client.OpenRecordingStream(id, error))
+
+  // Check current in-progress status directly rather than trusting
+  // GetRecordingStreamProperties()'s own check from moments earlier: a
+  // recording that finishes in the gap between that call and this one
+  // should still open correctly either way (both paths handle a
+  // recording that finishes mid-session -- OpenRecordingStream() simply
+  // isn't the right one to have started with if it was in progress right
+  // now).
+  bool inProgress = false;
+  if (m_enableInProgressPlayback)
+  {
+    std::vector<Recording> recordings;
+    std::string recError;
+    if (m_client.GetRecordings(recordings, recError))
+    {
+      for (const auto& rec : recordings)
+      {
+        if (rec.id == id)
+        {
+          inProgress = rec.isInProgress;
+          break;
+        }
+      }
+    }
+  }
+
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharrai: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d",
+            recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0);
+  bool opened = inProgress ? m_client.OpenInProgressRecordingStream(id, error)
+                            : m_client.OpenRecordingStream(id, error);
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
+            opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
+  if (!opened)
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to open recording %d: %s", id, error.c_str());
     return false;
   }
-  // OpenRecordingStream() may have silently regenerated the API key (see its
-  // comment) if another Kodi install using this same Dispatcharr account had
+  // OpenRecordingStream()/OpenInProgressRecordingStream() may have silently
+  // regenerated the API key (see OpenRecordingStream()'s comment) if
+  // another Kodi install using this same Dispatcharr account had
   // invalidated the one persisted here. Save the new one so a restart of
   // this install doesn't immediately invalidate it again.
   std::string keyAfter = m_client.GetApiKey();
@@ -1246,11 +1111,19 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
 
 void PVRDispatcharr::CloseRecordedStream()
 {
-  m_client.CloseRecordingStream();
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: CloseRecordedStream: isInProgressStreamOpen=%d",
+            m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
+  if (m_client.IsInProgressRecordingStreamOpen())
+    m_client.CloseInProgressRecordingStream();
+  else
+    m_client.CloseRecordingStream();
 }
 
 int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
 {
+  if (m_client.IsInProgressRecordingStreamOpen())
+    return m_client.ReadInProgressRecordingStream(buffer, size);
+
   // Same self-heal persistence as OpenRecordedStream(): the key can also be
   // invalidated mid-playback by another install, not just between opens.
   std::string keyBefore = m_client.GetApiKey();
@@ -1263,11 +1136,15 @@ int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
 
 int64_t PVRDispatcharr::SeekRecordedStream(int64_t position, int whence)
 {
+  if (m_client.IsInProgressRecordingStreamOpen())
+    return m_client.SeekInProgressRecordingStream(position, whence);
   return m_client.SeekRecordingStream(position, whence);
 }
 
 int64_t PVRDispatcharr::LengthRecordedStream()
 {
+  if (m_client.IsInProgressRecordingStreamOpen())
+    return m_client.GetInProgressRecordingStreamLength();
   return m_client.GetRecordingStreamLength();
 }
 

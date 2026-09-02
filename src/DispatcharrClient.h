@@ -334,143 +334,52 @@ public:
   // "For Live TV, this must be ... point to end of the timeshift buffer").
   int64_t GetLiveTimeshiftStreamDurationMs();
   void CloseLiveTimeshiftStream();
+  // Genuine "is a live-timeshift stream currently open" state, as opposed to
+  // just "is server-side timeshift mode enabled in settings" -- the latter
+  // doesn't change once a stream closes, so PVRDispatcharr's GetStreamTimes()/
+  // CanPauseStream()/CanSeekStream()/IsRealTimeStream() need this to avoid
+  // misreporting live-timeshift state while an in-progress recording (or a
+  // plain completed recording) is what's actually open. See
+  // IsInProgressRecordingStreamOpen()'s own comment for why these callbacks
+  // need per-stream-flavour state at all.
+  bool IsLiveTimeshiftStreamOpen() const;
 
-  // Fetches an in-progress recording's live HLS playlist and rewrites it
-  // for serving through a local loopback HTTP server (LocalPlaylistServer)
-  // instead of Dispatcharr's own URL directly: every segment reference
-  // becomes an absolute URL (the local server has no base path of its own
-  // for a relative reference to resolve against), and this is called again
-  // on every request the local server receives for this recording, not
-  // just once at open -- see LocalPlaylistServer.h for why this needs to
-  // be dynamic rather than a single upfront snapshot (in short: to let a
-  // single playback session keep tailing newly-recorded segments, not just
-  // to fix where it starts). Returns the rewritten text (not a URL) --
-  // PVRDispatcharr registers a provider callback wrapping this with its
-  // LocalPlaylistServer instance and builds the actual STREAMURL from that
-  // server's loopback address, since a bare data: URI cannot be used here
-  // at all: PVR_STREAM_PROPERTY_STREAMURL's pipe-delimited
-  // "url|option=value" syntax is parsed by Kodi's own CURL class
-  // (xbmc/URL.cpp), which hard-requires the literal substring "://" to
-  // recognise a protocol -- confirmed via its source and a live failed
-  // attempt (ffmpegdirect logged "could not open file data:...") that a
-  // standard data: URI, having no "://" per RFC 2397, never gets
-  // recognised as a protocol at all and is instead mishandled as a literal
-  // filename.
-  //
-  // `maxSegments` truncates the rewritten playlist to at most that many
-  // segment entries -- LocalPlaylistServer passes a value that starts
-  // small on a recording's first-ever request and grows by a small, fixed
-  // step on every request after that (see LocalPlaylistServer.h's class
-  // comment for the full reasoning; summary follows here since the "why"
-  // is specific to this method).
-  //
-  // A recording still being written is served as a growing HLS playlist
-  // (confirmed against a live instance:
-  // {base}/api/channels/recordings/{id}/hls/index.m3u8, segments named
-  // seg_NNNNN.ts) with no #EXT-X-ENDLIST tag, and pointing ffmpegdirect
-  // straight at that live URL makes libavformat's HLS demuxer join
-  // wherever it currently is -- effectively the live edge -- rather than
-  // at the true first segment (confirmed live via a direct av_dump_format
-  // log line cross-checked against the recording's real start_time and
-  // wall-clock elapsed time; independent of the is_realtime_stream
-  // property, which only ever controls ffmpegdirect's own advertised seek
-  // capability, not libavformat's automatic join-point selection for a
-  // no-ENDLIST playlist -- there is no property this addon can set that
-  // reaches libavformat's own live_start_index option directly, confirmed
-  // via GetFFMpegOptionsFromInput()'s source). Confirmed instead, by
-  // reading libavformat's actual hls.c (select_cur_seq_no()): that
-  // live-edge join computation --
-  // FFMAX(pls->n_segments + live_start_index, 0), live_start_index
-  // defaulting to -3 -- clamps to the true first segment whenever the
-  // playlist it sees *at that moment* has 3 or fewer segments listed,
-  // regardless of how much has actually been recorded.
-  //
-  // The complication a small fixed initial cap alone doesn't solve:
-  // that computation is documented (and was originally assumed here) to
-  // run only once, on the very first segment selection -- but confirmed
-  // live that it can in practice get re-applied several times in a row
-  // while libavformat is still probing/settling in right after open, each
-  // time using whatever segment count that specific reload's response
-  // happened to have. A first request capped to 3 segments followed
-  // immediately by a second one revealing the *entire* history (hundreds
-  // of segments for a long-running recording) reproduced the exact
-  // original bug this was meant to fix: consistently joining at very
-  // close to the recording's current age rather than its start, even
-  // though this addon's own logging confirmed every single response was
-  // correctly truncated and started from seg_00000. A small, bounded
-  // per-request growth step (rather than jumping straight to the full
-  // history on request two) fixes this: every reload's segment count
-  // stays close to the previous one's, so no matter how many times that
-  // computation actually gets re-applied during the settling window, it
-  // can never land far from wherever it last was.
-  //
-  // Whether a trailing #EXT-X-ENDLIST gets appended is decided fresh on
-  // every call (a live re-check of the recording's current in-progress
-  // status via GetRecordings()), not fixed at open time: as long as it's
-  // withheld, hls.c keeps reloading the playlist on its own throughout
-  // playback (its `!pls->finished` reload-interval check) -- that reload,
-  // not anything this addon drives, is the entire mechanism a single
-  // session picks up newly-recorded segments by. Once the recording
-  // actually finishes, this starts returning true, so a session that's
-  // caught up to the real end gets a normal, clean end-of-file instead of
-  // libavformat waiting forever for segments that will never come.
-  //
-  // Each segment independently requires the same X-API-Key header --
-  // confirmed that query-param auth is NOT accepted as an alternative
-  // (both ?api_key= and ?X-API-Key= got 403; only the real header works).
-  // ffmpegdirect's plain pass-through mode (no stream_mode set) delegates
-  // the whole thing to ffmpeg's own HLS demuxer, which does propagate
-  // custom headers to every segment fetch, not just the manifest --
-  // confirmed by reading its source (FFmpegStream::OpenWithFFmpeg ->
-  // GetFFMpegOptionsFromInput()) -- PROVIDED
-  // inputstream.ffmpegdirect.open_mode is explicitly forced to "ffmpeg": a
-  // plain http(s) URL otherwise defaults to its OpenWithCURL() path
-  // instead, which sets no header options at all when opening the format
-  // context. This addon's own local playlist server never sees or needs
-  // that header (it ignores it entirely -- the header is attached to the
-  // *outer* STREAMURL only because ffmpeg's HLS demuxer shares the same
-  // avio_opts dictionary across the manifest fetch and every segment
-  // sub-fetch regardless of which host the manifest itself came from), so
-  // it still reaches the real per-segment Dispatcharr requests exactly as
-  // it did when the outer URL was Dispatcharr's own live manifest. Also
-  // confirmed (both by reading GetFFMpegOptionsFromInput()'s source and by
-  // an actual failed attempt logging "ignoring header option
-  // 'X-API-Key'"): it only forwards a fixed allowlist of standard HTTP
-  // header names as real headers; anything else -- X-API-Key included --
-  // needs a literal "!" prefix on the option name, which it strips before
-  // using the rest as the header name, hence "!X-API-Key" in
-  // PVRDispatcharr.cpp rather than "X-API-Key".
-  //
-  // Not const: proactively checks whether the current API key is still
-  // valid and regenerates it if not, same reasoning as
-  // OpenRecordingStream()'s reactive self-heal -- confirmed via real
-  // multi-install testing that the shared account-wide key (see
-  // GenerateApiKey()'s comment) can already be stale by the time this is
-  // called. The playlist fetch itself self-heals reactively on a 401, same
-  // pattern as OpenRecordingStream(). Note what this proactive check does
-  // and doesn't cover: it keeps this addon's *own* repeated fetches of
-  // Dispatcharr's live playlist working (and persists any regenerated key
-  // for future sessions), but the X-API-Key header ffmpegdirect itself
-  // attaches to every real *segment* fetch is parsed out of STREAMURL's
-  // pipe-option exactly once, when PVRDispatcharr first builds it -- it is
-  // never re-read on a playlist reload, so a key that goes stale mid-
-  // session still can't be fixed for ffmpegdirect's own segment requests
-  // without a fresh Player.Open(), same limitation as the design this
-  // replaced.
-  //
-  // Returns an empty string and populates `error` on failure (a genuine
-  // network/HTTP failure fetching the playlist itself).
-  std::string FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments, std::string& error);
-
-  // The explicit "seekable" alternative to the above: fetches the current
-  // playlist once and rewrites it as a complete, definite-VOD-shaped
-  // snapshot (#EXT-X-ENDLIST always appended, full history revealed, no
-  // segment cap) instead of a live-tailing one. For when
-  // GetRecordingStreamProperties()'s prompt is answered "play from start
-  // (seek)" rather than "play live" -- see that prompt and
-  // FetchInProgressPlaylistSnapshot()'s comment for the full trade-off
-  // between the two modes. Same failure/self-heal behaviour as above.
-  std::string FetchInProgressRecordingSeekableSnapshot(int recordingId, std::string& error);
+  // Growing, seekable byte-stream access to an in-progress recording --
+  // the same "expose a growing HLS source as one fixed-origin byte
+  // address space, let Kodi's own native demuxer handle MPEG-TS parsing
+  // and seek refinement" pattern as OpenLiveTimeshiftStream() above,
+  // applied to a recording instead of a live channel. Replaced an earlier
+  // STREAMURL + inputstream.ffmpegdirect approach (see git history /
+  // docs/INPROGRESS_RECORDINGS.md) that needed a "play from start (seek)"
+  // vs. "play live (follow, no seek)" toggle -- a limitation of routing
+  // through libavformat's own HLS demuxer, which won't offer seeking
+  // without a #EXT-X-ENDLIST-terminated (i.e. static, no-longer-growing)
+  // playlist. CInputStreamPVRRecording extends the same
+  // CInputStreamPVRBase as CInputStreamPVRChannel (confirmed in Kodi-core
+  // source), so GetStreamTimes()/CanPauseStream()/CanSeekStream()/
+  // IsRealTimeStream() apply identically here -- a recording reported
+  // through those the same way the live buffer is gets real seek and
+  // live-follow simultaneously, no toggle needed. Unlike live-timeshift,
+  // there's no server-side buffer to start/stop: Dispatcharr's own DVR
+  // task keeps writing the recording regardless of whether this addon is
+  // reading it, so opening always starts at true byte 0, matching normal
+  // recording/VOD conventions (and the existing completed-recording
+  // behaviour).
+  bool OpenInProgressRecordingStream(int recordingId, std::string& error);
+  int ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size);
+  int64_t SeekInProgressRecordingStream(int64_t position, int whence);
+  int64_t GetInProgressRecordingStreamLength();
+  // Mirrors GetLiveTimeshiftStreamDurationMs() -- for GetStreamTimes()'s
+  // ptsEnd, which must grow as the recording does.
+  int64_t GetInProgressRecordingStreamDurationMs();
+  void CloseInProgressRecordingStream();
+  // PVRDispatcharr uses this to tell which of OpenRecordedStream()'s two
+  // implementations (this one, or the plain completed-recording one) is
+  // the one currently open, since ReadRecordedStream()/SeekRecordedStream()/
+  // LengthRecordedStream()/GetStreamTimes()/CanPauseStream()/CanSeekStream()/
+  // IsRealTimeStream() are all shared Kodi PVR client callbacks with no
+  // parameter telling them which recording-stream flavour is active.
+  bool IsInProgressRecordingStreamOpen() const;
 
 private:
   std::string BaseUrl() const;
@@ -653,6 +562,66 @@ private:
   // the small throttle (see the .cpp) that keeps a tight demux-read loop
   // from re-fetching the manifest on every single call.
   bool RefreshLiveManifest(bool force, std::string& error);
+
+  struct InProgressRecordingSegmentInfo
+  {
+    std::string url; // absolute, already resolved against the playlist's own baseDir
+    int64_t byteOffset = 0; // in this stream's own fixed-origin address space
+    int64_t byteSize = 0;
+    int64_t timeOffsetMs = 0; // ditto, fixed-origin
+  };
+
+  // Only one in-progress-recording stream open at a time, same as
+  // completed recordings and the live-timeshift buffer.
+  struct InProgressRecordingStreamState
+  {
+    bool open = false;
+    int recordingId = -1;
+    // Append-only for the life of this open stream: Dispatcharr's own HLS
+    // output for a recording, unlike the live-timeshift plugin's rolling
+    // buffer, never evicts old segments (a recording is meant to be kept
+    // in full), so there's no rolling-window/sequence-number complication
+    // to handle here -- "already have N segments, only look at any past
+    // that" is enough.
+    std::vector<InProgressRecordingSegmentInfo> segments;
+    int64_t totalBytes = 0;
+    int64_t totalDurationMs = 0;
+    int64_t position = 0;
+    // Set once Dispatcharr reports this recording as no longer in
+    // progress (checked on every manifest refresh) -- lets
+    // ReadInProgressRecordingStream() treat "caught up to the known tail"
+    // as genuine EOF instead of polling for more that will never come.
+    bool finished = false;
+    std::chrono::steady_clock::time_point lastManifestFetch{};
+    // Same seek-probe-vs-real-catch-up distinction as
+    // LiveTimeshiftStreamState -- see ReadLiveTimeshiftStream()'s comment
+    // for why this matters; the same generic Kodi/ffmpeg seek-probing
+    // behaviour applies here too, since this uses the same native-demuxer
+    // mechanism.
+    std::chrono::steady_clock::time_point lastSeekTime{};
+    int64_t lastShortGiveUpPosition = -1;
+    void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
+  };
+  InProgressRecordingStreamState m_inProgressRecordingStream;
+
+  // Fetches the recording's current HLS playlist (FetchRawInProgressPlaylist)
+  // and merges any segments not already known into
+  // m_inProgressRecordingStream, extending its fixed-origin address space,
+  // probing each newly-discovered segment's byte size with a tiny ranged
+  // GET (HLS playlists carry durations via #EXTINF, never byte sizes) --
+  // same pattern as RefreshLiveManifest(), adapted for a plain HLS text
+  // response instead of the timeshift plugin's own JSON manifest action.
+  // `force` bypasses the small throttle that keeps a tight demux-read loop
+  // from re-fetching on every single call.
+  bool RefreshInProgressRecordingManifest(bool force, std::string& error);
+
+  // A tiny ranged GET (mirrors OpenRecordingStream()'s own probe) to learn
+  // one segment's total byte size -- HLS playlists carry each segment's
+  // duration (#EXTINF) but never its size. Returns -1 on any failure
+  // (network error, non-2xx/206, or no parseable Content-Range); the
+  // caller skips a segment it can't size rather than corrupting the
+  // cumulative offsets that follow.
+  int64_t ProbeSegmentByteSize(const std::string& segmentUrl) const;
 
   // Client-side placeholder for a just-created one-time recording's title,
   // matched by channelId (not also start time -- see below) to whatever
