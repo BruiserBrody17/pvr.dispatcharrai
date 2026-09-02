@@ -211,22 +211,6 @@ public:
                             std::string& playlistUrlOut,
                             std::string& error);
 
-  // Freezes the buffer's currently-recorded content into a real, finite,
-  // ENDLIST-terminated playlist a client can actually seek within -- the
-  // live buffer above deliberately never provides that (Duration: N/A is
-  // what lets it keep tailing new content), confirmed live that Kodi's PVR
-  // layer refuses to seek without a known finite duration regardless of
-  // what the inputstream addon itself advertises (see docs/API_NOTES.md,
-  // same root cause already documented there for in-progress-recording
-  // "Play live"). Requires StartTimeshiftBuffer() to already be running
-  // for this channel -- the plugin's own snapshot_buffer action fails with
-  // a clear message otherwise, which comes back through the normal `error`
-  // parameter like any other failure. The live buffer itself keeps
-  // recording in the background afterwards; only the snapshot is frozen.
-  bool SnapshotTimeshiftBuffer(const std::string& channelUuid,
-                               std::string& playlistUrlOut,
-                               std::string& error);
-
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   bool DeleteRecording(int recordingId, std::string& error);
   // Confirmed against the live schema: POST .../recordings/{id}/stop/
@@ -312,6 +296,35 @@ public:
   int64_t SeekRecordingStream(int64_t position, int whence);
   int64_t GetRecordingStreamLength() const;
   void CloseRecordingStream();
+
+  // Growing, seekable byte-stream access to the server-side live timeshift
+  // buffer -- the actual consumer of StartTimeshiftBuffer() above. Exposes
+  // the buffer to Kodi via OpenLiveStream/ReadLiveStream/SeekLiveStream
+  // (PVRCapabilities::SetHandlesInputStream), the same "one growing/
+  // seekable byte source, Kodi's own internal demuxer does the actual
+  // MPEG-TS parsing and PTS-based seek refinement" pattern already proven
+  // for completed recordings (OpenRecordingStream/ReadRecordingStream/
+  // SeekRecordingStream above), just against the companion plugin's
+  // per-segment Range-served files instead of one Dispatcharr-served
+  // recording file -- confirmed live: real pause/rewind/fast-forward/
+  // live-follow on a real channel, including a 95-second rewind spanning
+  // several manifest refreshes. This replaced an earlier STREAMURL +
+  // inputstream.ffmpegdirect approach that routed through ffmpegdirect's
+  // own generic HLS seek instead of Kodi's native demuxer -- confirmed
+  // broken 100% of the time regardless of direction or position (see
+  // docs/TIMESHIFT.md for that investigation). Calls StartTimeshiftBuffer()
+  // itself first to ensure a buffer is actually running for this channel
+  // (same as the plain-Play path already does).
+  bool OpenLiveTimeshiftStream(const std::string& channelUuid, std::string& error);
+  int ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int size);
+  int64_t SeekLiveTimeshiftStream(int64_t position, int whence);
+  int64_t GetLiveTimeshiftStreamLength();
+  // Duration of the buffer currently known to be available, in milliseconds
+  // -- for PVRDispatcharr::GetStreamTimes()'s ptsEnd, which must grow as the
+  // live buffer does (see kodi-dev-kit's own PVRStreamTimes doc comment:
+  // "For Live TV, this must be ... point to end of the timeshift buffer").
+  int64_t GetLiveTimeshiftStreamDurationMs();
+  void CloseLiveTimeshiftStream();
 
   // Fetches an in-progress recording's live HLS playlist and rewrites it
   // for serving through a local loopback HTTP server (LocalPlaylistServer)
@@ -503,10 +516,16 @@ private:
   // callers proceed with the URL regardless either way.
   bool WaitForTimeshiftPlaylistReady(const std::string& playlistUrl);
 
-  // Shared body for StartTimeshiftBuffer()/SnapshotTimeshiftBuffer(): both
-  // POST the same shape to the same plugin endpoint and unwrap the same
-  // response envelope, differing only in the `action` string. See
-  // StartTimeshiftBuffer()'s comment for the response-shape reasoning.
+  // Calls the timeshift_buffer plugin's run/ endpoint for `action` and
+  // unwraps a {status, http_port, playlist_route} response shape. Only
+  // StartTimeshiftBuffer() uses this now (SnapshotTimeshiftBuffer(), the
+  // other original caller, was removed once server-side timeshift stopped
+  // using STREAMURL+ffmpegdirect -- see docs/TIMESHIFT.md). Left as its own
+  // function rather than folded into StartTimeshiftBuffer() since
+  // RefreshLiveManifest() below is the same kind of "POST an action, unwrap
+  // the envelope" call against a differently-shaped response, so the split
+  // still documents the shared pattern even with one caller of this exact
+  // signature.
   bool CallTimeshiftPluginAction(const std::string& action,
                                  const std::string& channelUuid,
                                  std::string& playlistUrlOut,
@@ -560,6 +579,48 @@ private:
     void* curl = nullptr;
   };
   RecordingStreamState m_recordingStream;
+
+  struct LiveTimeshiftSegmentInfo
+  {
+    std::string filename;
+    int64_t sequence = 0;   // HLS media-sequence-derived, stable across refetches
+    int64_t byteOffset = 0; // in this stream's own fixed-origin address space
+    int64_t byteSize = 0;
+    int64_t timeOffsetMs = 0; // ditto, fixed-origin
+  };
+
+  // Only one live-timeshift stream open at a time, same as recordings.
+  struct LiveTimeshiftStreamState
+  {
+    bool open = false;
+    std::string channelUuid;
+    std::string segmentBaseUrl; // "http://host:port/<uuid>/" -- filename appended per-request
+    // Ordered by sequence, append-only for the life of this open stream --
+    // byteOffset/timeOffsetMs are this stream's OWN fixed-origin addressing,
+    // deliberately NOT the plugin response's own (relative-to-that-fetch)
+    // offsets: the plugin's rolling window means "byte 0" in a fresh fetch
+    // shifts to newer content over time, which would silently invalidate
+    // any position already handed to Kodi's demuxer. See
+    // RefreshLiveManifest()'s merge logic and get_live_manifest's own
+    // docstring in plugin.py for why sequence is the stable join key.
+    std::vector<LiveTimeshiftSegmentInfo> segments;
+    int64_t totalBytes = 0;
+    int64_t totalDurationMs = 0;
+    int64_t position = 0;
+    std::chrono::steady_clock::time_point lastManifestFetch{};
+    void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
+  };
+  LiveTimeshiftStreamState m_liveTimeshiftStream;
+
+  // Fetches the plugin's get_live_manifest action and merges any segments
+  // not already known into m_liveTimeshiftStream, extending its fixed-origin
+  // address space -- called on open, and again whenever a read/seek/length
+  // call needs to know about content newer than what's already known. Not
+  // merely a cache refresh: an unconditional replace would shift byte 0 out
+  // from under a position already handed to Kodi's demuxer. `force` bypasses
+  // the small throttle (see the .cpp) that keeps a tight demux-read loop
+  // from re-fetching the manifest on every single call.
+  bool RefreshLiveManifest(bool force, std::string& error);
 
   // Client-side placeholder for a just-created one-time recording's title,
   // matched by channelId (not also start time -- see below) to whatever

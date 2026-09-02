@@ -30,23 +30,27 @@ mode is selected, live channel playback fails outright (not just
 timeshift).
 
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
-rolling buffer, held on the Dispatcharr server -- via a companion
-Dispatcharr plugin this addon ships alongside itself
-(`dispatcharr-plugin/timeshift_buffer/` in this repo), **not** built into
-Dispatcharr itself and not installed through Kodi. See that directory's
-own `README.md`/`plugin.py` for the plugin's design and the several
-live-tested dead ends that led to its current shape (Django's `MEDIA_ROOT`
-static route turned out to be unreachable due to a routing-order bug in
-Dispatcharr's own `urls.py`; the plugin now runs its own minimal file
-server instead). On this addon's side, `GetChannelStreamProperties()`
-calls the plugin's `start_buffer` action over Dispatcharr's plugin REST
-API (`POST /api/plugins/plugins/timeshift_buffer/run/`,
-`DispatcharrClient::StartTimeshiftBuffer()`) and points `STREAMURL` at the
-returned playlist through `inputstream.ffmpegdirect` with no `stream_mode`
-set -- the same plain-growing-HLS-playlist recipe already proven for
-in-progress-recording "Play live" (`FetchInProgressPlaylistSnapshot()`),
-since architecturally it's the identical shape: a rolling, non-`ENDLIST`
-playlist a client tails and can pause/seek within once paused.
+rolling buffer, held on the Dispatcharr server, with real pause/rewind/
+fast-forward -- via a companion Dispatcharr plugin this addon ships
+alongside itself (`dispatcharr-plugin/timeshift_buffer/` in this repo),
+**not** built into Dispatcharr itself and not installed through Kodi. See
+that directory's own `README.md`/`plugin.py` for the plugin's design and
+the several live-tested dead ends that led to its current shape (Django's
+`MEDIA_ROOT` static route turned out to be unreachable due to a
+routing-order bug in Dispatcharr's own `urls.py`; the plugin now runs its
+own minimal file server instead).
+
+On this addon's side, `GetChannelStreamProperties()` for this mode leaves
+`STREAMURL` unset entirely -- **not** the `inputstream.ffmpegdirect`
+passthrough this paragraph originally described (see the investigation
+below for why that approach's seeking turned out to be unfixable). Kodi
+instead calls this addon's own `OpenLiveStream()`/`ReadLiveStream()`/
+`SeekLiveStream()` (`PVRCapabilities::SetHandlesInputStream`), which call
+`StartTimeshiftBuffer()` to ensure the plugin's buffer is running, then
+serve it as a growing, byte-seekable stream via the plugin's
+`get_live_manifest` action and Range-read segment files -- see "The
+actual fix" near the end of this file for the full mechanism and its live
+confirmation.
 
 Two things confirmed against Dispatcharr's actual source before writing
 the addon-side call, not assumed from `Plugins.md` alone:
@@ -173,61 +177,90 @@ how real-world HLS packaging works, and it's not implicated as harmful),
 but the actual root cause of the `av_seek_frame` failure is still
 unresolved.
 
-**Decision: server-side timeshift does not attempt real seek/scrubbing.**
-Chasing this further would need real debugging inside the Dispatcharr
-container (verbose ffmpeg/curl logging, or instrumenting ffmpegdirect
-itself) rather than another guess-and-redeploy cycle, and isn't worth
-blocking the feature on. "Instant replay from buffer" still has real,
-honest value as-is: it restarts playback from a fixed point in whatever
-has been buffered (a real "watch that again" gesture), it just can't be
-scrubbed within once playing -- attempting a `Player.Seek` during
-snapshot playback will currently hang playback the way described above.
-Local mode (`live_timeshift_mode: Local`) remains the only path in this
-addon with real pause/rewind on live TV, via ffmpegdirect's own
-`TimeshiftStream`.
+**The paragraph above (and the "Instant replay from buffer" menu-hook
+design that followed it) is SUPERSEDED -- kept for the history, not as
+current behavior.** At the time, giving up on direct-live-buffer seeking
+and routing pause/rewind through a menu-hook-armed, one-shot finite
+snapshot (mirroring the in-progress-recording "Play live"/"Play from
+start" trade-off) seemed like the only path forward, since every seek
+attempt against `inputstream.ffmpegdirect`'s generic HLS path -- live
+buffer or snapshot alike -- failed identically. That menu hook
+(`kMenuHookInstantReplay`, `CallChannelMenuHook()`,
+`m_pendingSnapshotChannelUid`) was built, and its own arm/consume
+mechanics were confirmed working live (the notification fired, the
+snapshot URL opened correctly, `canseek: true` was reported) -- the
+plumbing was never the problem, only the seek underneath it. It's since
+been removed from this addon entirely, not left in as a fallback: see
+below for why it's no longer needed.
 
-**Built on the Kodi addon side, confirmed live end-to-end.** A PVR addon
-using plain `STREAMURL` passthrough for live channels (as this one does)
-gets no callback at all when the user presses pause/rewind mid-playback
--- that's handled entirely by the player/inputstream addon, with no hook
-back into the addon -- so a truly seamless "press rewind while watching
-live" gesture isn't achievable from here regardless of what the plugin
-can do. Implemented as a `PVR_MENUHOOK_CHANNEL` context-menu entry,
-"Instant replay from buffer" (only registered when `live_timeshift_mode`
-is server-side, mirroring the same only-appears-when-relevant convention
-as the in-progress-recording "Play live" hook), backed by
-`m_pendingSnapshotChannelUid` -- the same one-shot arm/consume pattern as
-`m_pendingLiveModeRecordingId`, with one real difference:
-`CallChannelMenuHook()` calls `StartTimeshiftBuffer()` itself
-immediately, before arming anything, rather than waiting for the next
-Play. That's deliberate, not an oversight -- a snapshot can only ever
-contain what's already been buffered, so if arming just set a flag and
-waited, "instant replay" on a channel nobody had been server-side-
-buffering yet would replay essentially nothing. Starting the buffer at
-arm time means whatever elapses between selecting the menu item and
-actually pressing Play becomes real, replayable content. Plain Play
-without arming still calls `StartTimeshiftBuffer()` too (unchanged, the
-live-tailing path); the armed case calls `SnapshotTimeshiftBuffer()`
-instead on the next `GetChannelStreamProperties()` for that same channel.
+## The actual fix: this addon demuxes the buffer itself, not ffmpegdirect
 
-Live test confirmed the whole chain: selecting "Instant replay from
-buffer" fired `StartTimeshiftBuffer()` and the "armed" notification;
-waiting ~45s then pressing Play opened
-`.../<uuid>/snapshot/snapshot.m3u8` (not `live.m3u8`), and
-`Player.GetProperties` reported `canseek: true` -- confirming the
-snapshot approach genuinely resolves the live buffer's `canseek: false`
-limitation. Plain (unarmed) Play was also retested and opens cleanly.
-That retest also caught a real startup race: the addon could report
-success and hand back a `STREAMURL` before ffmpeg (on the plugin side)
-had written its first segment, so `inputstream.ffmpegdirect`'s very
-first open attempt failed with `Error, could not open file` even though
-the URL became reachable moments later. Fixed with
-`DispatcharrClient::WaitForTimeshiftPlaylistReady()`, a poll-until-200
-helper (up to 20 attempts, 500ms request timeout, 250ms between
-attempts) called right after `StartTimeshiftBuffer()`/
-`SnapshotTimeshiftBuffer()` succeed and before the URL is handed to
-Kodi; confirmed fixed live (subsequent plain Play attempts opened
-cleanly on the first try). Only open item is the seek failure documented
-above, which is a real limitation of this feature (see "Decision" above),
-not specific to the menu-hook/arm-consume wiring itself.
+The seek failures above all shared one root cause: they went through
+`inputstream.ffmpegdirect`'s generic `FFmpegStream::SeekTime()` (a bare
+`av_seek_frame()` against an HLS-parsed `AVFormatContext`), because
+`GetChannelStreamProperties()` handed Kodi a `STREAMURL` for `ffmpegdirect`
+to open, whatever shape that URL's playlist took. The fix wasn't a better
+playlist shape -- it was routing around that seek path entirely.
+
+Kodi's PVR client API has a mode where the addon itself owns live-channel
+I/O: `PVRCapabilities::SetHandlesInputStream(true)`, plus
+`OpenLiveStream()`/`CloseLiveStream()`/`ReadLiveStream()`/
+`SeekLiveStream()`/`LengthLiveStream()`. Confirmed by reading Kodi-core's
+own `PVRPlaybackState.cpp`: `StartPlayback()` only calls
+`item->SetDynPath(url)` when `GetChannelStreamProperties()`'s `STREAMURL`
+is non-empty -- leave it unset for a given channel and Kodi falls through
+to these addon callbacks instead, exactly like this addon's own
+already-working completed-recording playback
+(`OpenRecordedStream()`/`ReadRecordedStream()`/`SeekRecordedStream()`)
+already does. That's the load-bearing precedent: recordings never had a
+seek problem in this addon, because they never went through
+`inputstream.ffmpegdirect` at all -- Kodi's own internal demuxer
+(`CDVDDemuxFFmpeg`) does the MPEG-TS parsing and seek refinement directly
+against a plain byte-seekable source. Server-side live timeshift now uses
+the identical mechanism.
+
+What that needed from the plugin (`dispatcharr-plugin/timeshift_buffer/`):
+Range-request support in its file server (previously whole-file-only),
+and a new `get_live_manifest` action exposing the buffer's currently
+-listed segments with byte sizes/durations and a stable,
+`#EXT-X-MEDIA-SEQUENCE`-derived `sequence` number per segment. That
+sequence number matters because the buffer's rolling window means a fresh
+manifest fetch's own byte/time offsets aren't stable -- "byte 0" points at
+different content an hour later as old segments roll off. `DispatcharrClient`
+(`OpenLiveTimeshiftStream()`/`ReadLiveTimeshiftStream()`/
+`SeekLiveTimeshiftStream()`/`RefreshLiveManifest()`) merges repeated
+fetches by that sequence number into one append-only, fixed-origin address
+space instead of trusting each fetch's own relative offsets -- the part of
+this design most likely to have a subtle bug, since it's the one piece
+with no direct precedent elsewhere in this addon.
+
+`GetStreamTimes()` reports a `ptsEnd` that grows on every call (kodi-dev-kit's
+own `PVRStreamTimes` doc comment: *"For Live TV, ... must point to end of
+the timeshift buffer"*) -- confirmed via `inputstream.ffmpegdirect`'s own
+`TimeshiftStream` class (what Local mode uses) that Kodi genuinely supports
+a growing-duration, still-seekable real-time stream; this addon's server-side
+mode now does the equivalent at the PVR-client level instead of the
+inputstream level.
+
+**Confirmed live, end-to-end, on a real channel:** plain Play opens
+correctly with zero properties beyond `isrealtimestream=true` (no
+`STREAMURL`, no `inputstream.ffmpegdirect` in the picture at all, per
+`GetChannelStreamProperties()`'s own debug log) and real audio/video
+decodes immediately. `canseek: true` from the start. Pause → Resume:
+clean. A -10s and a +20s seek both landed within about a second of target
+(`CDVDDemuxFFmpeg::SeekTime - seek ended up on time ...` -- Kodi's native
+demuxer, not ffmpegdirect) and playback kept running afterward, unlike
+every prior attempt. 4x fast-forward worked (with expected transient
+decoder warnings from landing mid-GOP, not a functional break -- the same
+class of noise fast-forwarding produces on any byte-seeked, non-frame
+-indexed content). A -95s rewind spanning several manifest refreshes --
+directly exercising the sequence-based merge logic, not just a single
+fetch -- landed correctly and kept playing. Clean stop and clean reopen
+afterward.
+
+The "Instant replay from buffer" menu hook is retired as a result: plain
+Play now gets everything it offered (and real scrubbing, which it never
+could) with no extra step, the same way Local mode always has. The
+plugin's `snapshot_buffer` action remains in the plugin as a standalone
+capability -- see its own README -- but this addon no longer calls it.
 
