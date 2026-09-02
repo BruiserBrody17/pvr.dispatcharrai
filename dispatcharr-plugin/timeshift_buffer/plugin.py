@@ -71,7 +71,7 @@ that pass: the live buffer's rolling playlist (Duration: N/A, by design --
 that's what lets it keep tailing new content) means Kodi's own PVR layer
 reports canseek: false and a Player.Seek call fails outright, confirmed
 live, not just a stale UI report -- the same root cause already documented
-in pvr.dispatcharrai's docs/API_NOTES.md for in-progress-recording "Play
+in pvr.dispatcharrai's docs/RECORDINGS.md for in-progress-recording "Play
 live": Kodi-core requires a known, *finite* duration to permit seeking at
 all, independent of whatever INPUTSTREAM_SUPPORTS_SEEK the inputstream
 addon itself advertises, and a perpetually-growing buffer can never
@@ -88,8 +88,8 @@ buffer's own -segment_wrap keeps recycling those original files in the
 background the whole time a snapshot might be watched, so referencing them
 directly would risk the exact "a segment gets overwritten while a client
 still has it queued up" race this project already got bitten by once
-before (see LocalPlaylistServer.cpp's gradual-cap fix in pvr.dispatcharrai
-for that history) -- copying sidesteps it entirely by giving the snapshot
+before (see docs/RECORDINGS.md in pvr.dispatcharrai for that
+history) -- copying sidesteps it entirely by giving the snapshot
 its own segment files the live recording can never touch.
 
 snapshot_buffer itself is confirmed live: playback opens correctly and

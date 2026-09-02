@@ -112,89 +112,42 @@ size_t RecordingHeaderCallback(char* buffer, size_t size, size_t nitems, void* u
   return len;
 }
 
+// Captures the size from a plain "Content-Length: N" response header --
+// used for a HEAD probe rather than RecordingHeaderCallback's ranged-GET
+// Content-Range parsing, since Dispatcharr's in-progress-recording HLS
+// segment endpoint ignores the Range header entirely and always serves the
+// full segment body with a 200 (confirmed live: a "Range: 0-0" GET against
+// a growing recording's seg_NNNNN.ts came back 200 with no Content-Range
+// header at all, silently downloading the whole multi-MB segment on every
+// probe instead of the intended few bytes -- HEAD avoids the body
+// entirely, and this reads the size the same server response always
+// carries either way).
+size_t ContentLengthHeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata)
+{
+  auto* totalOut = static_cast<int64_t*>(userdata);
+  size_t len = size * nitems;
+  std::string line(buffer, len);
+  std::string prefix = line.size() >= 15 ? line.substr(0, 15) : std::string();
+  std::transform(prefix.begin(), prefix.end(), prefix.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (prefix == "content-length:")
+  {
+    try
+    {
+      *totalOut = std::stoll(line.substr(15));
+    }
+    catch (const std::exception&)
+    {
+    }
+  }
+  return len;
+}
+
 size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
 {
   auto* out = static_cast<std::string*>(userdata);
   out->append(ptr, size * nmemb);
   return size * nmemb;
-}
-
-// Rewrites an in-progress recording's HLS playlist for serving through
-// LocalPlaylistServer: every non-comment, non-blank line (a segment or
-// sub-playlist reference) that isn't already absolute gets prefixed with
-// `baseDir` (Dispatcharr's own playlist URL directory -- LocalPlaylistServer
-// has no base path of its own for a relative reference to resolve against).
-//
-// `maxSegments`, if >= 0, stops output after that many segment-URI lines
-// (dropping anything after, including trailing tags with no following URI)
-// -- used only for the very first playlist a freshly-opened stream sees, to
-// force libavformat's live_start_index clamp to land on the true first
-// segment: confirmed via its own source (hls.c's select_cur_seq_no(), the
-// FFMAX(pls->n_segments + c->live_start_index, 0) computation only used the
-// very first time a segment is selected) that if the playlist has 3 or
-// fewer segments at that moment, the default live_start_index=-3 clamps to
-// 0 regardless of how much has actually been recorded. Every later reload
-// (which happens automatically, and only, while the playlist keeps
-// reporting itself as not finished -- see appendEndlist below) just appends
-// newly-discovered segments onto what libavformat already has, without
-// ever repeating that initial clamp -- so revealing the full, unthrottled
-// history from the second request onward is safe and is what actually
-// makes a session continue tailing new segments as the recording grows.
-//
-// `appendEndlist` controls whether a trailing #EXT-X-ENDLIST gets added
-// (skipped if the input already had one). Pass false while Dispatcharr
-// still reports the recording as in progress -- as long as libavformat
-// never sees ENDLIST, hls.c keeps reloading the playlist on its own
-// throughout playback (its `!pls->finished` reload-interval check), which
-// is the entire mechanism newly-recorded segments get picked up by. Pass
-// true once the recording has actually finished, so a session that's
-// caught up to the true end gets a normal, clean end-of-file instead of
-// libavformat waiting forever for segments that will never come.
-std::string RewritePlaylist(const std::string& playlistText, const std::string& baseDir,
-                            int maxSegments, bool appendEndlist)
-{
-  std::string out;
-  out.reserve(playlistText.size() + 32);
-  size_t pos = 0;
-  bool hasEndlist = playlistText.find("#EXT-X-ENDLIST") != std::string::npos;
-  int segmentsEmitted = 0;
-  while (pos <= playlistText.size())
-  {
-    size_t newlinePos = playlistText.find('\n', pos);
-    std::string line = (newlinePos == std::string::npos)
-                            ? playlistText.substr(pos)
-                            : playlistText.substr(pos, newlinePos - pos);
-    if (!line.empty() && line.back() == '\r')
-      line.pop_back();
-
-    if (line.empty() || line[0] == '#')
-    {
-      out += line;
-    }
-    else
-    {
-      if (maxSegments >= 0 && segmentsEmitted >= maxSegments)
-        break;
-      if (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
-        out += line;
-      else
-      {
-        out += baseDir;
-        out += line;
-      }
-      ++segmentsEmitted;
-    }
-    out += '\n';
-
-    if (newlinePos == std::string::npos)
-      break;
-    pos = newlinePos + 1;
-  }
-
-  if (appendEndlist && !hasEndlist)
-    out += "#EXT-X-ENDLIST\n";
-
-  return out;
 }
 
 std::string IsoFromTime(time_t t)
@@ -1256,22 +1209,143 @@ bool DispatcharrClient::FetchRawInProgressPlaylist(int recordingId, const std::s
   return false;
 }
 
-std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, int maxSegments,
-                                                                std::string& error)
+int64_t DispatcharrClient::ProbeSegmentByteSize(const std::string& segmentUrl) const
 {
-  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return -1;
+
+  struct curl_slist* headers = nullptr;
+  std::string apiKeyHeader;
+  if (!m_config.apiKey.empty())
+  {
+    apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+    headers = curl_slist_append(headers, apiKeyHeader.c_str());
+  }
+
+  int64_t totalLength = -1;
+  curl_easy_setopt(curl, CURLOPT_URL, segmentUrl.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, ContentLengthHeaderCallback);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &totalLength);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+  CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK || httpCode != 200)
+    return -1;
+  return totalLength;
+}
+
+bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::string& error)
+{
+  if (!m_inProgressRecordingStream.open)
+  {
+    error = "no in-progress recording stream is open";
+    return false;
+  }
+
+  // Throttle for the same reason as RefreshLiveManifest(): a tight
+  // catch-up-loop/demux-read cycle can call this far more often than the
+  // recording could possibly have grown.
+  constexpr auto kMinRefreshInterval = std::chrono::milliseconds(500);
+  auto now = std::chrono::steady_clock::now();
+  if (!force && m_inProgressRecordingStream.lastManifestFetch.time_since_epoch().count() != 0 &&
+      now - m_inProgressRecordingStream.lastManifestFetch < kMinRefreshInterval)
+    return true;
+
+  std::string baseDir =
+      BaseUrl() + kRecordingsPath + std::to_string(m_inProgressRecordingStream.recordingId) + "/hls/";
   std::string playlistUrl = baseDir + "index.m3u8";
 
   std::string playlistText;
-  if (!FetchRawInProgressPlaylist(recordingId, playlistUrl, playlistText, error))
-    return "";
+  if (!FetchRawInProgressPlaylist(m_inProgressRecordingStream.recordingId, playlistUrl, playlistText,
+                                   error))
+    return false;
 
-  // Fresh in-progress check on every call (not just once at open): this is
-  // now invoked repeatedly over a playback session's lifetime (see
-  // LocalPlaylistServer.h), whenever libavformat reloads the playlist, not
-  // just at the very first fetch -- so whether to finally append
-  // #EXT-X-ENDLIST needs to reflect the recording's *current* state, not
-  // whatever was true when playback started.
+  // Append-only merge: segments before the count we already know about are
+  // skipped (no rolling-window eviction for a recording -- see
+  // InProgressRecordingStreamState's own comment), everything past it is
+  // new. #EXTINF: precedes each segment URI line with its duration; HLS
+  // never carries byte size, so each newly-discovered segment gets a tiny
+  // ranged-GET probe for that.
+  size_t alreadyKnown = m_inProgressRecordingStream.segments.size();
+  size_t segmentIndex = 0;
+  double pendingDurationSec = 0.0;
+  size_t pos = 0;
+  while (pos <= playlistText.size())
+  {
+    size_t newlinePos = playlistText.find('\n', pos);
+    std::string line = (newlinePos == std::string::npos) ? playlistText.substr(pos)
+                                                           : playlistText.substr(pos, newlinePos - pos);
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+
+    if (line.compare(0, 8, "#EXTINF:") == 0)
+    {
+      std::string durStr = line.substr(8);
+      size_t comma = durStr.find(',');
+      if (comma != std::string::npos)
+        durStr = durStr.substr(0, comma);
+      try
+      {
+        pendingDurationSec = std::stod(durStr);
+      }
+      catch (const std::exception&)
+      {
+        pendingDurationSec = 0.0;
+      }
+    }
+    else if (!line.empty() && line[0] != '#')
+    {
+      if (segmentIndex >= alreadyKnown)
+      {
+        std::string segUrl = (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
+                                  ? line
+                                  : baseDir + line;
+        int64_t segSize = ProbeSegmentByteSize(segUrl);
+        if (segSize > 0)
+        {
+          InProgressRecordingSegmentInfo info;
+          info.url = std::move(segUrl);
+          info.byteOffset = m_inProgressRecordingStream.totalBytes;
+          info.byteSize = segSize;
+          info.timeOffsetMs = m_inProgressRecordingStream.totalDurationMs;
+          m_inProgressRecordingStream.totalBytes += segSize;
+          m_inProgressRecordingStream.totalDurationMs +=
+              static_cast<int64_t>(pendingDurationSec * 1000 + 0.5);
+          m_inProgressRecordingStream.segments.push_back(std::move(info));
+        }
+        // A segment that can't be sized (transient network hiccup, or
+        // recycled mid-probe) is skipped rather than retried here --
+        // segmentIndex still advances, so it's simply missing from this
+        // stream's address space; the next manifest refresh only looks at
+        // segments past the current known count anyway, so a skipped one
+        // is never retried. Rare enough in practice (a recording's own
+        // segments aren't recycled) not to warrant more than that.
+      }
+      ++segmentIndex;
+      pendingDurationSec = 0.0;
+    }
+
+    if (newlinePos == std::string::npos)
+      break;
+    pos = newlinePos + 1;
+  }
+
+  // Fresh in-progress check every call, not just at open: this is what
+  // lets ReadInProgressRecordingStream() eventually stop waiting for a
+  // recording that's actually finished, and CanPauseStream()/
+  // IsRealTimeStream() reflect current reality rather than whatever was
+  // true when the stream was opened.
   bool stillInProgress = false;
   std::vector<Recording> recordings;
   std::string recordingsError;
@@ -1279,86 +1353,295 @@ std::string DispatcharrClient::FetchInProgressPlaylistSnapshot(int recordingId, 
   {
     for (const auto& rec : recordings)
     {
-      if (rec.id == recordingId)
+      if (rec.id == m_inProgressRecordingStream.recordingId)
       {
         stillInProgress = rec.isInProgress;
         break;
       }
     }
   }
+  m_inProgressRecordingStream.finished = !stillInProgress;
 
-  // `maxSegments` (the growing cap LocalPlaylistServer tracks per
-  // recording -- see its header comment and this method's own for why a
-  // gradual ramp-up, not a one-time truncate-then-reveal-everything, is
-  // what actually keeps libavformat's live-edge join from landing far
-  // from 0) only matters while the playlist is still being served as
-  // not-finished. The cap exists purely to bound how far the live-edge
-  // join computation can land while it might still be getting re-applied
-  // -- but that computation is only ever reachable in hls.c's
-  // !pls->finished branch; a finished (ENDLIST-terminated) playlist always
-  // takes the simple `return pls->start_seq_no` path, unconditionally.
-  // Once the recording has actually finished, applying the cap here as
-  // well would combine with #EXT-X-ENDLIST below to falsely declare an
-  // artificially truncated prefix of the recording "the complete file" --
-  // confirmed live: a still-growing recording stopped mid-session while
-  // the cap hadn't yet caught up to the true segment count produced a
-  // real, reproduced bug of playback ending at the cap's current value
-  // (a couple of minutes in) instead of the recording's real, much later
-  // end. So the cap applies only when still in progress; once finished,
-  // reveal everything, unconditionally, in the same response that finally
-  // appends ENDLIST.
-  int effectiveMaxSegments = stillInProgress ? maxSegments : -1;
-  std::string rewritten = RewritePlaylist(playlistText, baseDir, effectiveMaxSegments, !stillInProgress);
-
-  // Proactive self-heal for the key baked into the rewritten segment URLs:
-  // same pattern as before, checked against the original playlist URL as a
-  // stand-in for the per-segment URLs it's really protecting (see this
-  // method's header comment for why nothing can retry after the fact once
-  // this is handed to inputstream.ffmpegdirect). Run on every call now, not
-  // just once at open, which meaningfully shrinks the staleness window
-  // compared to the original one-shot design this replaced.
+  // Proactive self-heal, same reasoning as FetchInProgressPlaylistSnapshot()
+  // used to apply: cheaper to catch a stale key here than mid-Range-read.
   if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
   {
     std::string regenKey, regenError;
     GenerateApiKey(regenKey, regenError);
   }
 
-  return rewritten;
+  m_inProgressRecordingStream.lastManifestFetch = now;
+  return true;
 }
 
-std::string DispatcharrClient::FetchInProgressRecordingSeekableSnapshot(int recordingId,
-                                                                         std::string& error)
+bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, std::string& error)
 {
-  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(recordingId) + "/hls/";
-  std::string playlistUrl = baseDir + "index.m3u8";
+  CloseInProgressRecordingStream();
 
-  std::string playlistText;
-  if (!FetchRawInProgressPlaylist(recordingId, playlistUrl, playlistText, error))
-    return "";
+  m_inProgressRecordingStream.open = true;
+  m_inProgressRecordingStream.recordingId = recordingId;
 
-  // Unconditionally finished, no segment cap: this is the explicit
-  // "seekable" alternative to FetchInProgressPlaylistSnapshot()'s default
-  // live-tailing behaviour (see GetRecordingStreamProperties()'s prompt),
-  // for when the user chooses seek/rewind over continuing to follow the
-  // recording live. Safe to reveal everything in one shot regardless of
-  // size, unlike the gradual cap that mode needs: an ENDLIST-terminated
-  // playlist makes libavformat's hls.c take the simple
-  // `return pls->start_seq_no` path unconditionally (pls->finished=true),
-  // never reaching the live-edge join computation the cap exists to bound
-  // (see FetchInProgressPlaylistSnapshot()'s comment for the full
-  // reasoning behind that). libavformat also never reloads a finished
-  // playlist, so in practice this only ever gets called once per playback
-  // session regardless -- there's no ongoing per-request cost to serving
-  // everything up front.
-  std::string rewritten = RewritePlaylist(playlistText, baseDir, -1, true);
-
-  if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
+  // Cold-start grace period, same reasoning as OpenLiveTimeshiftStream()'s:
+  // Dispatcharr's own DVR ffmpeg needs a real few seconds to connect to
+  // the live proxy and produce a full first HLS segment before there's
+  // anything to report -- confirmed live this addon's own
+  // ReadInProgressRecordingStream() catch-up loop wasn't a substitute for
+  // this: Kodi's own CDVDDemuxFFmpeg::Open() format probe gave up after
+  // ~38s with "error probing input format" rather than retrying patiently
+  // the way this addon's own reads do, so Open() itself needs to already
+  // have at least one real segment to hand it before returning. 45s, not
+  // the 15s live-timeshift uses: confirmed live a 15s budget still wasn't
+  // enough here and reading Dispatcharr's own DVR task source
+  // (apps/channels/tasks.py) explains why -- it documents its own
+  // `_first_segment_timeout = 15.0` for *just* the first-segment wait,
+  // on top of whatever real time the recording task itself takes to get
+  // scheduled and its own ffmpeg connected before that timer even starts.
+  constexpr int kColdStartMaxAttempts = 90;
+  constexpr int kColdStartSleepMs = 500;
+  bool haveSegment = false;
+  for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
   {
-    std::string regenKey, regenError;
-    GenerateApiKey(regenKey, regenError);
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenInProgressRecordingStream: cold-start attempt=%d",
+              attempt);
+    if (!RefreshInProgressRecordingManifest(/*force=*/true, error))
+    {
+      m_inProgressRecordingStream = InProgressRecordingStreamState();
+      return false;
+    }
+    if (!m_inProgressRecordingStream.segments.empty())
+    {
+      haveSegment = true;
+      break;
+    }
+    if (m_inProgressRecordingStream.finished)
+      break; // finished with literally zero segments -- nothing to wait for
+    std::this_thread::sleep_for(std::chrono::milliseconds(kColdStartSleepMs));
+  }
+  if (!haveSegment && !m_inProgressRecordingStream.finished)
+  {
+    error = "recording hasn't produced any segments yet";
+    m_inProgressRecordingStream = InProgressRecordingStreamState();
+    return false;
+  }
+  // Unlike live-timeshift, always start at true byte 0: there's no
+  // server-side buffer this addon starts/stops, no "live edge" concept to
+  // land near -- Dispatcharr's own DVR task has been writing this
+  // recording since it began regardless of whether anything's reading it,
+  // so "play a recording" naturally means "from the start", matching
+  // every other recording/VOD convention (and the existing
+  // completed-recording behaviour).
+  m_inProgressRecordingStream.position = 0;
+  return true;
+}
+
+int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size)
+{
+  if (!m_inProgressRecordingStream.open || size == 0)
+    return 0;
+
+  if (m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes)
+  {
+    if (m_inProgressRecordingStream.finished)
+      return 0; // genuine EOF -- the recording is done and we're at its true end
+
+    constexpr int kCatchUpSleepMs = 250;
+
+    // Same seek-probe-vs-genuine-catch-up distinction as
+    // ReadLiveTimeshiftStream() -- see its own comment for the full
+    // reasoning (confirmed live there; the same generic Kodi/ffmpeg
+    // seek-probing behaviour applies here, since this uses the same
+    // native-demuxer mechanism).
+    constexpr auto kSeekProbeWindow = std::chrono::milliseconds(800);
+    bool sameAsLastShortGiveUp =
+        m_inProgressRecordingStream.position == m_inProgressRecordingStream.lastShortGiveUpPosition;
+    bool likelySeekProbe =
+        !sameAsLastShortGiveUp &&
+        m_inProgressRecordingStream.lastSeekTime.time_since_epoch().count() != 0 &&
+        std::chrono::steady_clock::now() - m_inProgressRecordingStream.lastSeekTime < kSeekProbeWindow;
+
+    int64_t lastSegmentDurationMs =
+        m_inProgressRecordingStream.segments.empty()
+            ? 6000
+            : m_inProgressRecordingStream.totalDurationMs -
+                  m_inProgressRecordingStream.segments.back().timeOffsetMs;
+    if (lastSegmentDurationMs <= 0)
+      lastSegmentDurationMs = 6000;
+
+    int catchUpAttempts =
+        likelySeekProbe
+            ? 1
+            : static_cast<int>((lastSegmentDurationMs * 3 / 2) / kCatchUpSleepMs) + 1;
+
+    for (int attempt = 0; attempt < catchUpAttempts &&
+                           m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
+         ++attempt)
+    {
+      std::string refreshError;
+      RefreshInProgressRecordingManifest(/*force=*/true, refreshError);
+      if (m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes)
+        break;
+      if (m_inProgressRecordingStream.finished)
+        break; // finished while we were polling -- stop waiting, report EOF below
+      if (attempt + 1 < catchUpAttempts)
+        std::this_thread::sleep_for(std::chrono::milliseconds(kCatchUpSleepMs));
+    }
+
+    bool caughtUp = m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes;
+    m_inProgressRecordingStream.lastShortGiveUpPosition =
+        (likelySeekProbe && !caughtUp) ? m_inProgressRecordingStream.position : -1;
+
+    if (!caughtUp)
+      return 0;
   }
 
-  return rewritten;
+  const InProgressRecordingSegmentInfo* seg = nullptr;
+  for (const auto& s : m_inProgressRecordingStream.segments)
+  {
+    if (m_inProgressRecordingStream.position >= s.byteOffset &&
+        m_inProgressRecordingStream.position < s.byteOffset + s.byteSize)
+    {
+      seg = &s;
+      break;
+    }
+  }
+  if (!seg)
+    return 0; // shouldn't happen (no rolling eviction here), but nothing safely readable if it did
+
+  int64_t offsetInSegment = m_inProgressRecordingStream.position - seg->byteOffset;
+  int64_t available = seg->byteSize - offsetInSegment;
+  unsigned int wantSize = static_cast<unsigned int>(std::min<int64_t>(size, available));
+
+  int64_t rangeEnd = offsetInSegment + static_cast<int64_t>(wantSize) - 1;
+  std::string range = std::to_string(offsetInSegment) + "-" + std::to_string(rangeEnd);
+
+  for (int attempt = 0; attempt < 2; ++attempt)
+  {
+    CURL* curl = static_cast<CURL*>(m_inProgressRecordingStream.curl);
+    if (!curl)
+    {
+      curl = curl_easy_init();
+      if (!curl)
+        return -1;
+      m_inProgressRecordingStream.curl = curl;
+    }
+
+    struct curl_slist* headers = nullptr;
+    std::string apiKeyHeader;
+    if (!m_config.apiKey.empty())
+    {
+      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      headers = curl_slist_append(headers, apiKeyHeader.c_str());
+    }
+
+    FixedBufferSink sink{buffer, wantSize, 0};
+    curl_easy_setopt(curl, CURLOPT_URL, seg->url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+    CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    curl_slist_free_all(headers);
+
+    if (httpCode == 401 && attempt == 0)
+    {
+      std::string regenKey, regenError;
+      if (GenerateApiKey(regenKey, regenError))
+        continue;
+    }
+
+    if (res != CURLE_OK)
+    {
+      // Same "reused connection went stale" handling as ReadRecordingStream().
+      curl_easy_cleanup(curl);
+      m_inProgressRecordingStream.curl = nullptr;
+      return -1;
+    }
+    if (httpCode != 200 && httpCode != 206)
+      return -1;
+
+    m_inProgressRecordingStream.position += static_cast<int64_t>(sink.written);
+    return static_cast<int>(sink.written);
+  }
+  return -1;
+}
+
+int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int whence)
+{
+  if (!m_inProgressRecordingStream.open)
+    return -1;
+
+  m_inProgressRecordingStream.lastSeekTime = std::chrono::steady_clock::now();
+
+  if (whence == SEEK_END)
+  {
+    std::string refreshError;
+    RefreshInProgressRecordingManifest(/*force=*/true, refreshError);
+  }
+
+  int64_t newPos;
+  switch (whence)
+  {
+    case SEEK_SET:
+      newPos = position;
+      break;
+    case SEEK_CUR:
+      newPos = m_inProgressRecordingStream.position + position;
+      break;
+    case SEEK_END:
+      newPos = m_inProgressRecordingStream.totalBytes + position;
+      break;
+    default:
+      return -1;
+  }
+  if (newPos < 0)
+    return -1;
+  if (newPos > m_inProgressRecordingStream.totalBytes)
+    newPos = m_inProgressRecordingStream.totalBytes;
+
+  m_inProgressRecordingStream.position = newPos;
+  return newPos;
+}
+
+int64_t DispatcharrClient::GetInProgressRecordingStreamLength()
+{
+  if (!m_inProgressRecordingStream.open)
+    return -1;
+  std::string refreshError;
+  RefreshInProgressRecordingManifest(/*force=*/false, refreshError);
+  return m_inProgressRecordingStream.totalBytes;
+}
+
+int64_t DispatcharrClient::GetInProgressRecordingStreamDurationMs()
+{
+  if (!m_inProgressRecordingStream.open)
+    return 0;
+  std::string refreshError;
+  RefreshInProgressRecordingManifest(/*force=*/false, refreshError);
+  return m_inProgressRecordingStream.totalDurationMs;
+}
+
+void DispatcharrClient::CloseInProgressRecordingStream()
+{
+  if (m_inProgressRecordingStream.curl)
+    curl_easy_cleanup(static_cast<CURL*>(m_inProgressRecordingStream.curl));
+  m_inProgressRecordingStream = InProgressRecordingStreamState();
+}
+
+bool DispatcharrClient::IsInProgressRecordingStreamOpen() const
+{
+  return m_inProgressRecordingStream.open;
+}
+
+bool DispatcharrClient::IsLiveTimeshiftStreamOpen() const
+{
+  return m_liveTimeshiftStream.open;
 }
 
 bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)

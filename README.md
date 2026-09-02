@@ -60,19 +60,22 @@ This is a first working scaffold, not a finished addon. Implemented:
   spanning several buffer refreshes. See `docs/TIMESHIFT.md` and that
   plugin's own `README.md`
 - Optional in-progress recording playback (`enable_inprogress_playback`
-  setting, off by default, experimental), also via
-  `inputstream.ffmpegdirect` -- lets you start watching a recording before
-  Dispatcharr finishes writing it, from the true beginning. Runs a tiny
-  loopback-only local HTTP server inside the addon to make this work (see
-  `docs/API_NOTES.md`). Seek/FF/RW and continuing to follow the recording
-  live are mutually exclusive within one playback session (Kodi decides
-  seekability once, at open, based on a duration that can only be known
-  once the recording is treated as complete) -- so plain Play on an
-  in-progress recording defaults to "Play from start" (full seek/rewind
-  over what's been recorded so far, won't pick up anything recorded after
-  you pressed Play); a "Play live" entry in the recording's context menu
-  (follows new content as it's recorded, no seek) arms that mode for the
-  next time you press Play on it instead.
+  setting, off by default) -- lets you start watching a recording before
+  Dispatcharr finishes writing it, from the true beginning, with real
+  pause/rewind/fast-forward *and* live-follow together in the same
+  session, no mutually-exclusive trade-off. Uses the same growing-buffer,
+  native-demuxer architecture as server-side live timeshift above --
+  Dispatcharr's in-progress recording HLS output is exposed through this
+  addon's own `OpenRecordedStream`/`ReadRecordedStream`/`SeekRecordedStream`
+  implementation so Kodi's native demuxer handles seeking directly, rather
+  than routing through `inputstream.ffmpegdirect` (an earlier approach
+  that did that, and was confirmed live to have seek and live-follow
+  permanently, architecturally mutually exclusive within one session --
+  see `docs/RECORDINGS.md` for that investigation and the architecture
+  that replaced it). Confirmed live end-to-end: real seeks landing near
+  the requested position, pause/resume, and the recording's reported
+  duration growing live while playback continues uninterrupted. A
+  completed recording is unaffected and plays exactly as before.
 - Optional real-time recording/timer updates (`enable_realtime_updates`
   setting, off by default, experimental) -- connects directly to
   Dispatcharr's own WebSocket push feed (the same one its web UI uses, no

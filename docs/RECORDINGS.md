@@ -955,4 +955,122 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   correct-by-construction (a pure fallback, only consulted when the
   server-provided title is still empty) rather than confirmed against a
   reproduced failure the way most fixes in this file are.
+- **The entire `inputstream.ffmpegdirect`-based in-progress recording
+  mechanism documented at length above -- `LocalPlaylistServer`, the
+  gradual-cap join-position workaround, the "Play live"/"Play from start"
+  context-menu split, and the permanent seek-vs-live-follow trade-off that
+  drove all of it -- has been replaced outright, not just patched
+  further.** That whole design existed because ffmpeg/libavformat's HLS
+  demuxer ties seekability to a *known, finite* duration, which is
+  fundamentally incompatible with a playlist that's still being appended
+  to; the only way around it within that architecture was picking one of
+  the two per session. Server-side live timeshift (`docs/TIMESHIFT.md`)
+  had already solved the equivalent problem for live channels by dropping
+  `inputstream.ffmpegdirect` entirely and demuxing a growing buffer
+  through this addon's own `OpenLiveStream`/`ReadLiveStream`/
+  `SeekLiveStream`, letting Kodi's *native* demuxer -- which has no such
+  finite-duration requirement, since `GetStreamTimes()` supplies a
+  self-reported, freely-growing `ptsEnd` instead -- handle it directly.
+  The same mechanism applies just as well to an in-progress recording:
+  `CInputStreamPVRRecording` extends the same `CInputStreamPVRBase` as
+  `CInputStreamPVRChannel` (confirmed in Kodi-core source), so the
+  identical `GetStreamTimes()`/`CanPauseStream()`/`CanSeekStream()`/
+  `IsRealTimeStream()` callbacks that make live-timeshift's real
+  pause/rewind/live-follow work apply unchanged to a recording once the
+  same growing-buffer approach is used for it.
+  Implemented as `DispatcharrClient::OpenInProgressRecordingStream()`/
+  `ReadInProgressRecordingStream()`/`SeekInProgressRecordingStream()`/
+  `GetInProgressRecordingStreamDurationMs()` -- an append-only variant of
+  the live-timeshift buffer (no rolling-window eviction needed, since a
+  recording's own segments are never recycled the way a live buffer's
+  are): `RefreshInProgressRecordingManifest()` parses the recording's HLS
+  playlist directly (no plugin, no rewriting, no local HTTP server -- the
+  same `X-API-Key`-authenticated direct reads `OpenRecordingStream()`
+  already uses for a completed recording, just against the in-progress
+  `.../hls/index.m3u8` instead of the post-completion `/file/` endpoint),
+  merging any segments past the count already known into a fixed-origin
+  byte address space exactly like `RefreshLiveManifest()` does.
+  `GetRecordingStreamProperties()` is now drastically simpler as a result
+  -- it only ever sets `ISREALTIMESTREAM`, `STREAMURL` is never populated
+  for either recording flavour -- and `LocalPlaylistServer.cpp`/`.h`, the
+  mode-choice context-menu hook, and the two now-dead
+  `PendingLiveMode`-style settings/strings were all deleted rather than
+  kept alongside the new path.
+  `OpenRecordedStream()` checks the recording's current `isInProgress`
+  (same live `GetRecordings()` check `GetRecordingStreamProperties()` used
+  to do the mode-choice with) to decide which of the two implementations
+  to open; `ReadRecordedStream()`/`SeekRecordedStream()`/
+  `LengthRecordedStream()`/`CloseRecordedStream()`/`GetStreamTimes()`/
+  `CanPauseStream()`/`CanSeekStream()`/`IsRealTimeStream()` all branch the
+  same way, via `DispatcharrClient::IsInProgressRecordingStreamOpen()`
+  (only one of the two recording-stream flavours, or a live-timeshift
+  stream, is ever open at once). A completed recording is entirely
+  unaffected, still going through the original `OpenRecordingStream()`/
+  etc. byte-range path.
+  Two real bugs found and fixed during live verification, neither
+  specific to the design above -- both pre-existing gaps this addon's own
+  code had to close, not anything wrong with Dispatcharr:
+  1. **Segment-size probing silently downloaded entire multi-MB segments
+     instead of a few bytes, and got worse the longer a recording ran.**
+     `ProbeSegmentByteSize()` (needed once per newly-discovered segment,
+     mirroring `RefreshLiveManifest()`'s own per-segment probe) originally
+     issued a `Range: 0-0` GET and read the total size back from a
+     `Content-Range` response header, exactly like the completed-recording
+     path's own probe does. Confirmed live via a direct `curl -r 0-0`
+     against a real in-progress segment that Dispatcharr's in-progress-
+     recording HLS endpoint (unlike the completed-recording one)
+     **ignores the `Range` header entirely** and returns a plain `200`
+     with the full body and no `Content-Range` header at all -- so every
+     probe both downloaded the entire segment over the network (several
+     MB each) *and* came back with no usable size, meaning no segment
+     ever got added to the known set. Because segments-known never grew,
+     every subsequent manifest refresh re-probed *every* segment in the
+     playlist from scratch, not just the new ones -- an unbounded,
+     ever-growing cost per refresh as the recording (and its segment
+     count) grew, which is what made opening a recording that had already
+     been running a while for several minutes appear to hang indefinitely
+     rather than just be slow. Fixed by switching the probe to a `HEAD`
+     request (`CURLOPT_NOBODY`) reading a plain `Content-Length` header
+     instead (confirmed via `curl -I` against the same segment: `HEAD`
+     returns the correct length with no body transferred at all) -- a new
+     `ContentLengthHeaderCallback`, separate from the existing
+     `RecordingHeaderCallback` (which stays as-is for the completed-
+     recording path's genuine ranged-GET use, where `Content-Range`'s
+     semantics -- slice size vs. total -- actually differ from a plain
+     `Content-Length`). Confirmed live: cold-open against a ~70-second-old
+     recording found all 56 already-written segments on the very first
+     attempt, no retry loop needed.
+  2. **`GetStreamTimes()`/`CanPauseStream()`/`CanSeekStream()`/
+     `IsRealTimeStream()` checked whether server-side live-timeshift mode
+     was *enabled in settings*, not whether a live-timeshift stream was
+     *actually open*.** `m_liveTimeshiftMode` is read once from the
+     `live_timeshift_mode` setting at construction and never changes at
+     runtime, so with server-side timeshift enabled, `m_liveTimeshiftMode
+     == kLiveTimeshiftServer` was true unconditionally -- including while
+     an in-progress *recording*, not a live channel, was what was actually
+     open. In `GetStreamTimes()` this meant the live-timeshift branch
+     always won, permanently shadowing the in-progress-recording branch
+     below it and reporting `GetLiveTimeshiftStreamDurationMs()`'s `0` (no
+     live stream open) as `ptsEnd` instead of the recording's real,
+     growing duration. Confirmed live: `canseek: false` and an empty
+     `Player.Duration` throughout, even after fix #1 above was confirmed
+     working and `GetInProgressRecordingStreamDurationMs()` was already
+     correctly returning a growing, non-zero value on every call --
+     diagnostic logging on both branches' actual entry conditions made the
+     shadowing directly visible in `kodi.log`. Fixed by adding a genuine
+     `DispatcharrClient::IsLiveTimeshiftStreamOpen()` accessor (mirroring
+     the existing `IsInProgressRecordingStreamOpen()`) backed by the
+     live-timeshift stream state's own `open` flag, and checking that --
+     not the setting -- in all four callbacks. Confirmed live
+     end-to-end after both fixes: `canseek: true`, `totaltime` correctly
+     showing and growing with the recording (`10:56` and climbing), an
+     actual `Player.Seek` landing near its target (confirmed via
+     `CDVDDemuxFFmpeg::SeekTime` in `kodi.log`, not just JSON-RPC's own
+     EPG-relative `time` display -- see `docs/TIMESHIFT.md`'s note on why
+     that display can't be trusted directly), working pause/resume, and
+     the reported duration growing by ~27s over a 30-second wait with
+     playback continuing uninterrupted throughout -- real live-follow.
+     Regression-tested a completed recording immediately after and
+     confirmed it still takes the original, unaffected code path
+     (`inProgress=0` in the log) with its own correct fixed duration.
 

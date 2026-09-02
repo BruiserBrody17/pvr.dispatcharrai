@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "DispatcharrClient.h"
-#include "LocalPlaylistServer.h"
 #include "XmlTvParser.h"
 
 class PVRDispatcharr : public kodi::addon::CInstancePVRClient
@@ -86,11 +85,6 @@ public:
   PVR_ERROR GetRecordings(bool deleted, kodi::addon::PVRRecordingsResultSet& results) override;
   PVR_ERROR GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                          std::vector<kodi::addon::PVRStreamProperty>& properties) override;
-  // Backs the "Play live" context-menu entry on in-progress recordings --
-  // see m_pendingLiveModeRecordingId's comment for why this exists instead
-  // of a mode-choice dialog at Play time.
-  PVR_ERROR CallRecordingMenuHook(const kodi::addon::PVRMenuhook& menuhook,
-                                  const kodi::addon::PVRRecording& item) override;
   PVR_ERROR DeleteRecording(const kodi::addon::PVRRecording& recording) override;
   // Kodi always demuxes pvr://recordings/... via CInputStreamPVRRecording,
   // which serves the generic FFmpeg demuxer through these -- confirmed
@@ -115,7 +109,6 @@ private:
   static constexpr int kTimerTypeOneTime = 1;
   static constexpr int kTimerTypeSeries = 2;
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
-  static constexpr unsigned int kMenuHookPlayLive = 1;
   static constexpr int kLiveTimeshiftOff = 0;
   static constexpr int kLiveTimeshiftLocal = 1;
   static constexpr int kLiveTimeshiftServer = 2;
@@ -153,38 +146,6 @@ private:
   bool m_enableCatchupFfmpegdirectSeek = false;
   bool m_debugLogging = false;
 
-  // Backs in-progress recording playback's rewritten-playlist snapshot --
-  // see DispatcharrClient::GetInProgressRecordingStreamUrl()'s comment and
-  // LocalPlaylistServer.h for why STREAMURL can't just be a data: URI.
-  // Started in the constructor whenever m_enableInProgressPlayback is true
-  // (not unconditionally -- no reason to hold a loopback listening socket
-  // open for installs that never use this feature), stopped in the
-  // destructor.
-  dispatcharr::LocalPlaylistServer m_playlistServer;
-
-  // Pressing Play on an in-progress recording used to show a blocking
-  // "Play live" vs. "Play from start" dialog before returning stream
-  // properties -- replaced because cancelling it (Back/Cancel) always made
-  // Kodi show its own "Playback failed" dialog on top: confirmed via
-  // Kodi-core source that CPVRPlaybackState::StartPlayback() never checks
-  // GetRecordingStreamProperties()'s PVR_ERROR return at all, only whether
-  // any properties were set, so a deliberate "nothing to play" response is
-  // indistinguishable from a genuine failure once it reaches
-  // CVideoPlayer::CloseFile(). Plain Play now goes straight to "Play from
-  // start" with no prompt; "Play live" moved to a PVR_MENUHOOK_RECORDING
-  // context-menu entry (CallRecordingMenuHook()) instead. A binary PVR
-  // addon has no API to itself start playback, though, so the hook can't
-  // just open the item live directly -- it arms this instead (the
-  // recording id it should apply to, or -1 when nothing is armed) and asks
-  // the user to press Play right after; GetRecordingStreamProperties()
-  // consumes it (one-shot -- reset to -1 whether or not it matched) the
-  // next time it's called for that same id, and falls back to "Play from
-  // start" for every other case (id mismatch, or nothing armed at all).
-  std::mutex m_pendingLiveModeMutex;
-  int m_pendingLiveModeRecordingId = -1;
-
-  // Same one-shot arm/consume pattern as m_pendingLiveModeRecordingId
-  // above, for the analogous problem on the channel (not recording) side:
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/
   // EPG above, there's no lazy "check staleness next time Kodi asks"
