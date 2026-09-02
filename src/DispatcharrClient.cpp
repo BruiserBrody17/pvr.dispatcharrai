@@ -1,6 +1,7 @@
 #include "DispatcharrClient.h"
 
 #include <curl/curl.h>
+#include <kodi/General.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -1611,7 +1612,23 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error)
 
 bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, std::string& error)
 {
-  CloseLiveTimeshiftStream(); // in case something was already open
+  // Tried preserving segment history across a same-channel Close/reopen
+  // here (so "rewind" could reach further back than the plugin's current
+  // rolling-manifest window) -- confirmed live this doesn't actually help:
+  // Kodi's own ffmpeg demuxer is a brand-new instance on every Open(), with
+  // no PTS index for anything it hasn't itself read yet in *this* session,
+  // regardless of what our own byte-address-space nominally contains.
+  // Worse, GetStreamTimes() reporting the full multi-session duration back
+  // to Kodi threw off its own internal seek-time math (confirmed via
+  // SeekLiveTimeshiftStream tracing: a -3s request landed at the live edge,
+  // a -90s request landed at true byte 0 -- neither anywhere near the
+  // requested target), which is a materially worse fallback than a small,
+  // bounded one. Always starting fresh here keeps the fallback close by
+  // (bounded to the plugin's own rolling window) instead of however long
+  // this channel happens to have been buffering. Full-precision seeking
+  // works great *within* one continuous session (confirmed repeatedly);
+  // that's unaffected by this and isn't what broke.
+  m_liveTimeshiftStream = LiveTimeshiftStreamState();
 
   std::string unusedPlaylistUrl;
   if (!StartTimeshiftBuffer(channelUuid, unusedPlaylistUrl, error))
@@ -1695,7 +1712,22 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
     }
   }
   if (!seg)
+  {
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharrai: ReadLiveTimeshiftStream: position=%lld is a gap (totalBytes=%lld, "
+              "segments=%zu, first seg byteOffset=%lld, last seg end=%lld)",
+              static_cast<long long>(m_liveTimeshiftStream.position),
+              static_cast<long long>(m_liveTimeshiftStream.totalBytes),
+              m_liveTimeshiftStream.segments.size(),
+              m_liveTimeshiftStream.segments.empty()
+                  ? -1LL
+                  : static_cast<long long>(m_liveTimeshiftStream.segments.front().byteOffset),
+              m_liveTimeshiftStream.segments.empty()
+                  ? -1LL
+                  : static_cast<long long>(m_liveTimeshiftStream.segments.back().byteOffset +
+                                            m_liveTimeshiftStream.segments.back().byteSize));
     return 0; // position points into a gap/rolled-off region -- nothing safely readable here
+  }
 
   int64_t offsetInSegment = m_liveTimeshiftStream.position - seg->byteOffset;
   int64_t available = seg->byteSize - offsetInSegment;
@@ -1779,12 +1811,30 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
     default:
       return -1;
   }
-  if (newPos < 0)
+  bool clampedNegative = newPos < 0;
+  if (clampedNegative)
+  {
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
+              "current=%lld -> computed newPos=%lld < 0, failing",
+              static_cast<long long>(position), whence,
+              static_cast<long long>(m_liveTimeshiftStream.position),
+              static_cast<long long>(newPos));
     return -1;
+  }
   // Clamp forward seeks to the known tail -- there's nothing to seek ahead
   // of yet for a genuinely live buffer.
-  if (newPos > m_liveTimeshiftStream.totalBytes)
+  bool clampedToTail = newPos > m_liveTimeshiftStream.totalBytes;
+  if (clampedToTail)
     newPos = m_liveTimeshiftStream.totalBytes;
+
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
+            "current=%lld, totalBytes=%lld -> newPos=%lld%s",
+            static_cast<long long>(position), whence,
+            static_cast<long long>(m_liveTimeshiftStream.position),
+            static_cast<long long>(m_liveTimeshiftStream.totalBytes),
+            static_cast<long long>(newPos), clampedToTail ? " (clamped to tail)" : "");
 
   m_liveTimeshiftStream.position = newPos;
   return newPos;
