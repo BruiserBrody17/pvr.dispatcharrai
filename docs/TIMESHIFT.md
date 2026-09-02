@@ -318,3 +318,49 @@ landed cleanly and playback continued. MLB Network: played ~40s, Stop,
 waited a few seconds, reopened -- resumed near the current live edge
 (matching elapsed real time), not the original stale start position.
 
+## Known limitation: seeking after a Stop/reopen doesn't land on target
+
+Real use surfaced a third issue the above testing didn't catch: seek
+*within* one continuous session is fully accurate (confirmed repeatedly,
+including the -95s multi-refresh rewind above), but after a Stop and
+reopen of the *same* channel, a subsequent seek -- of any size -- doesn't
+land where requested. It was first suspected to be an addon-side bug
+(tried preserving `m_liveTimeshiftStream`'s segment history across the
+Close/reopen so "rewind" could reach further back than the plugin's
+current rolling-manifest window) -- confirmed live this doesn't fix it,
+and doesn't even change the observed behavior in practice, since the
+plugin's own rolling window is usually still large enough on its own to
+cover the whole session anyway.
+
+Root-caused by tracing actual byte positions through temporary logging
+added to `SeekLiveTimeshiftStream()`/`ReadLiveTimeshiftStream()`: Kodi's
+`CDVDDemuxFFmpeg` creates a brand-new demuxer instance on every
+`OpenLiveStream()`, with its own `m_startTime` PTS anchor established
+fresh from whatever's first read *this session* -- it has no seek index
+for anything it hasn't itself read yet, regardless of what this addon's
+own byte-address-space nominally contains further back. A -90s seek
+request was observed landing at literal byte 0 (`SeekLiveTimeshiftStream
+(position=0, whence=0)`, confirmed via the log) rather than anywhere near
+the intended target -- Kodi/ffmpeg's own generic fallback for a backward
+seek it can't otherwise resolve, not a value this addon computed or
+clamped to. Kodi's own `SeekTime()` (`DVDDemuxFFmpeg.cpp`) only waits for
+*any* valid PTS after a seek, not one matching the requested target, so
+playback doesn't stall -- it just resumes forward from wherever the
+fallback landed, exactly matching what was observed: "no matter what
+seeking I did, it always started playing the feed from the beginning of
+the initial playback."
+
+This is a Kodi/ffmpeg-core constraint on generic byte-stream mpegts
+demuxing without a pre-built index, not something addressable from this
+addon's side within the current architecture -- `CInputStreamPVRBase`
+(confirmed by reading its header) doesn't implement Kodi's `IPosTime`
+interface, which is the one hook that would let an input stream handle
+time-based seeks directly and bypass this entirely. `OpenLiveTimeshiftStream()`
+still always starts a fresh address space on every Open() (reverted the
+history-preservation attempt) since that at least bounds how far off the
+fallback target can land to the plugin's own rolling-window size, rather
+than however long the channel happens to have been buffering -- a real,
+if partial, improvement, and simpler than the alternative. Hitching and
+reopen-at-live-edge (the two fixes above) are both unaffected and remain
+confirmed working after this.
+
