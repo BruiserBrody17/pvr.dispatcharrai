@@ -1753,20 +1753,98 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
 
   // Caught up to the tail: give the buffer a bounded chance to grow rather
   // than reporting EOF immediately, which Kodi would read as "this live
-  // stream just ended". segment_seconds is typically several real seconds,
-  // so a short bounded poll smooths over the gap between segments instead
-  // of stalling playback outright.
-  constexpr int kCatchUpAttempts = 8;
-  constexpr int kCatchUpSleepMs = 250;
-  for (int attempt = 0; attempt < kCatchUpAttempts &&
-                         m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes;
-       ++attempt)
+  // stream just ended". A fixed 8 attempts * 250ms (2s total) here used to
+  // be *far* short of the real gap between segments (confirmed live via
+  // timing instrumentation: with the plugin's segment_seconds default of
+  // 6s, this loop gave up almost every time, Kodi immediately retried the
+  // read, landed right back in this same loop, and repeated -- 2-4 full
+  // "gave up" cycles before a new segment actually existed was common,
+  // turning what should be one ~6s wait into 12-16+ seconds. That's not
+  // just wasted time during ordinary near-live playback (absorbed by
+  // Kodi's own read-ahead cache most of the time, so not usually a visible
+  // stall) -- it also directly padded out seek latency, since ffmpeg's own
+  // internal seek probing routinely lands at/near the live edge for any
+  // seek originating near "now", and each such probe paid this same cost.
+  // Size the budget off the last known segment's own duration (with
+  // margin) instead of a fixed guess, so it comfortably covers one real
+  // gap between segments regardless of how segment_seconds is configured.
+  if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
   {
-    std::string refreshError;
-    RefreshLiveManifest(/*force=*/true, refreshError); // best-effort; try again next attempt/call on failure
-    if (m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes)
-      break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(kCatchUpSleepMs));
+    constexpr int kCatchUpSleepMs = 250;
+
+    // A read landing at the tail shortly after a seek is far more likely
+    // to be one of ffmpeg's own internal probes (its generic mpegts seek
+    // does a real multi-step search, confirmed live via SeekLiveTimeshiftStream
+    // tracing -- several probes in quick succession, one of which commonly
+    // overshoots right up to the current tail while estimating) than a
+    // genuine "caught up to live, please wait" read. Blocking a probe for
+    // a full segment interval was the single largest contributor to seek
+    // latency measured live (a 4.2s wait out of one seek's total ~4.4s).
+    // ffmpeg can usually just try an earlier candidate instead of getting
+    // this exact byte -- so give it a quick "not there" rather than making
+    // it wait, and reserve the full segment-duration budget below for
+    // reads that aren't part of an active seek's own probing.
+    // The time window alone isn't quite enough: normal decode reads that
+    // happen to land at the tail right after a seek completes (not part of
+    // its internal probing at all, just where playback settled) also fall
+    // inside it and genuinely need the full wait -- confirmed live giving
+    // those the short budget too caused visible playback pauses right
+    // after a seek that landed near live. If we already gave up quickly at
+    // this *exact* position, it's not a fresh probe candidate anymore --
+    // escalate to the full budget rather than repeating the short one
+    // indefinitely against the same stuck position.
+    constexpr auto kSeekProbeWindow = std::chrono::milliseconds(800);
+    bool sameAsLastShortGiveUp =
+        m_liveTimeshiftStream.position == m_liveTimeshiftStream.lastShortGiveUpPosition;
+    bool likelySeekProbe =
+        !sameAsLastShortGiveUp && m_liveTimeshiftStream.lastSeekTime.time_since_epoch().count() != 0 &&
+        std::chrono::steady_clock::now() - m_liveTimeshiftStream.lastSeekTime < kSeekProbeWindow;
+
+    int64_t lastSegmentDurationMs =
+        m_liveTimeshiftStream.segments.empty()
+            ? 6000
+            : m_liveTimeshiftStream.totalDurationMs -
+                  m_liveTimeshiftStream.segments.back().timeOffsetMs;
+    if (lastSegmentDurationMs <= 0)
+      lastSegmentDurationMs = 6000;
+
+    int catchUpAttempts = likelySeekProbe
+                               ? 1
+                               : static_cast<int>((lastSegmentDurationMs * 3 / 2) / kCatchUpSleepMs) + 1;
+
+    auto catchUpStart = std::chrono::steady_clock::now();
+    int attemptsUsed = 0;
+    for (int attempt = 0; attempt < catchUpAttempts &&
+                           m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes;
+         ++attempt)
+    {
+      attemptsUsed = attempt + 1;
+      std::string refreshError;
+      RefreshLiveManifest(/*force=*/true, refreshError); // best-effort; try again next attempt/call on failure
+      if (m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes)
+        break;
+      // Don't sleep after the last attempt -- nothing left to wait for
+      // before giving up, and for a likely seek probe (catchUpAttempts==1)
+      // this is what makes the "not there yet" response fast instead of
+      // paying a pointless 250ms before reporting it.
+      if (attempt + 1 < catchUpAttempts)
+        std::this_thread::sleep_for(std::chrono::milliseconds(kCatchUpSleepMs));
+    }
+    bool caughtUp = m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes;
+    m_liveTimeshiftStream.lastShortGiveUpPosition =
+        (likelySeekProbe && !caughtUp) ? m_liveTimeshiftStream.position : -1;
+
+    double elapsedSec =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharrai: ReadLiveTimeshiftStream: catch-up-to-tail loop used %d/%d "
+              "attempts, %.3fs (budget %.1fs off last segment's %lldms), position=%lld "
+              "totalBytes=%lld -> %s",
+              attemptsUsed, catchUpAttempts, elapsedSec, catchUpAttempts * kCatchUpSleepMs / 1000.0,
+              static_cast<long long>(lastSegmentDurationMs),
+              static_cast<long long>(m_liveTimeshiftStream.position),
+              static_cast<long long>(m_liveTimeshiftStream.totalBytes),
+              caughtUp ? "caught up" : "gave up");
   }
   if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
     return 0; // genuinely nothing new yet
@@ -1856,6 +1934,8 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
 {
   if (!m_liveTimeshiftStream.open)
     return -1;
+
+  m_liveTimeshiftStream.lastSeekTime = std::chrono::steady_clock::now();
 
   if (whence == SEEK_END)
   {
