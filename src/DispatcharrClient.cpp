@@ -828,18 +828,6 @@ bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
   return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error);
 }
 
-bool DispatcharrClient::SnapshotTimeshiftBuffer(const std::string& channelUuid,
-                                                 std::string& playlistUrlOut,
-                                                 std::string& error)
-{
-  // Requires start_buffer to already be running for this channel -- the
-  // plugin's own snapshot_buffer action fails with a clear "no buffer
-  // running for this channel" result.message otherwise, surfaced here via
-  // the normal error path rather than this method trying to detect and
-  // paper over that case itself.
-  return CallTimeshiftPluginAction("snapshot_buffer", channelUuid, playlistUrlOut, error);
-}
-
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))
@@ -1531,6 +1519,269 @@ void DispatcharrClient::CloseRecordingStream()
   if (m_recordingStream.curl)
     curl_easy_cleanup(static_cast<CURL*>(m_recordingStream.curl));
   m_recordingStream = RecordingStreamState();
+}
+
+bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error)
+{
+  if (!m_liveTimeshiftStream.open)
+  {
+    error = "no live timeshift stream is open";
+    return false;
+  }
+
+  // Throttle: ReadLiveTimeshiftStream()'s catch-up-to-the-tail loop (and a
+  // tight demux-read loop calling GetLiveTimeshiftStreamLength() between
+  // reads) can end up calling this far more often than the buffer could
+  // possibly have grown -- segment_seconds is typically several real
+  // seconds, so refetching more than a couple of times a second just adds
+  // load without finding anything new.
+  constexpr auto kMinRefreshInterval = std::chrono::milliseconds(500);
+  auto now = std::chrono::steady_clock::now();
+  if (!force && m_liveTimeshiftStream.lastManifestFetch.time_since_epoch().count() != 0 &&
+      now - m_liveTimeshiftStream.lastManifestFetch < kMinRefreshInterval)
+    return true;
+
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json body = {
+      {"action", "get_live_manifest"},
+      {"params", {{"channel_uuid", m_liveTimeshiftStream.channelUuid}}},
+  };
+  json response;
+  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+    return false;
+  if (!FieldOr(response, "success", false))
+  {
+    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
+    return false;
+  }
+  const json& result = response.contains("result") ? response["result"] : json();
+  if (FieldOr<std::string>(result, "status", "") != "ok")
+  {
+    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
+    return false;
+  }
+
+  int httpPort = FieldOr(result, "http_port", 0);
+  std::string routePrefix = FieldOr<std::string>(result, "segment_route_prefix", "");
+  if (httpPort <= 0 || routePrefix.empty() || !result.contains("segments") ||
+      !result["segments"].is_array())
+  {
+    error = "timeshift_buffer plugin manifest response was missing required fields";
+    return false;
+  }
+  m_liveTimeshiftStream.segmentBaseUrl =
+      "http://" + m_config.host + ":" + std::to_string(httpPort) + routePrefix;
+
+  // Segments come back ordered by sequence; only ones newer than what we
+  // already know get appended, each extending OUR cumulative address space
+  // (not reusing the response's own relative offsets -- see this method's
+  // header comment for why). An already-known segment's size can't
+  // legitimately change (ffmpeg only ever appends new, closed segments to
+  // the playlist), so silently skipping it here rather than re-verifying
+  // it is safe, not just an optimization.
+  int64_t lastKnownSequence =
+      m_liveTimeshiftStream.segments.empty() ? -1 : m_liveTimeshiftStream.segments.back().sequence;
+
+  for (const json& seg : result["segments"])
+  {
+    int64_t sequence = FieldOr<int64_t>(seg, "sequence", -1);
+    if (sequence < 0 || sequence <= lastKnownSequence)
+      continue;
+
+    LiveTimeshiftSegmentInfo info;
+    info.filename = FieldOr<std::string>(seg, "filename", "");
+    info.byteSize = FieldOr<int64_t>(seg, "byte_size", 0);
+    int64_t durationMs = FieldOr<int64_t>(seg, "duration_ms", 0);
+    if (info.filename.empty() || info.byteSize <= 0)
+      continue; // malformed entry -- don't let it corrupt the cumulative offsets that follow
+
+    info.sequence = sequence;
+    info.byteOffset = m_liveTimeshiftStream.totalBytes;
+    info.timeOffsetMs = m_liveTimeshiftStream.totalDurationMs;
+    m_liveTimeshiftStream.totalBytes += info.byteSize;
+    m_liveTimeshiftStream.totalDurationMs += durationMs;
+    m_liveTimeshiftStream.segments.push_back(std::move(info));
+  }
+
+  m_liveTimeshiftStream.lastManifestFetch = now;
+  return true;
+}
+
+bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, std::string& error)
+{
+  CloseLiveTimeshiftStream(); // in case something was already open
+
+  std::string unusedPlaylistUrl;
+  if (!StartTimeshiftBuffer(channelUuid, unusedPlaylistUrl, error))
+    return false;
+
+  m_liveTimeshiftStream.open = true;
+  m_liveTimeshiftStream.channelUuid = channelUuid;
+
+  if (!RefreshLiveManifest(/*force=*/true, error))
+  {
+    m_liveTimeshiftStream = LiveTimeshiftStreamState();
+    return false;
+  }
+  return true;
+}
+
+int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int size)
+{
+  if (!m_liveTimeshiftStream.open || size == 0)
+    return 0;
+
+  // Caught up to the tail: give the buffer a bounded chance to grow rather
+  // than reporting EOF immediately, which Kodi would read as "this live
+  // stream just ended". segment_seconds is typically several real seconds,
+  // so a short bounded poll smooths over the gap between segments instead
+  // of stalling playback outright.
+  constexpr int kCatchUpAttempts = 8;
+  constexpr int kCatchUpSleepMs = 250;
+  for (int attempt = 0; attempt < kCatchUpAttempts &&
+                         m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes;
+       ++attempt)
+  {
+    std::string refreshError;
+    RefreshLiveManifest(/*force=*/true, refreshError); // best-effort; try again next attempt/call on failure
+    if (m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes)
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(kCatchUpSleepMs));
+  }
+  if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
+    return 0; // genuinely nothing new yet
+
+  const LiveTimeshiftSegmentInfo* seg = nullptr;
+  for (const auto& s : m_liveTimeshiftStream.segments)
+  {
+    if (m_liveTimeshiftStream.position >= s.byteOffset &&
+        m_liveTimeshiftStream.position < s.byteOffset + s.byteSize)
+    {
+      seg = &s;
+      break;
+    }
+  }
+  if (!seg)
+    return 0; // position points into a gap/rolled-off region -- nothing safely readable here
+
+  int64_t offsetInSegment = m_liveTimeshiftStream.position - seg->byteOffset;
+  int64_t available = seg->byteSize - offsetInSegment;
+  unsigned int wantSize = static_cast<unsigned int>(std::min<int64_t>(size, available));
+
+  int64_t rangeEnd = offsetInSegment + static_cast<int64_t>(wantSize) - 1;
+  std::string range = std::to_string(offsetInSegment) + "-" + std::to_string(rangeEnd);
+  std::string url = m_liveTimeshiftStream.segmentBaseUrl + seg->filename;
+
+  CURL* curl = static_cast<CURL*>(m_liveTimeshiftStream.curl);
+  if (!curl)
+  {
+    curl = curl_easy_init();
+    if (!curl)
+      return -1;
+    m_liveTimeshiftStream.curl = curl;
+  }
+
+  // No auth header: the plugin's own file server is deliberately
+  // unauthenticated (see plugin.py's module docstring).
+  FixedBufferSink sink{buffer, wantSize, 0};
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+  CURLcode res = curl_easy_perform(curl);
+  long httpCode = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+  if (res != CURLE_OK)
+  {
+    // Same "reused connection went stale" handling as ReadRecordingStream().
+    curl_easy_cleanup(curl);
+    m_liveTimeshiftStream.curl = nullptr;
+    return -1;
+  }
+  if (httpCode == 404)
+  {
+    // Segment got recycled between our manifest fetch and this read -- a
+    // real, expected race for a rolling buffer (the same one plugin.py's
+    // own do_GET/_create_snapshot already tolerate). Treat as "nothing
+    // readable here" rather than a hard error.
+    return 0;
+  }
+  if (httpCode != 200 && httpCode != 206)
+    return -1;
+
+  m_liveTimeshiftStream.position += static_cast<int64_t>(sink.written);
+  return static_cast<int>(sink.written);
+}
+
+int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
+{
+  if (!m_liveTimeshiftStream.open)
+    return -1;
+
+  if (whence == SEEK_END)
+  {
+    // "End" for a growing stream means the current known tail -- refresh
+    // first so a seek-to-live lands as close to the real live edge as
+    // possible rather than wherever we last happened to know about.
+    std::string refreshError;
+    RefreshLiveManifest(/*force=*/true, refreshError);
+  }
+
+  int64_t newPos;
+  switch (whence)
+  {
+    case SEEK_SET:
+      newPos = position;
+      break;
+    case SEEK_CUR:
+      newPos = m_liveTimeshiftStream.position + position;
+      break;
+    case SEEK_END:
+      newPos = m_liveTimeshiftStream.totalBytes + position;
+      break;
+    default:
+      return -1;
+  }
+  if (newPos < 0)
+    return -1;
+  // Clamp forward seeks to the known tail -- there's nothing to seek ahead
+  // of yet for a genuinely live buffer.
+  if (newPos > m_liveTimeshiftStream.totalBytes)
+    newPos = m_liveTimeshiftStream.totalBytes;
+
+  m_liveTimeshiftStream.position = newPos;
+  return newPos;
+}
+
+int64_t DispatcharrClient::GetLiveTimeshiftStreamLength()
+{
+  if (!m_liveTimeshiftStream.open)
+    return -1;
+  std::string refreshError;
+  RefreshLiveManifest(/*force=*/false, refreshError); // throttled, cheap to call often
+  return m_liveTimeshiftStream.totalBytes;
+}
+
+int64_t DispatcharrClient::GetLiveTimeshiftStreamDurationMs()
+{
+  if (!m_liveTimeshiftStream.open)
+    return 0;
+  std::string refreshError;
+  RefreshLiveManifest(/*force=*/false, refreshError);
+  return m_liveTimeshiftStream.totalDurationMs;
+}
+
+void DispatcharrClient::CloseLiveTimeshiftStream()
+{
+  if (m_liveTimeshiftStream.curl)
+    curl_easy_cleanup(static_cast<CURL*>(m_liveTimeshiftStream.curl));
+  m_liveTimeshiftStream = LiveTimeshiftStreamState();
 }
 
 } // namespace dispatcharr
