@@ -1148,4 +1148,15 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
      pausing or seeking around within the buffer, confirming real seek in
      both directions, pause/resume, and continued live-follow all work
      correctly together in one session, corruption-free, cross-platform.
+- **The `enable_inprogress_playback` opt-in setting itself was later
+  removed, once cross-platform verification above confirmed the feature
+  stable -- in-progress recording playback is now unconditional, the same
+  way playing a completed recording always has been.** `settings.xml`'s
+  toggle and its two strings (`#30036`/`#30037`) are gone;
+  `OpenRecordedStream()`/`GetRecordingStreamProperties()` check a
+  recording's live `isInProgress` status unconditionally now rather than
+  gating that check behind the old `m_enableInProgressPlayback` flag.
+  Confirmed live after the change: a fresh in-progress recording opened
+  and played correctly (`canseek: true`, growing `totaltime`, zero decode
+  errors) with no setting enabled at all -- there's nothing left to enable.
 

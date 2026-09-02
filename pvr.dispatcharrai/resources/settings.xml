@@ -90,7 +90,6 @@
           <constraints>
             <options>
               <option label="30051">0</option>
-              <option label="30052">1</option>
               <option label="30053">2</option>
             </options>
           </constraints>
@@ -106,11 +105,6 @@
 
     <category id="recordings" label="30035">
       <group id="1">
-        <setting id="enable_inprogress_playback" type="boolean" label="30036" help="30037">
-          <level>0</level>
-          <default>false</default>
-          <control type="toggle" />
-        </setting>
         <setting id="recording_refresh_minutes" type="integer" label="30038" help="30039">
           <level>1</level>
           <default>5</default>
