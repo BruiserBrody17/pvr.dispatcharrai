@@ -829,6 +829,35 @@ bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
   return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error);
 }
 
+bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, std::string& error)
+{
+  // Doesn't use CallTimeshiftPluginAction(): that helper requires
+  // http_port/playlist_route in the response, which stop_buffer's own
+  // {"status": "ok"} reply doesn't carry.
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json body = {
+      {"action", "stop_buffer"},
+      {"params", {{"channel_uuid", channelUuid}}},
+  };
+  json response;
+  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+    return false;
+  if (!FieldOr(response, "success", false))
+  {
+    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
+    return false;
+  }
+  const json& result = response.contains("result") ? response["result"] : json();
+  if (FieldOr<std::string>(result, "status", "") != "ok")
+  {
+    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
+    return false;
+  }
+  return true;
+}
+
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))
@@ -1618,17 +1647,31 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // Kodi's own ffmpeg demuxer is a brand-new instance on every Open(), with
   // no PTS index for anything it hasn't itself read yet in *this* session,
   // regardless of what our own byte-address-space nominally contains.
-  // Worse, GetStreamTimes() reporting the full multi-session duration back
-  // to Kodi threw off its own internal seek-time math (confirmed via
-  // SeekLiveTimeshiftStream tracing: a -3s request landed at the live edge,
-  // a -90s request landed at true byte 0 -- neither anywhere near the
-  // requested target), which is a materially worse fallback than a small,
-  // bounded one. Always starting fresh here keeps the fallback close by
-  // (bounded to the plugin's own rolling window) instead of however long
-  // this channel happens to have been buffering. Full-precision seeking
-  // works great *within* one continuous session (confirmed repeatedly);
-  // that's unaffected by this and isn't what broke.
   m_liveTimeshiftStream = LiveTimeshiftStreamState();
+
+  // Stop any buffer already running for this channel before starting a new
+  // one, so every Play gets a genuinely fresh ffmpeg process/segment
+  // sequence rather than reattaching to whatever's been accumulating since
+  // an earlier session (possibly a long time ago). This is what actually
+  // fixes seeking after a Stop/reopen (see docs/TIMESHIFT.md's "Known
+  // limitation" section for the full diagnosis): Kodi's own ffmpeg demuxer
+  // starts a fresh, empty seek index on every OpenLiveStream() regardless
+  // of what this addon's address space contains, so it can only seek
+  // reliably within what *this* demuxer instance has itself read since
+  // opening -- previously that meant seeking after a reopen would silently
+  // fall back to wherever the buffer's own true byte 0 happened to be,
+  // however long ago that was. Starting fresh here makes "byte 0" and "when
+  // this Kodi session's demuxer started reading" the same point again, the
+  // same alignment that already made full-precision seeking work within one
+  // continuous session. Trade-off: a second Kodi client (or profile)
+  // watching the same channel concurrently would have its own buffer torn
+  // out from under it -- the plugin's start_buffer is otherwise idempotent
+  // specifically to let multiple viewers share one upstream connection per
+  // channel; this trades that sharing away for correct per-session seeking,
+  // reasonable for a single-viewer setup. Best-effort: nothing running is
+  // not an error, and StartTimeshiftBuffer() below still works from cold.
+  std::string stopError;
+  StopTimeshiftBuffer(channelUuid, stopError);
 
   std::string unusedPlaylistUrl;
   if (!StartTimeshiftBuffer(channelUuid, unusedPlaylistUrl, error))

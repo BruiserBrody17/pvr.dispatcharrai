@@ -210,6 +210,15 @@ public:
   bool StartTimeshiftBuffer(const std::string& channelUuid,
                             std::string& playlistUrlOut,
                             std::string& error);
+  // Stops and discards the channel's currently-running server-side buffer
+  // (the plugin's own stop_buffer action -- kills ffmpeg, removes its
+  // segment files). OpenLiveTimeshiftStream() calls this before every
+  // StartTimeshiftBuffer() so each Play starts a genuinely fresh buffer
+  // rather than reattaching to whatever's still running from a previous
+  // session -- see its own comment for why. Best-effort: "nothing was
+  // running" is success, not an error, since there's nothing to prefer over
+  // starting fresh either way.
+  bool StopTimeshiftBuffer(const std::string& channelUuid, std::string& error);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   bool DeleteRecording(int recordingId, std::string& error);

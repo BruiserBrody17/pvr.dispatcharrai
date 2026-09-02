@@ -318,12 +318,12 @@ landed cleanly and playback continued. MLB Network: played ~40s, Stop,
 waited a few seconds, reopened -- resumed near the current live edge
 (matching elapsed real time), not the original stale start position.
 
-## Known limitation: seeking after a Stop/reopen doesn't land on target
+## Fixed: seeking after a Stop/reopen didn't land on target
 
 Real use surfaced a third issue the above testing didn't catch: seek
 *within* one continuous session is fully accurate (confirmed repeatedly,
 including the -95s multi-refresh rewind above), but after a Stop and
-reopen of the *same* channel, a subsequent seek -- of any size -- doesn't
+reopen of the *same* channel, a subsequent seek -- of any size -- didn't
 land where requested. It was first suspected to be an addon-side bug
 (tried preserving `m_liveTimeshiftStream`'s segment history across the
 Close/reopen so "rewind" could reach further back than the plugin's
@@ -345,22 +345,47 @@ the intended target -- Kodi/ffmpeg's own generic fallback for a backward
 seek it can't otherwise resolve, not a value this addon computed or
 clamped to. Kodi's own `SeekTime()` (`DVDDemuxFFmpeg.cpp`) only waits for
 *any* valid PTS after a seek, not one matching the requested target, so
-playback doesn't stall -- it just resumes forward from wherever the
+playback didn't stall -- it just resumed forward from wherever the
 fallback landed, exactly matching what was observed: "no matter what
 seeking I did, it always started playing the feed from the beginning of
 the initial playback."
 
-This is a Kodi/ffmpeg-core constraint on generic byte-stream mpegts
-demuxing without a pre-built index, not something addressable from this
-addon's side within the current architecture -- `CInputStreamPVRBase`
-(confirmed by reading its header) doesn't implement Kodi's `IPosTime`
-interface, which is the one hook that would let an input stream handle
-time-based seeks directly and bypass this entirely. `OpenLiveTimeshiftStream()`
-still always starts a fresh address space on every Open() (reverted the
-history-preservation attempt) since that at least bounds how far off the
-fallback target can land to the plugin's own rolling-window size, rather
-than however long the channel happens to have been buffering -- a real,
-if partial, improvement, and simpler than the alternative. Hitching and
-reopen-at-live-edge (the two fixes above) are both unaffected and remain
-confirmed working after this.
+`CInputStreamPVRBase` doesn't implement Kodi's `IPosTime` interface
+(confirmed by reading its header) -- the one hook that would let an input
+stream handle time-based seeks directly and bypass ffmpeg's generic
+byte-domain guessing entirely -- so this couldn't be fixed by intercepting
+the seek itself. **The actual fix: `OpenLiveTimeshiftStream()` now stops
+and restarts the channel's server-side buffer on every Open()** (a new
+`StopTimeshiftBuffer()`, calling the plugin's `stop_buffer` action, before
+`StartTimeshiftBuffer()`), instead of reattaching to whatever's already
+been running since a previous session. Every Play now gets a genuinely
+fresh ffmpeg process and segment sequence, so "byte 0" of this addon's
+address space and "where this session's demuxer started reading" are the
+same point again -- restoring exactly the alignment that already made
+seeking work within one continuous session, now for a freshly reopened one
+too.
+
+**Confirmed live**: reopened ESPN (1080p), let ~25s accumulate, then three
+seeks in the same reopened session -- `-15s` landed at 12.9s, a follow-up
+`+10s` landed at 95.0s (consistent with real elapsed time between them),
+and a deliberately-oversized `-1000s` landed at 0.4s, correctly clamped to
+the true start of the fresh buffer rather than some unrelated fallback
+point. The debug log showed a genuine multi-step binary search (probing
+byte 0, then near the tail, then narrowing between them) converging on
+each target, instead of the single-probe fallback-to-0 seen before this
+fix. No hitching on a cold buffer either (0 stalls across 45s on ESPN,
+30s on MLB Network) -- the margin-based near-live starting position
+(above) still applies on top of this, so a fresh buffer still gets a few
+seconds' cushion before playback starts rather than reading right at its
+own bleeding edge.
+
+**Trade-off**: stopping and restarting the buffer on every Open() means a
+second Kodi client (or profile) watching the same channel concurrently
+would have its buffer torn out from under it mid-playback -- the plugin's
+`start_buffer` is otherwise idempotent specifically so multiple viewers
+can share one upstream connection per channel (see the plugin's own
+README). This trades that sharing away for correct per-session seeking,
+which is the right trade for a single-viewer setup but worth knowing if
+this addon is ever used from more than one Kodi client against the same
+Dispatcharr account at once.
 
