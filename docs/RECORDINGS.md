@@ -1134,4 +1134,18 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
      errors afterward either, confirming a seek into a freshly-cached
      segment works correctly too, not just sequential reads within one
      already cached.
+     The companion session that originally caught this (real macOS
+     hardware-decoder testing) re-verified the fix independently right
+     after, this time covering everything the corrupted build had blocked
+     testing: forward seek (0:20, landed exactly on target, a brief
+     transient decode-error burst right at the seek transition matching
+     the same normal-decoder-resync pattern already seen on the completed-
+     recording path, then flat for the next 24s), pause (position held
+     frozen exactly across 8s, zero new errors), resume (continued from
+     the exact paused position, zero new errors), and backward seek (0:05,
+     landed exactly on target, a smaller resync blip, then clean) -- all
+     with `totaltime` continuing to grow the entire time regardless of
+     pausing or seeking around within the buffer, confirming real seek in
+     both directions, pause/resume, and continued live-follow all work
+     correctly together in one session, corruption-free, cross-platform.
 
