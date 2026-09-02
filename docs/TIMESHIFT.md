@@ -10,11 +10,19 @@ far as it goes, but **superseded below**: Dispatcharr does have a real,
 documented server-side Python plugin system (`Plugins.md`/`Plugin_repo.md`
 at its repo root), which turned out to be enough to build one after all.
 
-Two implementations now exist, picked by the `live_timeshift_mode` setting
-(off by default; was a plain `enable_live_timeshift` boolean before the
-server-side mode existed -- a deliberate breaking settings change, not
-preserved as a migration, since this addon was still effectively
-single-user at the time):
+Two implementations existed side by side for a while, picked by the
+`live_timeshift_mode` setting (off by default; was a plain
+`enable_live_timeshift` boolean before the server-side mode existed -- a
+deliberate breaking settings change, not preserved as a migration, since
+this addon was still effectively single-user at the time). **Local was
+later removed** once server-side proved stable through real use -- one
+less thing to choose between, and one less dependency on a separate addon
+for live channel playback at all. `live_timeshift_mode`'s value `1` (what
+local used to mean) is deliberately left unreused rather than renumbering
+server-side down to `1`, so an existing install with `2` already saved
+keeps meaning server-side. The two descriptions below are kept as-written
+for the history of why server-side won, not as a currently-available
+choice.
 
 **Local** (`live_timeshift_mode = 1`): `GetChannelStreamProperties()`
 routes live channel playback through `inputstream.ffmpegdirect`'s
