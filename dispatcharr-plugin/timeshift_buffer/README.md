@@ -149,6 +149,14 @@ legitimate capability), but `pvr.dispatcharrai` itself no longer uses it
    `apps/accounts/permissions.py` that the plugin run endpoint requires
    `IsAdmin` for POST, not just any authenticated user. `pvr.dispatcharrai`
    surfaces this as a clear log line if it's wrong, rather than a bare 403.
+7. Optional: set `stream_owner_username` to a Dispatcharr username so each
+   buffer's ffmpeg connection shows that user instead of "Anonymous" on the
+   Stats screen -- see that setting's own help text for why this is needed
+   at all (`stream_ts()`, the actual `/proxy/ts/stream/<uuid>` handler, is a
+   DRF view that only resolves a real user from a JWT `Authorization`
+   header, which a plain `ffmpeg -i <url>` connection never carries on its
+   own). Any existing admin username works, including the one this plugin's
+   own actions are already called with.
 
 ## Testing manually
 
