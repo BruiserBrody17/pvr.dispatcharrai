@@ -117,13 +117,36 @@ first, previously-working channel failed identically).
   actual playback are both completely fine. Not fixable from this addon's
   side (see above), but worth knowing before using that feature on a
   recording you also plan to watch normally once it's done.
-  **Not re-verified against the current native-demuxer in-progress
-  mechanism** -- that one also routes playback through Kodi's own
-  `CInputStreamPVRRecording`/native demuxer (the same class the
-  unaffected completed-recording path above uses), rather than delegating
-  to a separate inputstream addon the way the mechanism actually tested
-  here did, so whether this specific side effect still occurs is an open
-  question, not a confirmed carry-over.
+  **Re-verified against the current native-demuxer in-progress mechanism
+  and confirmed no longer reproducing.** Recorded a fresh 3-minute
+  recording, opened it via `Player.Open` 8 seconds after it started
+  (`canseek: false`, `time`/`totaltime` both `0` at that point -- as early
+  as this can realistically be caught), played roughly 15-20 real seconds
+  of it, then stopped. `kodi.log` confirmed
+  `CSaveFileState::DoWork - Saving file state for video item pvr://...`
+  fired on that stop -- the same file-state/stream-details-writing
+  machinery the original finding was rooted in, so this genuinely
+  exercised the mechanism rather than missing it. Stopped the underlying
+  Dispatcharr recording early (`POST .../stop/`, real recorded length
+  ~54s) and restarted Kodi fresh to force a clean re-fetch.
+  `PVR.GetRecordingDetails`' `runtime` showed `175` (this addon's own
+  `end_time - start_time` value, matching the already-documented -- and
+  separate -- "stopping early doesn't rewrite `end_time`" quirk noted
+  elsewhere in this file, not a stuck small value), and opening the
+  completed file for actual playback showed a live `totaltime` of `1:01`,
+  closely matching its real recorded length -- both numbers internally
+  consistent with a correctly-probed file, not a leftover small value
+  from the early session (which would have looked like something under
+  ~20-30s, not either of these). Repeated once more (fresh recording,
+  same method) with the same result. Reran with the exact same
+  reproduction steps that caught the original bug, and it's gone --
+  whether that's because the current mechanism routes through
+  `CInputStreamPVRRecording`'s own native demuxer (the same class the
+  always-unaffected completed-recording path uses) rather than a separate
+  inputstream addon's differently-behaved reporting, as originally
+  guessed above, wasn't traced further in Kodi-core source to confirm as
+  the actual mechanism -- but the observed behavior itself is confirmed
+  live, twice, not just plausible.
   Not something this addon can fix or work around: there's no PVR client
   API to tell Kodi "forget the stream details/library metadata you
   cached for this file," and this addon doesn't (and shouldn't) touch
