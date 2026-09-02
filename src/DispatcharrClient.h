@@ -173,7 +173,6 @@ public:
   // client only returns the raw document.
   bool GetXmlTvGuide(std::string& xmlOut, std::string& error);
 
-  std::string GetLiveStreamUrl(const Channel& channel) const;
   // logoId is a Logo object's own id (Channel::logoId), not the channel's id.
   std::string GetChannelLogoUrl(int logoId) const;
 
