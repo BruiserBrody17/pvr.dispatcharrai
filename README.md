@@ -7,10 +7,13 @@ in Kodi map directly onto Dispatcharr's own backend and settings --
 similar in spirit to how the TVHeadend PVR addon (`pvr.hts`) works against
 a TVHeadend server.
 
-Targets: Windows, macOS, and CoreELEC (aarch64, tested against an ODROID
-N2+). See `docs/BUILDING.md` for platform-specific build steps -- CoreELEC
-in particular needs a bit more than a plain cross-compile; that's explained
-there rather than glossed over.
+Targets: Windows and macOS, both confirmed working through real use.
+CoreELEC (aarch64, an ODROID N2+ is the reference device) is also a target
+but not yet confirmed against a real device -- see `docs/BUILDING.md` for
+platform-specific build steps, including why CoreELEC in particular needs
+more than a plain cross-compile and exactly which parts of that build path
+are still unverified rather than glossed over. CI also builds a generic
+Linux (x86_64) zip on every push; see `.github/workflows/build.yml`.
 
 ## Status
 
