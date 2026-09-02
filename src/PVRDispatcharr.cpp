@@ -594,7 +594,7 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
   // source's own manifest gets refreshed -- that growth, reported live, is
   // what gives real pause/rewind/live-follow instead of the
   // fixed-duration-or-nothing ffmpegdirect route this replaced (see
-  // docs/TIMESHIFT.md and docs/INPROGRESS_RECORDINGS.md).
+  // docs/TIMESHIFT.md and docs/RECORDINGS.md).
   //
   // CInputStreamPVRRecording extends the same CInputStreamPVRBase as
   // CInputStreamPVRChannel (confirmed in Kodi-core source), so this same
