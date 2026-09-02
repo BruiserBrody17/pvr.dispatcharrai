@@ -617,6 +617,19 @@ private:
     int64_t totalDurationMs = 0;
     int64_t position = 0;
     std::chrono::steady_clock::time_point lastManifestFetch{};
+    // Set by SeekLiveTimeshiftStream() on every call. ReadLiveTimeshiftStream()
+    // uses this to tell "this read is likely one of ffmpeg's own internal
+    // seek probes" apart from "normal sequential playback that's caught up
+    // to live" when deciding how long to wait for the tail to grow -- see
+    // its own comment for why that distinction matters.
+    std::chrono::steady_clock::time_point lastSeekTime{};
+    // Position where a short (likely-probe) catch-up wait last gave up, so
+    // a later read landing at that exact same position -- meaning it's not
+    // a fresh probe candidate anymore, ffmpeg is genuinely stuck waiting
+    // there -- escalates to the full segment-duration budget instead of
+    // repeating the short one indefinitely. See ReadLiveTimeshiftStream()'s
+    // own comment.
+    int64_t lastShortGiveUpPosition = -1;
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
   };
   LiveTimeshiftStreamState m_liveTimeshiftStream;
