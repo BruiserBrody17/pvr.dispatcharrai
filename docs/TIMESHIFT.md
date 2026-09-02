@@ -389,3 +389,37 @@ which is the right trade for a single-viewer setup but worth knowing if
 this addon is ever used from more than one Kodi client against the same
 Dispatcharr account at once.
 
+## Follow-up bug from the fresh-buffer fix: repeated "live playlist not found"
+
+The fresh-buffer-per-Open fix above introduced its own regression, caught
+via real use: a Stop followed by Play sometimes failed outright
+(`failed to open server-side timeshift stream ...: live playlist not
+found -- the buffer may not have produced any segments yet`), and once it
+happened once, it kept happening on every retry until the stream was
+stopped directly in Dispatcharr (not just re-tried from Kodi).
+
+Root cause, confirmed via direct testing against the plugin's own actions
+(`start_buffer`/`stop_buffer`/`get_live_manifest`) and Dispatcharr's own
+`/proxy/ts/status/<uuid>`: when `start_buffer` reattached to an
+already-running buffer (the old behavior), it returned instantly with
+content already available. Now that every Open() forces a genuinely fresh
+ffmpeg process, that process needs a real few seconds to connect to
+Dispatcharr's live proxy and produce a full first segment
+(`segment_seconds`, 6s by default) before there's a playlist to report at
+all -- `OpenLiveTimeshiftStream()` was failing on the very first check
+instead of allowing for that. Worse, retrying Play right after such a
+failure made it *worse*, not better: each retry's own `StopTimeshiftBuffer()`
+call killed the previous attempt's buffer moments before it would have
+finished starting, repeating indefinitely -- a self-perpetuating failure
+loop that only broke once a manual stop in Dispatcharr (not immediately
+followed by a Kodi-triggered restart) let a buffer finally start
+undisturbed.
+
+Fixed by giving `OpenLiveTimeshiftStream()` a real cold-start grace
+period: it now retries `RefreshLiveManifest()` for up to 15 seconds (30
+attempts, 500ms apart) instead of failing on the first check. **Confirmed
+live**: three consecutive Stop -> wait 2s -> Play cycles on ESPN (1080p),
+all three succeeded cleanly with zero "live playlist not found" errors
+(previously this failed every time); a genuinely cold first Open also
+succeeded within the retry window with no hitching afterward (0 stalls).
+
