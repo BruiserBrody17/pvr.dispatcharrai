@@ -658,13 +658,15 @@ class Plugin:
     author = "BruiserBrody17"
     help_url = "https://github.com/BruiserBrody17/pvr.dispatcharrai/tree/master/dispatcharr-plugin/timeshift_buffer"
 
-    # Kept in sync with plugin.json by hand -- the Quick Start example in
-    # Plugins.md duplicates fields/actions across both files rather than
-    # treating one as authoritative, so this does the same rather than
-    # risking the loader actually reading these from the class and finding
-    # them empty. TODO(verify): confirm whether plugin.json alone would
-    # have been sufficient once the plugin is enabled, or whether these
-    # class attributes are genuinely required at that point.
+    # The single source of truth for fields/actions -- confirmed live that
+    # plugin.json's own copies (which Plugins.md's Quick Start example
+    # duplicates alongside these, but this project doesn't) are never
+    # actually read: PluginImportAPIView hardcodes an empty fields/actions
+    # preview for a not-yet-trusted plugin regardless of plugin.json, and
+    # once trusted/loaded, the running Plugin class (here) is what's
+    # actually introspected. Tested directly: stripping fields/actions out
+    # of plugin.json entirely while leaving this class untouched produced
+    # an identical plugin listing.
     fields = [
         {
             "id": "about", "label": "About", "type": "info",

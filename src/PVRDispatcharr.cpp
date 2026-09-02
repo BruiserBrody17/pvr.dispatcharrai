@@ -26,7 +26,6 @@ dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
   config.verifySsl = kodi::addon::GetSettingBoolean("verify_ssl", true);
   config.timeoutSeconds = kodi::addon::GetSettingInt("timeout", 30);
   config.debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
-  config.channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   config.apiKey = kodi::addon::GetSettingString("api_key", "");
   return config;
 }
@@ -36,7 +35,6 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
-  m_channelSwitchDelaySeconds = kodi::addon::GetSettingInt("channel_switch_delay_seconds", 0);
   m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
   m_enableInProgressPlayback = kodi::addon::GetSettingBoolean("enable_inprogress_playback", false);
   m_enableCatchupFfmpegdirectSeek =
@@ -468,17 +466,6 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
     streamUrl = m_client.GetLiveStreamUrl(*ch);
     channelUuid = ch->uuid;
   }
-
-  // Off (0) by default. Added while diagnosing a "channel N+1 never plays"
-  // failure on the theory that Dispatcharr's proxy needed a moment to
-  // release the previous connection -- it didn't help (the real cause was
-  // an unreachable IPv6 route to the Dispatcharr host, see
-  // docs/API_NOTES.md), so don't expect this alone to fix that class of
-  // symptom. Left available as a settings.xml option in case a genuinely
-  // different setup needs it. Runs with m_dataMutex already released so it
-  // doesn't block other addon calls in the meantime.
-  if (m_channelSwitchDelaySeconds > 0)
-    std::this_thread::sleep_for(std::chrono::seconds(m_channelSwitchDelaySeconds));
 
   // Live pause/rewind ("timeshift") has two mutually exclusive
   // implementations, picked by live_timeshift_mode -- see docs/API_NOTES.md

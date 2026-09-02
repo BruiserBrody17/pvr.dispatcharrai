@@ -85,14 +85,6 @@ msgctxt "#30024"
 msgid "How often to re-fetch the channel and group list from Dispatcharr."
 msgstr ""
 
-msgctxt "#30025"
-msgid "Delay before switching channels (seconds)"
-msgstr ""
-
-msgctxt "#30026"
-msgid "Off (0) by default. If switching channels fails or times out, first check whether your Dispatcharr host resolves to an unreachable IPv6 address -- that's the far more common cause. Only raise this if a specific Dispatcharr/provider setup genuinely needs a moment between switches."
-msgstr ""
-
 msgctxt "#30027"
 msgid "Live TV pause/rewind (timeshift)"
 msgstr ""

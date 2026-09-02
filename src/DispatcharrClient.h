@@ -84,12 +84,6 @@ struct Config
   bool verifySsl = true;
   int timeoutSeconds = 30;
   bool debugLogging = false;
-  // Optional delay before handing Kodi a new channel's stream URL. Added
-  // while diagnosing a channel-switching failure that turned out to be an
-  // unrelated IPv6/DNS issue (see docs/API_NOTES.md) -- a delay didn't fix
-  // that, so this defaults to off. Left available in case a genuinely
-  // different Dispatcharr/provider setup needs a moment between switches.
-  int channelSwitchDelaySeconds = 0;
   // Long-lived Dispatcharr API key, used only to authenticate recording
   // playback (see OpenRecordingStream()) -- unlike the JWT access token
   // (30-minute lifetime), this doesn't expire on its own. It CAN still go

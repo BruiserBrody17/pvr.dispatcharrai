@@ -123,7 +123,6 @@ private:
   std::chrono::steady_clock::time_point m_epgLoadedAt{};
   int m_channelRefreshHours = 12;
   int m_epgRefreshHours = 4;
-  int m_channelSwitchDelaySeconds = 0;
   // 0 = off, 1 = local (inputstream.ffmpegdirect's own on-device buffer),
   // 2 = server-side (this addon's companion Dispatcharr plugin -- see
   // dispatcharr-plugin/timeshift_buffer/ in this repo). Was a plain
