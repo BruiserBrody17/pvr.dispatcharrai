@@ -447,6 +447,45 @@ def _proxy_url(channel_uuid: str, base_url: str) -> str:
     return f"{base_url.rstrip('/')}/proxy/ts/stream/{channel_uuid}"
 
 
+def _stream_owner_auth_header(settings_dict: dict, logger):
+    """Returns an `Authorization: Bearer ...\\r\\n` header (ffmpeg's -headers
+    format) for the stream_owner_username setting, or None if that setting
+    is blank or resolving it fails. stream_ts() (apps/proxy/live_proxy/
+    views.py) is decorated @api_view, so it's a DRF view -- request.user is
+    only ever populated from DEFAULT_AUTHENTICATION_CLASSES (JWTAuthentication
+    plus this project's own ApiKeyAuthentication), never from a plain
+    unauthenticated GET the way ffmpeg's own -i connection makes one.
+    Without this, the connection registers with user=None, and
+    StreamConnectionCard.jsx (frontend) shows any uid that's falsy or the
+    string '0' as 'Anonymous' -- confirmed by reading both files, not
+    guessed. Generating the token directly via rest_framework_simplejwt
+    (this plugin runs in-process with Django, same as any other app) avoids
+    an extra HTTP round trip through the same login flow pvr.dispatcharrai
+    itself uses against /api/accounts/token/."""
+    username = (settings_dict.get("stream_owner_username") or "").strip()
+    if not username:
+        return None
+    try:
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        User = get_user_model()
+        user = User.objects.get(username=username)
+        access_token = str(RefreshToken.for_user(user).access_token)
+        return f"Authorization: Bearer {access_token}\r\n"
+    except Exception:
+        # Best-effort: a buffer that streams anonymously is still a working
+        # buffer. Don't let a typo'd username or an import hiccup block
+        # start_buffer entirely.
+        logger.exception(
+            "timeshift_buffer: couldn't mint a stream-owner token for user %r -- "
+            "buffer will stream anonymously (check stream_owner_username matches "
+            "an existing Dispatcharr username)",
+            username,
+        )
+        return None
+
+
 def _start_ffmpeg(channel_uuid: str, settings_dict: dict, logger) -> dict:
     storage_path = settings_dict.get("storage_path", "/data/timeshift")
     segment_seconds = int(settings_dict.get("segment_seconds", 6))
@@ -487,10 +526,18 @@ def _start_ffmpeg(channel_uuid: str, settings_dict: dict, logger) -> dict:
     # landing on the target. Leaving timestamps continuous across segments
     # (matching how real-world HLS packagers do it) is what a seek needs to
     # actually resolve to a real position within the file.
+    auth_header = _stream_owner_auth_header(settings_dict, logger)
+
     cmd = [
         "ffmpeg",
         "-nostdin",
         "-loglevel", "warning",
+    ]
+    if auth_header:
+        # Must precede -i: ffmpeg applies -headers to the input that
+        # follows it, not globally.
+        cmd += ["-headers", auth_header]
+    cmd += [
         "-i", _proxy_url(channel_uuid, base_url),
         "-c", "copy",
         "-f", "segment",
@@ -881,6 +928,25 @@ class Plugin:
                 "docker-compose setup; if your deployment routes the web "
                 "service differently (e.g. through a Unix socket behind "
                 "nginx rather than a plain TCP port), adjust this to match."
+            ),
+        },
+        {
+            "id": "stream_owner_username", "label": "Attribute streams to (username)", "type": "string",
+            "default": "",
+            "help_text": (
+                "Dispatcharr username to credit each buffer's ffmpeg "
+                "connection to in the Stats screen -- without this, every "
+                "buffer shows as 'Anonymous' there, confirmed live: "
+                "stream_ts() (apps/proxy/live_proxy/views.py) is a DRF "
+                "view, so it only resolves request.user from a JWT "
+                "Authorization header, and ffmpeg's own -i connection to "
+                "/proxy/ts/stream/<uuid> carries none by default. Leave "
+                "blank to keep the current anonymous behavior. Set to an "
+                "admin username (the same account already required to "
+                "call this plugin's own actions works) to have the plugin "
+                "mint a short-lived access token server-side (via "
+                "rest_framework_simplejwt, no extra HTTP round trip) and "
+                "pass it to ffmpeg as an Authorization header."
             ),
         },
         {
