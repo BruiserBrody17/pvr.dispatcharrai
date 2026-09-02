@@ -101,19 +101,29 @@ first, previously-working channel failed identically).
   small probed duration can win; empty, neither happens.
   Narrowed down further which playback path actually populates it: the
   one affected recording here was specifically played through this
-  addon's **in-progress playback feature**
-  (`enable_inprogress_playback`, routed through the separate
-  `inputstream.ffmpegdirect` addon) while it was still being written; the
-  unaffected one was only ever played through this addon's native
-  completed-recording path (`OpenRecordedStream()`/`CInputStreamPVRRecording`).
-  That's a real, mechanistic difference, not a coincidence: it means
-  **using the in-progress playback feature to check in on a recording
-  early has a lasting side effect on how Kodi displays it later, once
-  it's completed** -- a permanently wrong duration in the library view,
-  even though the recording itself and its actual playback are both
-  completely fine. Not fixable from this addon's side (see above), but
-  worth knowing before using that feature on a recording you also plan
-  to watch normally once it's done.
+  addon's **in-progress playback feature** while it was still being
+  written (at the time, gated behind the now-removed
+  `enable_inprogress_playback` setting and routed through the separate
+  `inputstream.ffmpegdirect` addon -- see `docs/RECORDINGS.md` for the
+  native-demuxer mechanism, unconditional and no longer routed through
+  ffmpegdirect at all, that later replaced it); the unaffected one was
+  only ever played through this addon's native completed-recording path
+  (`OpenRecordedStream()`/`CInputStreamPVRRecording`). That's a real,
+  mechanistic difference, not a coincidence, for the mechanism as it
+  existed at the time: it means **using the in-progress playback feature
+  to check in on a recording early has a lasting side effect on how Kodi
+  displays it later, once it's completed** -- a permanently wrong
+  duration in the library view, even though the recording itself and its
+  actual playback are both completely fine. Not fixable from this addon's
+  side (see above), but worth knowing before using that feature on a
+  recording you also plan to watch normally once it's done.
+  **Not re-verified against the current native-demuxer in-progress
+  mechanism** -- that one also routes playback through Kodi's own
+  `CInputStreamPVRRecording`/native demuxer (the same class the
+  unaffected completed-recording path above uses), rather than delegating
+  to a separate inputstream addon the way the mechanism actually tested
+  here did, so whether this specific side effect still occurs is an open
+  question, not a confirmed carry-over.
   Not something this addon can fix or work around: there's no PVR client
   API to tell Kodi "forget the stream details/library metadata you
   cached for this file," and this addon doesn't (and shouldn't) touch

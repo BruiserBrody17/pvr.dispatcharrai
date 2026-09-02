@@ -42,31 +42,35 @@ This is a first working scaffold, not a finished addon. Implemented:
   at the cost of occasionally-slow (usually ~10-20s, rarely longer) seeks
   -- requires `inputstream.ffmpegdirect` to be installed
 - Optional live TV pause/rewind ("timeshift"), via the `live_timeshift_mode`
-  setting (off by default): either buffered locally to Kodi-device disk via
-  the separate `inputstream.ffmpegdirect` addon, or a server-side rolling
-  buffer held by Dispatcharr itself, via a companion Dispatcharr plugin
-  shipped alongside this addon (`dispatcharr-plugin/timeshift_buffer/` in
-  this repo, installed separately on your Dispatcharr instance, not through
-  Kodi; requires the Dispatcharr account configured above to be an admin
-  account). Both modes give real pause/rewind/fast-forward from a plain
-  Play, no extra step -- server-side mode does this by exposing the
-  Dispatcharr-held buffer through this addon's own
+  setting (off by default): a server-side rolling buffer held by
+  Dispatcharr itself, via a companion Dispatcharr plugin shipped alongside
+  this addon (`dispatcharr-plugin/timeshift_buffer/` in this repo,
+  installed separately on your Dispatcharr instance, not through Kodi;
+  requires the Dispatcharr account configured above to be an admin
+  account). Real pause/rewind/fast-forward from a plain Play, no extra
+  step -- exposes the Dispatcharr-held buffer through this addon's own
   `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` implementation so
   Kodi's native demuxer handles seeking directly, rather than routing
-  through `inputstream.ffmpegdirect` (an earlier approach that did that,
-  and was confirmed live to have unfixable seeking -- see
-  `docs/TIMESHIFT.md` for that investigation and the architecture that
-  replaced it). Confirmed live end-to-end, including a 95-second rewind
-  spanning several buffer refreshes. See `docs/TIMESHIFT.md` and that
-  plugin's own `README.md`
-- Optional in-progress recording playback (`enable_inprogress_playback`
-  setting, off by default) -- lets you start watching a recording before
-  Dispatcharr finishes writing it, from the true beginning, with real
-  pause/rewind/fast-forward *and* live-follow together in the same
-  session, no mutually-exclusive trade-off. Uses the same growing-buffer,
-  native-demuxer architecture as server-side live timeshift above --
-  Dispatcharr's in-progress recording HLS output is exposed through this
-  addon's own `OpenRecordedStream`/`ReadRecordedStream`/`SeekRecordedStream`
+  through the separate `inputstream.ffmpegdirect` addon (an earlier
+  approach that did that, and was confirmed live to have unfixable
+  seeking -- see `docs/TIMESHIFT.md` for that investigation and the
+  architecture that replaced it). This addon also used to offer a second,
+  local mode buffered to Kodi-device disk via `inputstream.ffmpegdirect`
+  instead; removed once server-side proved stable, so there's now one
+  real implementation rather than a choice between two. Confirmed live
+  end-to-end, including a 95-second rewind spanning several buffer
+  refreshes. See `docs/TIMESHIFT.md` and that plugin's own `README.md`
+- In-progress recording playback -- lets you start watching a recording
+  before Dispatcharr finishes writing it, from the true beginning, with
+  real pause/rewind/fast-forward *and* live-follow together in the same
+  session, no mutually-exclusive trade-off, and no setting required (this
+  addon used to gate it behind an opt-in `enable_inprogress_playback`
+  setting; removed once the feature proved stable, so it now behaves the
+  same as playing a completed recording -- just press Play). Uses the
+  same growing-buffer, native-demuxer architecture as server-side live
+  timeshift above -- Dispatcharr's in-progress recording HLS output is
+  exposed through this addon's own
+  `OpenRecordedStream`/`ReadRecordedStream`/`SeekRecordedStream`
   implementation so Kodi's native demuxer handles seeking directly, rather
   than routing through `inputstream.ffmpegdirect` (an earlier approach
   that did that, and was confirmed live to have seek and live-follow

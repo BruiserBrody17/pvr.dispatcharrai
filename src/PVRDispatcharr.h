@@ -110,7 +110,13 @@ private:
   static constexpr int kTimerTypeSeries = 2;
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
   static constexpr int kLiveTimeshiftOff = 0;
-  static constexpr int kLiveTimeshiftLocal = 1;
+  // 1 used to be "local" (inputstream.ffmpegdirect's own on-device buffer),
+  // removed once server-side timeshift proved stable -- deliberately left
+  // unreused rather than renumbering kLiveTimeshiftServer down to 1, so an
+  // existing install with 2 already saved keeps meaning server-side rather
+  // than silently losing it (see m_liveTimeshiftMode's own comment on why
+  // this addon treats a persisted setting value as something to never
+  // repurpose).
   static constexpr int kLiveTimeshiftServer = 2;
 
   dispatcharr::Config LoadConfigFromSettings() const;
@@ -131,18 +137,17 @@ private:
   std::chrono::steady_clock::time_point m_epgLoadedAt{};
   int m_channelRefreshHours = 12;
   int m_epgRefreshHours = 4;
-  // 0 = off, 1 = local (inputstream.ffmpegdirect's own on-device buffer),
-  // 2 = server-side (this addon's companion Dispatcharr plugin -- see
-  // dispatcharr-plugin/timeshift_buffer/ in this repo). Was a plain
-  // enable_live_timeshift boolean before the server-side mode existed;
-  // kept both live-timeshift.xml/strings ids and this field name for the
-  // "off"/"local" cases to stay recognisable, but this is a breaking
-  // settings change for anyone with the old boolean already saved -- it
-  // just falls back to the new default (0/off) rather than silently
-  // mapping true to something (which of the two non-off modes an existing
-  // "true" should mean isn't knowable).
+  // 0 = off, 2 = server-side (this addon's companion Dispatcharr plugin --
+  // see dispatcharr-plugin/timeshift_buffer/ in this repo); 1 (local,
+  // inputstream.ffmpegdirect's own on-device buffer) was removed once
+  // server-side proved stable -- see kLiveTimeshiftServer's own comment on
+  // why 1 stays unreused rather than the two remaining values getting
+  // renumbered down. Was a plain enable_live_timeshift boolean before the
+  // server-side mode existed; kept this field name for the "off" case to
+  // stay recognisable, but that was a breaking settings change for anyone
+  // with the old boolean already saved -- it just fell back to the new
+  // default (0/off) rather than silently mapping true to something.
   int m_liveTimeshiftMode = 0;
-  bool m_enableInProgressPlayback = false;
   bool m_enableCatchupFfmpegdirectSeek = false;
   bool m_debugLogging = false;
 
