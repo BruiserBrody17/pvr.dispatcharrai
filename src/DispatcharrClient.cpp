@@ -2010,6 +2010,27 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamDurationMs()
 
 void DispatcharrClient::CloseLiveTimeshiftStream()
 {
+  // Stop the server-side buffer here too, not only at the start of the
+  // next OpenLiveTimeshiftStream() -- confirmed live that without this,
+  // Dispatcharr's own stream/client state for the channel (and the
+  // underlying ffmpeg process) stuck around until either the user pressed
+  // Play again or the plugin's own idle-timeout reaper noticed (2 minutes
+  // by default) -- neither is "as close to Stop as possible". Detached: a
+  // network round trip (plus the plugin's own up-to-5s SIGTERM-then-
+  // SIGKILL grace period for the ffmpeg process) has no business blocking
+  // Kodi's calling thread just to tear this down. Safe to race against a
+  // near-immediate reopen's own StopTimeshiftBuffer() call for the same
+  // channel -- the plugin's stop_buffer action is idempotent and its file
+  // cleanup already tolerates "already gone" (confirmed in plugin.py).
+  if (m_liveTimeshiftStream.open && !m_liveTimeshiftStream.channelUuid.empty())
+  {
+    std::string channelUuid = m_liveTimeshiftStream.channelUuid;
+    std::thread([this, channelUuid]() {
+      std::string stopError;
+      StopTimeshiftBuffer(channelUuid, stopError);
+    }).detach();
+  }
+
   if (m_liveTimeshiftStream.curl)
     curl_easy_cleanup(static_cast<CURL*>(m_liveTimeshiftStream.curl));
   m_liveTimeshiftStream = LiveTimeshiftStreamState();
