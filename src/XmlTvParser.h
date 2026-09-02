@@ -12,9 +12,22 @@ struct EpgEntry
 {
   std::string channelXmltvId;
   std::string title;
-  std::string subtitle;
+  std::string subtitle; // xmltv <sub-title> -- episode title, not a plot summary
   std::string description;
-  std::string genre;
+  std::vector<std::string> categories; // xmltv <category>, 0+ (can repeat)
+  std::string iconPath;                // xmltv <icon src="..."> -- per-programme
+                                        // poster/artwork, distinct from the
+                                        // channel's own logo
+  std::string cast;     // joined actor/presenter/guest/producer/commentator/
+                         // composer/editor credits, comma-separated
+                         // (EPG_STRING_TOKEN_SEPARATOR)
+  std::string director; // joined <credits><director>, comma-separated
+  std::string writer;   // joined <credits><writer>/<adapter>, comma-separated
+  int year = 0;          // parsed from <date>'s leading YYYY; 0 = unknown
+  std::string firstAired; // <date> verbatim (YYYY-MM-DD or just YYYY), empty = unknown
+  bool isNew = false;      // <new/> present
+  bool isPremiere = false; // <premiere/> present
+  bool isLive = false;     // <live/> present
   time_t startTime = 0;
   time_t endTime = 0;
   int seasonNumber = -1;  // -1 = unknown; xmltv_ns is 0-indexed, we store as

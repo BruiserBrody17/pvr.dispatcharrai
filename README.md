@@ -19,7 +19,13 @@ This is a first working scaffold, not a finished addon. Implemented:
 - JWT login (with reactive refresh-on-401) against Dispatcharr's own
   `/api/accounts/token/`
 - Channel + channel-group listing
-- EPG via Dispatcharr's XMLTV output (`/output/epg`)
+- EPG via Dispatcharr's XMLTV output (`/output/epg`), including per-programme
+  posters, "New"/"Premiere"/"Live" badges, genre (with content-type colour
+  coding, not just a flat label), cast, and episode names when the
+  underlying EPG source (e.g. Schedules Direct) provides them -- confirmed
+  live to match what TVHeadend's `pvr.hts` shows for the same kind of
+  source; see `docs/API_NOTES.md` for exactly which XMLTV elements map to
+  what, and what's deliberately not mapped
 - Live channel playback via Dispatcharr's stream proxy
   (`/proxy/ts/stream/{uuid}`)
 - Recording listing, playback, and deletion
@@ -35,10 +41,26 @@ This is a first working scaffold, not a finished addon. Implemented:
   `inputstream.ffmpegdirect` instead for noticeably more precise seeking,
   at the cost of occasionally-slow (usually ~10-20s, rarely longer) seeks
   -- requires `inputstream.ffmpegdirect` to be installed
-- Optional live TV pause/rewind ("timeshift"), via the separate
-  `inputstream.ffmpegdirect` addon (`enable_live_timeshift` setting, off by
-  default) -- buffered to local disk on the Kodi device, not held
-  server-side by Dispatcharr; see `docs/API_NOTES.md`
+- Optional live TV pause/rewind ("timeshift"), via the `live_timeshift_mode`
+  setting (off by default): either buffered locally to Kodi-device disk via
+  the separate `inputstream.ffmpegdirect` addon, or a server-side rolling
+  buffer held by Dispatcharr itself, via a companion Dispatcharr plugin
+  shipped alongside this addon (`dispatcharr-plugin/timeshift_buffer/` in
+  this repo, installed separately on your Dispatcharr instance, not through
+  Kodi; requires the Dispatcharr account configured above to be an admin
+  account). The server-side live buffer plays back cleanly end-to-end,
+  confirmed live, but genuinely can't seek -- a real Kodi-core limitation
+  (seeking needs a known, finite duration; a perpetually-growing live
+  buffer can't offer one), not a bug. A context-menu action on the channel,
+  "Instant replay from buffer", restarts playback from a fixed point in
+  what's been buffered so far -- confirmed live end-to-end. **This is a
+  fixed-point replay, not real seek/rewind:** attempting to scrub within
+  that playback currently hangs it (confirmed via multiple live tests and
+  one fix attempt, all failing identically -- a real, unresolved
+  `inputstream.ffmpegdirect` limitation, not a bug in this addon's own
+  code; see `docs/API_NOTES.md` for the full investigation). If you want
+  actual pause/rewind on live TV, use Local mode instead, which has it.
+  See `docs/API_NOTES.md` and that plugin's own `README.md`
 - Optional in-progress recording playback (`enable_inprogress_playback`
   setting, off by default, experimental), also via
   `inputstream.ffmpegdirect` -- lets you start watching a recording before
