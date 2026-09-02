@@ -354,14 +354,6 @@ void* DispatcharrClient::GetCurlShare() const
   return state ? state->handle : nullptr;
 }
 
-void DispatcharrClient::UpdateConfig(Config config)
-{
-  std::lock_guard<std::mutex> lock(m_authMutex);
-  m_config = std::move(config);
-  m_accessToken.clear();
-  m_refreshToken.clear();
-}
-
 std::string DispatcharrClient::BaseUrl() const
 {
   std::string scheme = m_config.useHttps ? "https://" : "http://";

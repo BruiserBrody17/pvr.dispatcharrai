@@ -15,11 +15,6 @@
 
 using namespace dispatcharr;
 
-namespace
-{
-constexpr int kAccessDeniedLogThrottle = 1; // placeholder for future rate-limited logging
-}
-
 dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
 {
   Config config;
@@ -246,9 +241,6 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
 
 PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabilities)
 {
-  // TODO(verify): confirm exact setter names against your installed
-  // <kodi/addon-instance/pvr/General.h> -- these names have been stable
-  // for several Kodi PVR API generations but should be spot-checked.
   capabilities.SetSupportsTV(true);
   capabilities.SetSupportsRadio(false);
   capabilities.SetSupportsEPG(true);
@@ -1280,8 +1272,6 @@ int64_t PVRDispatcharr::LengthRecordedStream()
 
 PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& types)
 {
-  // TODO(verify): PVR_TIMER_TYPE_* flag names against
-  // <kodi/addon-instance/pvr/Timers.h> for your target Kodi version.
   kodi::addon::PVRTimerType oneTime;
   oneTime.SetId(kTimerTypeOneTime);
   oneTime.SetAttributes(PVR_TIMER_TYPE_IS_MANUAL | PVR_TIMER_TYPE_SUPPORTS_CHANNELS |
