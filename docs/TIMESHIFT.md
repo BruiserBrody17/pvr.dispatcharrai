@@ -529,3 +529,35 @@ internal clock, not from the EPG-derived display value. For precise
 absolute-position testing, read `Player.Time`/`Player.Duration` (or the
 `PVR.Timeshift*` labels) via `XBMC.GetInfoLabels` instead.
 
+## Buffer teardown was slow to notice a Stop
+
+Real use surfaced one more gap: `CloseLiveTimeshiftStream()` (called on a
+plain Stop) only ever reset this addon's own local state -- it never told
+the plugin to actually stop the server-side buffer. That only happened at
+the *start* of the next `OpenLiveTimeshiftStream()` (see the fresh-buffer
+fix above), so between a Stop and the next Play (or never, if the user
+didn't come back to that channel), the buffer's ffmpeg process and
+Dispatcharr's own upstream client registration for it just kept running
+until the plugin's own idle-timeout reaper eventually noticed -- confirmed
+against `idle_timeout_seconds`'s default of 120s in plugin.py, matching
+what was observed live (Dispatcharr's own `/proxy/ts/status/<uuid>` still
+showing `state: active` for about two minutes after Stop).
+
+Fixed by having `CloseLiveTimeshiftStream()` also call `StopTimeshiftBuffer()`
+(a new addon-side wrapper around the plugin's existing `stop_buffer`
+action), on a detached background thread so the network round trip (plus
+the plugin's own up-to-5s SIGTERM-then-SIGKILL grace period for the ffmpeg
+process) doesn't block Kodi's calling thread just to tear this down. Safe
+against a near-immediate reopen's own (synchronous) `StopTimeshiftBuffer()`
+call for the same channel racing this one -- `stop_buffer` is idempotent
+and its file cleanup already tolerates "already gone" (confirmed in
+plugin.py's `_remove_channel_files`), so no plugin-side change was needed.
+
+**Confirmed live**: Stop, then polled Dispatcharr's own
+`/proxy/ts/status/<uuid>` every few seconds -- showed `Channel ... not
+found` (cleared) within about 12 seconds of Stop, down from ~120s.
+Immediately reopening the same channel afterward still worked cleanly (no
+errors, no stalls), confirming the two `StopTimeshiftBuffer()` call sites
+(this one and `OpenLiveTimeshiftStream()`'s) don't interfere with each
+other in practice.
+
