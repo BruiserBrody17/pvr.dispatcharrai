@@ -1680,7 +1680,34 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   m_liveTimeshiftStream.open = true;
   m_liveTimeshiftStream.channelUuid = channelUuid;
 
-  if (!RefreshLiveManifest(/*force=*/true, error))
+  // Cold-start grace period: RefreshLiveManifest() can legitimately fail
+  // here with "live playlist not found" for several real seconds after
+  // StartTimeshiftBuffer() returns -- ffmpeg needs to connect to
+  // Dispatcharr's live proxy and produce a full first segment
+  // (segment_seconds, 6s by default) before there's anything to report.
+  // This wasn't a problem when start_buffer reattached to an
+  // already-running, already-producing buffer; now that every Open() above
+  // forces a genuinely fresh one, failing on the very first check turned a
+  // normal cold start into a hard error -- confirmed live, and retrying
+  // Play right after such a failure made it *worse*: each retry's own
+  // StopTimeshiftBuffer() killed the previous attempt's buffer moments
+  // before it would have finished starting, repeating indefinitely until a
+  // manual stop outside Kodi (not immediately followed by a restart) broke
+  // the cycle. Retry for a real cold start's worth of time instead of
+  // failing on the first check.
+  constexpr int kColdStartMaxAttempts = 30;
+  constexpr int kColdStartSleepMs = 500;
+  bool manifestReady = false;
+  for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
+  {
+    if (RefreshLiveManifest(/*force=*/true, error))
+    {
+      manifestReady = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(kColdStartSleepMs));
+  }
+  if (!manifestReady)
   {
     m_liveTimeshiftStream = LiveTimeshiftStreamState();
     return false;
