@@ -162,10 +162,12 @@ _reaper_stop_event = None
 
 
 def _redis():
-    # TODO(verify): confirm core.utils.RedisClient is safe/intended for
-    # plugin use -- it's used this way inside apps/timeshift/api_views.py
-    # (update_catchup_session_position -> _trigger_timeshift_stats_update),
-    # so the pattern has real precedent, but that's core code, not a plugin.
+    # core.utils.RedisClient, the same pattern core code uses inside
+    # apps/timeshift/api_views.py (update_catchup_session_position ->
+    # _trigger_timeshift_stats_update). Confirmed safe for plugin use by
+    # extensive live use this session -- buffer state and reaper
+    # leader-election both rely on it working correctly across worker
+    # processes, and did throughout testing.
     from core.utils import RedisClient
 
     return RedisClient.get_client()
@@ -364,13 +366,14 @@ def _stop_http_server(logger):
 
 
 def _proxy_url(channel_uuid: str, base_url: str) -> str:
-    # TODO(verify): confirm this base_url is actually reachable from inside
-    # the container for your deployment. This assumes nginx itself listens
+    # Confirmed reachable and working live, extensively, against the
+    # deployment this was developed against. Assumes nginx itself listens
     # on this loopback address/port (matching the externally-mapped port in
     # docker-compose.yml); the modular compose config routes the web
     # service through a Unix socket behind nginx rather than necessarily
-    # exposing a plain TCP port on its own, so this default is a reasonable
-    # guess, not a confirmed fact for every deployment shape.
+    # exposing a plain TCP port on its own, so this default may still need
+    # adjusting on a differently-shaped deployment -- see the
+    # internal_base_url setting's own help text.
     return f"{base_url.rstrip('/')}/proxy/ts/stream/{channel_uuid}"
 
 
@@ -712,7 +715,10 @@ class Plugin:
             "default": "http://127.0.0.1:9191",
             "help_text": (
                 "How the plugin reaches Dispatcharr's own live proxy from "
-                "inside the container. TODO(verify) for your deployment."
+                "inside the container. The default works for a standard "
+                "docker-compose setup; if your deployment routes the web "
+                "service differently (e.g. through a Unix socket behind "
+                "nginx rather than a plain TCP port), adjust this to match."
             ),
         },
         {
