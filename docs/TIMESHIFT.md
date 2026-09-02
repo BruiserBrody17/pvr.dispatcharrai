@@ -423,3 +423,59 @@ all three succeeded cleanly with zero "live playlist not found" errors
 (previously this failed every time); a genuinely cold first Open also
 succeeded within the retry window with no hitching afterward (0 stalls).
 
+## Seek latency: the catch-up-to-tail loop was the real cost, not the network
+
+Seeking was functionally correct after the fixes above, but slow --
+measured live at 4-6+ seconds for a single seek, most of it in one or two
+long pauses rather than spread evenly. Diagnosed with real timing
+instrumentation (temporarily logging curl's own `CURLINFO_TOTAL_TIME` per
+request, and the catch-up-to-tail loop's own duration) rather than
+guessing: individual HTTP requests to the plugin's file server were
+consistently fast (never exceeded the 50ms logging threshold, confirming
+this wasn't network latency or a throughput problem), and ffmpeg's own
+multi-step binary search, once it had data to work with, converged in well
+under 200ms. The actual cost was almost entirely in
+`ReadLiveTimeshiftStream()`'s own catch-up-to-tail loop.
+
+Two compounding problems, both found via the same instrumentation:
+
+1. **The loop's budget (8 attempts * 250ms = 2s) was far shorter than the
+   real gap between segments** (`segment_seconds`, 6s by default). It gave
+   up almost every time, Kodi immediately retried the read, landed right
+   back in the same loop, and repeated -- turning what should be one ~6s
+   wait into 2-4 full "gave up" cycles (12-16+ seconds), confirmed via the
+   loop's own logged attempt counts and elapsed time. This was firing
+   constantly even during *ordinary* near-live playback, not just seeking
+   -- usually absorbed by Kodi's own read-ahead cache without a visible
+   stall, but real wasted time regardless, and it directly padded out any
+   seek whose own internal probing landed at/near the live edge (routine
+   for a seek originating near "now"). Fixed by sizing the budget off the
+   *last known segment's own actual duration* (with margin) instead of a
+   fixed guess, so one wait reliably covers one real gap regardless of how
+   `segment_seconds` is configured.
+
+2. **ffmpeg's own generic mpegts seek does a real multi-step probe**
+   (confirmed via `SeekLiveTimeshiftStream` tracing -- several distinct
+   byte positions probed in quick succession while it estimates), and one
+   of those probes routinely overshoots right up to the current tail.
+   Blocking that probe for a full segment interval was, on its own, the
+   single largest contributor to seek latency measured live (a 4.2s wait
+   out of one seek's ~4.4s total). Fixed by giving a read landing at the
+   tail a fast, near-instant "not there" (a single attempt, no sleep)
+   instead of the full wait when it's likely part of active seek probing
+   -- ffmpeg can usually just try an earlier candidate rather than getting
+   this exact byte. "Likely probing" isn't just a time window after the
+   last seek (confirmed live that alone caused a *different* regression:
+   normal decode reads landing at the tail right after a seek *completes*
+   also fell inside the window and wrongly got the fast, wrong answer,
+   visibly pausing playback) -- a read landing at the *same* position where
+   a fast probe already gave up escalates to the full budget instead,
+   since that's no longer a fresh candidate, it's a genuine stuck wait.
+
+**Confirmed live**: a forward seek landing near the live edge -- the exact
+scenario that previously took 4-6+ seconds -- now completes in 33-140ms,
+landing within about a second of the requested target (segment-boundary
+snapping, not a precision issue). A five-seek sequence (mixed forward and
+backward, small and large) left playback healthy afterward with zero
+stalls and zero "unknown position" errors.
+
