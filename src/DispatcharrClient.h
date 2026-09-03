@@ -356,6 +356,25 @@ public:
                                time_t end,
                                const std::string& title,
                                std::string& error);
+  // Reschedules an existing one-time recording's start/end time via
+  // PATCH /api/channels/recordings/{id}/. Deliberately sends ONLY
+  // start_time/end_time, mirroring CreateOneTimeRecording()'s own choice
+  // not to touch custom_properties -- confirmed two things live against a
+  // real EPG-matched recording before relying on either: (1) a PATCH
+  // that omits both times crashes with an uncaught 500 (Dispatcharr's own
+  // RecordingSerializer.validate() does `end_time < now` with end_time
+  // still None on a bare partial update -- a real server-side bug, not
+  // something this addon can prevent except by never sending that shape
+  // of request), so both fields are always included, never a bare
+  // partial; (2) resending the *same* start/end time an EPG-matched
+  // recording already had did NOT drift them via repeated pre/post-offset
+  // reapplication, despite that being a real risk suggested by
+  // validate()'s own source (it re-derives the offset-adjusted times
+  // whenever custom_properties.program is a dict and both times are
+  // present) -- confirmed live, not just theorized either way, so this
+  // method sends exactly the new times without trying to work around a
+  // compounding-offset bug that didn't actually reproduce.
+  bool UpdateOneTimeRecording(int recordingId, time_t start, time_t end, std::string& error);
   // recordNewOnly maps to Dispatcharr's SeriesRuleRequest.mode ("new" vs
   // the server default "all") -- confirmed against the live schema: "all"
   // records every matching episode including reruns, "new" only
@@ -390,6 +409,28 @@ public:
                            int endTimeOfDaySeconds,
                            time_t startDate,
                            time_t endDate,
+                           std::string& error);
+  // Edits an existing recurring rule -- also how Kodi's own "enable/
+  // disable" timer action reaches this rule type
+  // (PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE), since Dispatcharr has no
+  // separate enable/disable endpoint, just this same field on the rule
+  // itself. Deliberately a PARTIAL PATCH that omits end_date -- confirmed
+  // against RecurringRecordingRuleSerializer's own source that a missing
+  // field falls back to the existing instance's value rather than
+  // failing validation (unlike RecordingSerializer's create-oriented
+  // validate(), this one was written partial-update-safe), so the rule's
+  // existing end_date (set once at creation, see CreateRecurringRule()'s
+  // own comment on why that's a somewhat arbitrary "far enough out"
+  // value) is preserved automatically rather than needing to be
+  // re-fetched and resent on every edit.
+  bool UpdateRecurringRule(int ruleId,
+                           int channelId,
+                           const std::string& name,
+                           const std::vector<int>& daysOfWeek,
+                           int startTimeOfDaySeconds,
+                           int endTimeOfDaySeconds,
+                           time_t startDate,
+                           bool enabled,
                            std::string& error);
   bool DeleteRecurringRule(int ruleId, std::string& error);
 
