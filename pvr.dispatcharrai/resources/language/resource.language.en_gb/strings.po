@@ -105,6 +105,14 @@ msgctxt "#30041"
 msgid "Connects directly to Dispatcharr's own real-time update feed (the same one its own web interface uses -- no extra setup on the Dispatcharr side needed) so a change shows up in Kodi immediately instead of waiting for the refresh interval above. That interval keeps running as a fallback even with this on, in case the connection can't be made or drops and stays down. Experimental: this is new, hand-written networking code that hasn't seen the same real-world use as the rest of this addon -- leave off if you'd rather stick with the plain refresh interval."
 msgstr ""
 
+msgctxt "#30049"
+msgid "Recurring timer: Dispatcharr's system timezone offset from UTC (minutes)"
+msgstr ""
+
+msgctxt "#30050"
+msgid "Only affects recurring (day-of-week) timers. Dispatcharr stores a recurring rule's start/end time-of-day as a plain wall-clock value with no timezone attached, and interprets it using its own configured system timezone (Settings -> System in Dispatcharr's web UI), not UTC -- this addon has no way to read that automatically and convert for you, since it doesn't bundle a full IANA timezone database. Set this to match Dispatcharr's configured system timezone's CURRENT offset from UTC, e.g. -360 for US Central Standard Time (UTC-6) or -300 for Central Daylight Time (UTC-5) -- if that zone observes daylight saving, you'll need to update this by 60 minutes twice a year yourself, or a recurring timer will fire an hour off until you do. Leave at 0 if Dispatcharr's system timezone is UTC. One-time and series timers are unaffected -- this only matters for the recurring timer type."
+msgstr ""
+
 msgctxt "#30047"
 msgid "Improve catch-up seek reliability (experimental)"
 msgstr ""
