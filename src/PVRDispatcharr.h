@@ -120,6 +120,7 @@ public:
   PVR_ERROR GetTimersAmount(int& amount) override;
   PVR_ERROR GetTimers(kodi::addon::PVRTimersResultSet& results) override;
   PVR_ERROR AddTimer(const kodi::addon::PVRTimer& timer) override;
+  PVR_ERROR UpdateTimer(const kodi::addon::PVRTimer& timer) override;
   PVR_ERROR DeleteTimer(const kodi::addon::PVRTimer& timer, bool forceDelete) override;
 
 private:
@@ -166,6 +167,16 @@ private:
   bool EnsureChannelsLoaded();
   bool EnsureEpgLoaded();
   const dispatcharr::Channel* FindChannelByUid(int uid) const;
+  // Shared by AddTimer()/UpdateTimer() for kTimerTypeRecurring -- converts
+  // Kodi's UTC-based weekday bitmask/start-end-time-of-day/first-day into
+  // Dispatcharr's own representation (0-6 day list, its configured-system-
+  // timezone-local time-of-day via recurring_rule_utc_offset_minutes, a
+  // UTC-midnight start date). Returns false (with error set) only when no
+  // weekday is selected at all -- everything else here is pure,
+  // infallible conversion.
+  bool ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer,
+                                  std::vector<int>& daysOfWeekOut, int& startSecondsOut,
+                                  int& endSecondsOut, time_t& startDateOut, std::string& error);
 
   dispatcharr::DispatcharrClient m_client;
 

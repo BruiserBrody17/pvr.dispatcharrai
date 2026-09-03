@@ -43,10 +43,14 @@ not a bespoke scheme:
   deleted single occurrence if it's still within the rule's own window;
   this is a Dispatcharr-side limitation, not something addressed here.
 
-No `PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE`: this addon doesn't
-implement `UpdateTimer()` at all (a pre-existing gap, see
-`docs/RECORDINGS.md`), so there's no way to flip a rule's `enabled` flag
-from Kodi's timer list -- delete the timer to stop it for good instead.
+**Update: `UpdateTimer()` is now implemented** (see the "UpdateTimer()"
+entry in `docs/RECORDINGS.md` for the full cross-timer-type story), so
+`PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE` is declared for this type and a
+rule's `enabled` flag can be flipped straight from Kodi's timer list --
+Kodi implements that action by calling `UpdateTimer()` with everything
+else unchanged and just the state flipped, the same call full edits use.
+Deleting the timer is still the way to stop a rule for good, not just
+pause it.
 
 No per-timer "end date" either: Kodi's own repeating-timer type
 attributes have `PVR_TIMER_TYPE_SUPPORTS_FIRST_DAY` but no equivalent

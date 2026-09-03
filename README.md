@@ -53,8 +53,11 @@ This is a first working scaffold, not a finished addon. Implemented:
   recording with no markers (comskip never ran, or ran in the default
   "cut" mode that removes commercials directly instead of just marking
   them) is unaffected either way
-- One-time and series timers, backed by Dispatcharr's recording and
-  series-rule endpoints
+- One-time, series, and recurring timers, backed by Dispatcharr's
+  recording/series-rule/recurring-rule endpoints -- all three editable in
+  place (`UpdateTimer()`), not just create/delete, including recurring
+  rules' enable/disable toggle straight from Kodi's timer list; see
+  `docs/RECORDINGS.md`
 - Catch-up/archive playback ("play from guide") for channels whose upstream
   provider supports it, via Dispatcharr's catch-up session API -- see
   `docs/API_NOTES.md` for exactly what this does and doesn't cover (it's
