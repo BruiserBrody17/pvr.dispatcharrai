@@ -10,39 +10,54 @@ far as it goes, but **superseded below**: Dispatcharr does have a real,
 documented server-side Python plugin system (`Plugins.md`/`Plugin_repo.md`
 at its repo root), which turned out to be enough to build one after all.
 
-Two implementations existed side by side for a while, picked by the
-`live_timeshift_mode` setting (off by default; was a plain
-`enable_live_timeshift` boolean before the server-side mode existed -- a
-deliberate breaking settings change, not preserved as a migration, since
-this addon was still effectively single-user at the time). **Local was
-later removed** once server-side proved stable through real use -- one
-less thing to choose between, and one less dependency on a separate addon
-for live channel playback at all. `live_timeshift_mode`'s value `1` (what
-local used to mean) was deliberately left unreused at the time rather
-than renumbering server-side down to `1`. **`live_timeshift_mode` itself
-was later removed too, once server-side had proven stable through further
-real use -- server-side timeshift is now unconditional, not a setting at
-all, and `GetChannelStreamProperties()`/`OpenLiveStream()` no longer
-branch on anything.** A real consequence, not just an implementation
-detail: this addon now requires the companion plugin installed and
-enabled (and the configured account to be a Dispatcharr admin) for live
-TV playback to work *at all*, not just for pause/rewind -- there's no
-plain-STREAMURL fallback left to fall back to. The two descriptions below
-are kept as-written for the history of why server-side won, not as a
-currently-available choice.
+Three implementations have existed at various points, picked by the
+`live_timeshift_mode` setting (was a plain `enable_live_timeshift`
+boolean before the server-side mode existed -- a deliberate breaking
+settings change, not preserved as a migration, since this addon was still
+effectively single-user at the time). **Local was removed** once
+server-side proved stable through real use -- one less thing to choose
+between, and one less dependency on a separate addon for live channel
+playback at all. `live_timeshift_mode`'s value `1` (what local used to
+mean) was deliberately left unreused rather than renumbering server-side
+down to `1`. **`live_timeshift_mode` itself was then removed too, once
+server-side had proven stable through further real use** -- server-side
+timeshift became unconditional for a while, with no setting at all.
 
-**Local** (`live_timeshift_mode = 1`): `GetChannelStreamProperties()`
-routes live channel playback through `inputstream.ffmpegdirect`'s
-`stream_mode: timeshift`. Confirmed via ffmpegdirect's own README this is
-exactly what that mode is for: adding pause/rewind to a plain,
-continuously-arriving live stream with no backend cooperation required at
-all, by recording it to a local on-disk buffer as it plays. The buffer
-lives on the Kodi device's own storage (size/path/retention controlled by
-ffmpegdirect's own addon settings), not on the Dispatcharr server, so it
-doesn't persist across a Kodi restart and isn't shared between devices.
-Requires `inputstream.ffmpegdirect` to be installed; if it isn't and this
-mode is selected, live channel playback fails outright (not just
-timeshift).
+**That turned out to be a real problem for anyone who doesn't want (or
+can't get) an admin-level Dispatcharr account**: the companion plugin's
+`run/` API requires one (`IsAdmin`, see below), so with no setting at
+all, live TV playback failed outright for a non-admin account -- not
+just pause/rewind, playback itself. `live_timeshift_mode` was
+**reintroduced** as a result, defaulting to `2` (server-side, matching
+what every install already had with no setting present, so existing
+users see no change) with `0` (Off) as an explicit opt-out -- a plain
+live stream via `STREAMURL`, no companion plugin, no admin account, no
+pause/rewind. Value `1` (local) stays retired, not reintroduced alongside
+it -- the description below is kept for history, not as a currently
+available choice; Off covers the same "no extra dependency" motivation
+without inputstream.ffmpegdirect's own separate install/failure mode.
+
+**Off** (`live_timeshift_mode = 0`): `GetChannelStreamProperties()` sets
+`STREAMURL` directly to Dispatcharr's own live proxy URL
+(`GetLiveStreamUrl()`), the same URL the plugin's own buffer reads from.
+Kodi's generic `CCurlFile` opens it directly -- no inputstream addon, no
+addon-side stream callback, no companion plugin, no elevated account.
+Confirmed live: `canseek: false` (by design -- a plain stream has no
+buffer to seek within), stable playback with real elapsed time
+progressing and zero decode errors.
+
+**Local** (`live_timeshift_mode = 1`, retired -- not currently
+selectable): `GetChannelStreamProperties()` routed live channel playback
+through `inputstream.ffmpegdirect`'s `stream_mode: timeshift`. Confirmed
+via ffmpegdirect's own README this is exactly what that mode is for:
+adding pause/rewind to a plain, continuously-arriving live stream with no
+backend cooperation required at all, by recording it to a local on-disk
+buffer as it plays. The buffer lives on the Kodi device's own storage
+(size/path/retention controlled by ffmpegdirect's own addon settings),
+not on the Dispatcharr server, so it doesn't persist across a Kodi
+restart and isn't shared between devices. Requires
+`inputstream.ffmpegdirect` to be installed; if it isn't and this mode is
+selected, live channel playback fails outright (not just timeshift).
 
 **Server-side** (`live_timeshift_mode = 2`): a genuine, TVHeadend-like
 rolling buffer, held on the Dispatcharr server, with real pause/rewind/

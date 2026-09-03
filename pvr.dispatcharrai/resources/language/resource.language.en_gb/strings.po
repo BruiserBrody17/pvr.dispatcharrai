@@ -85,6 +85,14 @@ msgctxt "#30024"
 msgid "How often to re-fetch the channel and group list from Dispatcharr."
 msgstr ""
 
+msgctxt "#30027"
+msgid "Live TV pause/rewind (timeshift)"
+msgstr ""
+
+msgctxt "#30028"
+msgid "Server-side (default): real pause/rewind/fast-forward, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi) -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs), and requires the account this addon is configured with to be a Dispatcharr admin -- the plugin run/ API rejects anything less. Off: a plain live stream straight from Dispatcharr's own proxy, no pause/rewind, no plugin, no admin account needed -- pick this if you'd rather not grant this addon an admin account, or don't want to install the companion plugin at all."
+msgstr ""
+
 msgctxt "#30035"
 msgid "Recordings"
 msgstr ""
@@ -111,6 +119,14 @@ msgstr ""
 
 msgctxt "#30050"
 msgid "Only affects recurring (day-of-week) timers. Dispatcharr stores a recurring rule's start/end time-of-day as a plain wall-clock value with no timezone attached, and interprets it using its own configured system timezone (Settings -> System in Dispatcharr's web UI), not UTC -- this addon has no way to read that automatically and convert for you, since it doesn't bundle a full IANA timezone database. Set this to match Dispatcharr's configured system timezone's CURRENT offset from UTC, e.g. -360 for US Central Standard Time (UTC-6) or -300 for Central Daylight Time (UTC-5) -- if that zone observes daylight saving, you'll need to update this by 60 minutes twice a year yourself, or a recurring timer will fire an hour off until you do. Leave at 0 if Dispatcharr's system timezone is UTC. One-time and series timers are unaffected -- this only matters for the recurring timer type."
+msgstr ""
+
+msgctxt "#30051"
+msgid "Off"
+msgstr ""
+
+msgctxt "#30053"
+msgid "Server-side (Dispatcharr plugin)"
 msgstr ""
 
 msgctxt "#30047"
