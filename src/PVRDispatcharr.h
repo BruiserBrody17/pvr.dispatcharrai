@@ -86,6 +86,8 @@ public:
   PVR_ERROR GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                          std::vector<kodi::addon::PVRStreamProperty>& properties) override;
   PVR_ERROR DeleteRecording(const kodi::addon::PVRRecording& recording) override;
+  PVR_ERROR GetRecordingEdl(const kodi::addon::PVRRecording& recording,
+                            std::vector<kodi::addon::PVREDLEntry>& edl) override;
   // Kodi always demuxes pvr://recordings/... via CInputStreamPVRRecording,
   // which serves the generic FFmpeg demuxer through these -- confirmed
   // against Kodi's own source that it never resolves
