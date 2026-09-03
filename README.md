@@ -104,13 +104,18 @@ This is a first working scaffold, not a finished addon. Implemented:
   another Kodi install sharing the account, a change made directly against
   Dispatcharr, a recording finishing on its own -- still surfaces without a
   restart, even without the real-time feature above enabled
+- Background channel/EPG loading -- a dedicated background thread keeps
+  the channel list and full EPG guide warm on its own schedule, so Kodi's
+  own calls are normally served from cache instead of blocking on a fetch;
+  confirmed live against a real ~9,000-channel instance (a genuinely slow
+  fetch+parse otherwise) -- see `docs/EPG.md`
 
 Not yet implemented / worth hardening next:
 
-- Recurring (day-of-week) timer rules beyond simple series rules
-- Background/async data loading (current version loads channels/EPG
-  synchronously on first access, which is fine for a home server but
-  could be made non-blocking)
+- Recurring (day-of-week) timer rules beyond simple series rules --
+  Dispatcharr's own models already include a matching
+  `RecurringRecordingRule` (days_of_week, start/end time, enabled), so
+  this may not need any server-side work, just wiring it up here
 - A small number of Dispatcharr API paths/field names remain genuinely
   unconfirmed against a live instance (flagged as such, not silently
   assumed, in `docs/API_NOTES.md`) -- most of what was originally
