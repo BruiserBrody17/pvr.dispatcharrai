@@ -1211,6 +1211,23 @@ bool DispatcharrClient::CreateOneTimeRecording(
   return true;
 }
 
+bool DispatcharrClient::UpdateOneTimeRecording(int recordingId, time_t start, time_t end,
+                                               std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  // Both fields always included -- confirmed live that a PATCH omitting
+  // them crashes server-side (see this method's own header comment).
+  json body = {
+      {"start_time", IsoFromTime(start)},
+      {"end_time", IsoFromTime(end)},
+  };
+  json response;
+  return Request("PATCH", std::string(kRecordingsPath) + std::to_string(recordingId) + "/", body,
+                 response, error);
+}
+
 bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId,
                                          const std::string& titlePattern, bool recordNewOnly,
                                          std::string& error)
@@ -1334,6 +1351,32 @@ bool DispatcharrClient::CreateRecurringRule(int channelId, const std::string& na
   };
   json response;
   return Request("POST", kRecurringRulesPath, body, response, error);
+}
+
+bool DispatcharrClient::UpdateRecurringRule(int ruleId, int channelId, const std::string& name,
+                                            const std::vector<int>& daysOfWeek,
+                                            int startTimeOfDaySeconds, int endTimeOfDaySeconds,
+                                            time_t startDate, bool enabled, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  // No end_date here -- see this method's own header comment on why
+  // omitting it lets the existing value survive untouched via
+  // RecurringRecordingRuleSerializer's partial-update fallback, rather
+  // than needing a separate fetch to preserve it.
+  json body = {
+      {"channel", channelId},
+      {"name", name},
+      {"days_of_week", daysOfWeek},
+      {"start_time", TimeOfDayString(startTimeOfDaySeconds)},
+      {"end_time", TimeOfDayString(endTimeOfDaySeconds)},
+      {"start_date", DateStringFromTime(startDate)},
+      {"enabled", enabled},
+  };
+  json response;
+  return Request("PATCH", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", body,
+                 response, error);
 }
 
 bool DispatcharrClient::DeleteRecurringRule(int ruleId, std::string& error)

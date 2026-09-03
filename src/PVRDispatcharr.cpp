@@ -1411,17 +1411,19 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
   // Backed by Dispatcharr's own RecurringRecordingRule model/scheduler
   // (see DispatcharrClient::CreateRecurringRule()) -- a fixed weekly
   // time-of-day pattern, not EPG-title matching, so no
-  // SUPPORTS_TITLE_EPG_MATCH here (unlike the series type above). No
-  // SUPPORTS_ENABLE_DISABLE: this addon doesn't implement UpdateTimer()
-  // at all (a pre-existing gap, see docs/RECORDINGS.md), so toggling an
-  // existing rule's enabled state isn't wired up -- deleting the timer
-  // (DeleteTimer(), already implemented) is the supported way to stop
-  // one.
+  // SUPPORTS_TITLE_EPG_MATCH here (unlike the series type above).
+  // SUPPORTS_ENABLE_DISABLE is now wired up via UpdateTimer() ->
+  // DispatcharrClient::UpdateRecurringRule() (a pre-existing gap when
+  // this addon didn't implement UpdateTimer() at all -- see
+  // docs/RECORDINGS.md's UpdateTimer entry for how that was closed);
+  // deleting the timer (DeleteTimer()) remains the way to stop one for
+  // good, rather than just disabling it.
   kodi::addon::PVRTimerType recurring;
   recurring.SetId(kTimerTypeRecurring);
   recurring.SetAttributes(PVR_TIMER_TYPE_IS_REPEATING | PVR_TIMER_TYPE_SUPPORTS_CHANNELS |
                           PVR_TIMER_TYPE_SUPPORTS_START_TIME | PVR_TIMER_TYPE_SUPPORTS_END_TIME |
-                          PVR_TIMER_TYPE_SUPPORTS_WEEKDAYS | PVR_TIMER_TYPE_SUPPORTS_FIRST_DAY);
+                          PVR_TIMER_TYPE_SUPPORTS_WEEKDAYS | PVR_TIMER_TYPE_SUPPORTS_FIRST_DAY |
+                          PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE);
   recurring.SetDescription("Recurring recording (day-of-week)");
   types.push_back(recurring);
 
@@ -1547,6 +1549,52 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   return PVR_ERROR_NO_ERROR;
 }
 
+bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer,
+                                                std::vector<int>& daysOfWeekOut,
+                                                int& startSecondsOut, int& endSecondsOut,
+                                                time_t& startDateOut, std::string& error)
+{
+  // Pure integer-arithmetic UTC day/time-of-day math -- every value here
+  // (Kodi's GetStartTime()/GetEndTime()/GetFirstDay()) is already UTC
+  // (this addon's convention throughout, confirmed consistent with how
+  // one-time/series timers are already handled with no conversion), and
+  // a UTC time_t's own modulo-86400 gives an exact, DST-free
+  // calendar-day/time-of-day split with no gmtime/timegm round-trip
+  // needed. The *only* place a real timezone enters is the explicit
+  // recurring_rule_utc_offset_minutes shift below, bridging to
+  // Dispatcharr's own (non-UTC-by-default) system timezone -- see that
+  // setting's own help text and RecurringRule's comment in
+  // DispatcharrClient.h for why this can't be done automatically.
+  constexpr time_t kSecondsPerDay = 86400;
+  auto floorMod = [](time_t a, time_t m) { return ((a % m) + m) % m; };
+  auto utcMidnight = [&](time_t t) { return t - floorMod(t, kSecondsPerDay); };
+  auto secondsSinceUtcMidnight = [&](time_t t)
+  { return static_cast<int>(floorMod(t, kSecondsPerDay)); };
+
+  int offsetSeconds = m_recurringRuleUtcOffsetMinutes * 60;
+  startSecondsOut = secondsSinceUtcMidnight(timer.GetStartTime()) + offsetSeconds;
+  endSecondsOut = secondsSinceUtcMidnight(timer.GetEndTime()) + offsetSeconds;
+
+  time_t firstDay = timer.GetFirstDay();
+  if (firstDay <= 0)
+    firstDay = time(nullptr); // Kodi didn't supply one -- default to "today"
+  startDateOut = utcMidnight(firstDay + offsetSeconds);
+
+  daysOfWeekOut.clear();
+  unsigned int weekdays = timer.GetWeekdays();
+  for (int day = 0; day <= 6; ++day)
+  {
+    if (weekdays & (1u << day))
+      daysOfWeekOut.push_back(day);
+  }
+  if (daysOfWeekOut.empty())
+  {
+    error = "At least one day of the week must be selected";
+    return false;
+  }
+  return true;
+}
+
 PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
 {
   std::string error;
@@ -1562,47 +1610,17 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   }
   else if (timer.GetTimerType() == kTimerTypeRecurring)
   {
-    // Pure integer-arithmetic UTC day/time-of-day math -- every value
-    // here (Kodi's GetStartTime()/GetEndTime()/GetFirstDay()) is already
-    // UTC (this addon's convention throughout, confirmed consistent with
-    // how one-time/series timers are already handled above with no
-    // conversion), and a UTC time_t's own modulo-86400 gives an exact,
-    // DST-free calendar-day/time-of-day split with no gmtime/timegm
-    // round-trip needed. The *only* place a real timezone enters is the
-    // explicit recurring_rule_utc_offset_minutes shift below, bridging
-    // to Dispatcharr's own (non-UTC-by-default) system timezone -- see
-    // that setting's own help text and RecurringRule's comment in
-    // DispatcharrClient.h for why this can't be done automatically.
-    constexpr time_t kSecondsPerDay = 86400;
-    auto floorMod = [](time_t a, time_t m) { return ((a % m) + m) % m; };
-    auto utcMidnight = [&](time_t t) { return t - floorMod(t, kSecondsPerDay); };
-    auto secondsSinceUtcMidnight = [&](time_t t)
-    { return static_cast<int>(floorMod(t, kSecondsPerDay)); };
-
-    int offsetSeconds = m_recurringRuleUtcOffsetMinutes * 60;
-    int startSeconds = secondsSinceUtcMidnight(timer.GetStartTime()) + offsetSeconds;
-    int endSeconds = secondsSinceUtcMidnight(timer.GetEndTime()) + offsetSeconds;
-
-    time_t firstDay = timer.GetFirstDay();
-    if (firstDay <= 0)
-      firstDay = time(nullptr); // Kodi didn't supply one -- default to "today"
-    time_t startDate = utcMidnight(firstDay + offsetSeconds);
-    time_t endDate = startDate + static_cast<time_t>(kRecurringRuleDefaultYears) * 365 * kSecondsPerDay;
-
     std::vector<int> daysOfWeek;
-    unsigned int weekdays = timer.GetWeekdays();
-    for (int day = 0; day <= 6; ++day)
+    int startSeconds = 0, endSeconds = 0;
+    time_t startDate = 0;
+    if (!ComputeRecurringRuleFields(timer, daysOfWeek, startSeconds, endSeconds, startDate, error))
     {
-      if (weekdays & (1u << day))
-        daysOfWeek.push_back(day);
-    }
-    if (daysOfWeek.empty())
-    {
-      error = "At least one day of the week must be selected";
       ok = false;
     }
     else
     {
+      time_t endDate =
+          startDate + static_cast<time_t>(kRecurringRuleDefaultYears) * 365 * 86400;
       ok = m_client.CreateRecurringRule(static_cast<int>(timer.GetClientChannelUid()),
                                         timer.GetTitle(), daysOfWeek, startSeconds, endSeconds,
                                         startDate, endDate, error);
@@ -1650,6 +1668,85 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
       TriggerRecordingUpdate();
     }).detach();
   }
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
+{
+  bool isSeries = (timer.GetClientIndex() & 0x40000000) != 0;
+  bool isRecurring = (timer.GetClientIndex() & kRecurringRuleIndexFlag) != 0;
+  std::string error;
+  bool ok;
+  if (isSeries)
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
+    std::string tvgId = ch ? ch->tvgId : "";
+    // Upsert semantics, same call AddTimer() uses to create one --
+    // confirmed against Dispatcharr's own source that re-POSTing with
+    // the same identity (title + tvg_id) edits mode/title_mode/
+    // description/etc. of the existing rule in place rather than
+    // creating a duplicate; there is no PATCH-by-id route since series
+    // rules have no id at all. If the title (or the channel, which
+    // changes tvgId) genuinely changed from what this rule was
+    // originally created with, this instead creates a *separate* rule
+    // under the new identity -- the old one is left behind untouched,
+    // not renamed. Not worked around here: Dispatcharr's own identity
+    // key is title+tvg_id+epg_source_id by design, and Kodi's own series
+    // timer dialog doesn't meaningfully support "rename this rule" as a
+    // normal workflow to begin with.
+    ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId,
+                                   timer.GetTitle(), timer.GetPreventDuplicateEpisodes() != 0,
+                                   error);
+  }
+  else if (isRecurring)
+  {
+    int ruleId = static_cast<int>(timer.GetClientIndex() & ~kRecurringRuleIndexFlag);
+    std::vector<int> daysOfWeek;
+    int startSeconds = 0, endSeconds = 0;
+    time_t startDate = 0;
+    if (!ComputeRecurringRuleFields(timer, daysOfWeek, startSeconds, endSeconds, startDate, error))
+    {
+      ok = false;
+    }
+    else
+    {
+      // This is also how Kodi's "enable/disable" timer action reaches a
+      // recurring rule -- GetTimerTypes() declares
+      // PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE for this type specifically
+      // so that action is offered at all, and Kodi implements it by
+      // calling UpdateTimer() with everything else unchanged and just
+      // GetState() flipped, not a separate dedicated call.
+      bool enabled = timer.GetState() != PVR_TIMER_STATE_DISABLED;
+      ok = m_client.UpdateRecurringRule(ruleId, static_cast<int>(timer.GetClientChannelUid()),
+                                        timer.GetTitle(), daysOfWeek, startSeconds, endSeconds,
+                                        startDate, enabled, error);
+    }
+  }
+  else
+  {
+    // One-time (manual or EPG-based) recording. Deliberately doesn't
+    // touch title/custom_properties -- see UpdateOneTimeRecording()'s
+    // own comment for why (a real crash risk on a bare partial PATCH,
+    // and this mirrors CreateOneTimeRecording()'s own choice not to
+    // stomp Dispatcharr's auto-enrichment).
+    int id = static_cast<int>(timer.GetClientIndex());
+    ok = m_client.UpdateOneTimeRecording(id, timer.GetStartTime(), timer.GetEndTime(), error);
+  }
+
+  if (!ok)
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to update timer: %s", error.c_str());
+    return PVR_ERROR_SERVER_ERROR;
+  }
+  TriggerTimerUpdate();
+  // A rescheduled one-time recording (or a recurring rule's own edit,
+  // which can add/remove materialized occurrences) changes what
+  // GetRecordings() would return too, same reasoning as AddTimer()'s own
+  // trigger -- series rules have no recording-list-visible effect from
+  // an edit alone (evaluation is a separate, explicit step).
+  if (!isSeries)
+    TriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
 

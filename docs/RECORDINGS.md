@@ -68,10 +68,10 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   end-to-end through that real dialog: selecting "Record only new
   episodes" and saving produced a rule with `"mode":"new"` on the server.
   `GetTimerRules()` also reads the field back for existing rules, so an
-  already-created rule shows the right selection if inspected again (not
-  confirmed whether *editing* an existing rule's setting actually takes
-  effect server-side -- this addon doesn't implement `UpdateTimer()` at
-  all, a pre-existing gap unrelated to this specific field).
+  already-created rule shows the right selection if inspected again.
+  **Update: confirmed this does take effect server-side, now that
+  `UpdateTimer()` is implemented** -- see the "UpdateTimer()" entry
+  further down in this file.
 - `DeleteSeriesRule()`'s title+tvg_id query-param delete and
   `DeleteRecording()`'s path-id delete were both confirmed to actually
   remove the item server-side (checked directly against the API after
@@ -1331,4 +1331,63 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   this is the first one requiring a real network round-trip rather than
   an in-memory write, and there's no reason to block whatever thread
   Kodi delivers the settings-changed callback on for it.
+- **`UpdateTimer()` is now implemented, closing a long-standing gap --
+  every timer type edits without a delete+recreate, dispatched by the
+  same `ClientIndex` namespace-bit scheme `DeleteTimer()` already uses.**
+  Three genuinely different update mechanisms underneath, one per type,
+  each confirmed live directly against a real instance before trusting
+  it (Kodi's own JSON-RPC has no generic full-field `UpdateTimer`
+  equivalent to drive this end-to-end through Kodi itself, the same
+  limitation `AddTimer()`'s own recurring-rule testing hit earlier --
+  see `docs/RECURRING_RULES.md` -- so this was verified the same way:
+  exercise the exact request each C++ path sends, directly against the
+  API):
+  - **Recurring rules**: a plain `PATCH` -- `RecurringRecordingRuleSerializer`
+    was written partial-update-safe (falls back to the existing
+    instance's value for any field the payload omits), confirmed live by
+    creating a rule with a real far-future `end_date`, PATCHing it with
+    every field *except* `end_date` and `enabled: false`, and getting
+    back `enabled: false` with the original `end_date` completely
+    untouched. This is also how `PVR_TIMER_TYPE_SUPPORTS_ENABLE_DISABLE`
+    reaches this type at all -- Kodi's own "enable/disable" timer action
+    calls `UpdateTimer()` with the rest of the timer unchanged and just
+    `GetState()` flipped, not a separate dedicated call.
+  - **Series rules**: no PATCH exists (still no path-addressable id --
+    see the series-rule entries earlier in this file), so this reuses
+    `CreateSeriesRule()`, the same call `AddTimer()` uses to create one.
+    Confirmed live this is a real upsert, not just believed from reading
+    the source: created a rule, re-`POST`ed the identical title+channel
+    with a different `mode`, and confirmed via a full re-`GET` of the
+    rules list that exactly one rule existed afterward with the new
+    mode -- not two. The real limitation this implies (not worked around,
+    just documented): Dispatcharr's identity key for a series rule is
+    `title`+`tvg_id`+`epg_source_id`; if those genuinely change, the
+    "edit" creates a second rule under the new identity and leaves the
+    original behind rather than renaming it. Not chased further -- Kodi's
+    own series-timer dialog doesn't really support "rename this rule" as
+    a normal workflow to begin with.
+  - **One-time recordings**: `PATCH` with only `start_time`/`end_time`,
+    never `custom_properties`/title -- two real risks confirmed live
+    before settling on this shape, not just inferred from reading
+    Dispatcharr's `RecordingSerializer.validate()`: (1) a `PATCH` that
+    omits both times crashes with an uncaught server-side 500
+    (`end_time < now` runs against a `None` on a bare partial update --
+    a genuine Dispatcharr bug, not preventable except by never sending
+    that request shape), confirmed by deliberately sending a
+    `custom_properties`-only `PATCH` against a real recording and getting
+    a raw 500 back; (2) resending a real EPG-matched recording's
+    *unchanged* `start_time`/`end_time` was suspected (from reading
+    `validate()`'s own source, which re-derives offset-adjusted times
+    whenever `custom_properties.program` is a dict and both times are in
+    the payload) to risk silently re-applying the global pre/post padding
+    a second time on every edit -- **confirmed live this does NOT
+    happen**: PATCHed a real EPG-matched recording (padding 1/2 minutes
+    configured) with its own current, unchanged times and got back the
+    exact same `start_time`/`end_time`, no drift. Scoped to times only
+    (not title) as a result of being unable to fully rule out the
+    metadata-editing path the same way Dispatcharr's own UI avoids it
+    (a dedicated `update-metadata` action instead of the generic PATCH)
+    -- mirrors `CreateOneTimeRecording()`'s own existing choice not to
+    send `custom_properties` at all, for the same underlying reason
+    (avoid stomping Dispatcharr's own auto-enrichment).
 
