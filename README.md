@@ -155,6 +155,15 @@ enabled on your Dispatcharr instance -- set `live_timeshift_mode` to
 `Off` instead if you'd rather not grant an admin account or install that
 plugin; live channels still play, just without pause/rewind.
 
+Most settings take effect immediately after saving, no Kodi restart
+needed -- including `live_timeshift_mode` itself, `channel_refresh_hours`,
+`epg_refresh_hours`, `enable_catchup_ffmpegdirect_seek`,
+`recording_refresh_minutes`, `recurring_rule_utc_offset_minutes`, and
+`debug_logging`. The Dispatcharr connection settings (host/port/HTTPS/
+username/password/`verify_ssl`/`timeout`/the stored API key) and
+`enable_realtime_updates` still need a restart to take effect -- Kodi
+will tell you so when you change one of those.
+
 ## Building
 
 See `docs/BUILDING.md`. Short version: this can't be compiled in isolation

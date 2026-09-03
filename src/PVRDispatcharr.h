@@ -22,6 +22,21 @@ public:
   explicit PVRDispatcharr(const kodi::addon::IInstanceInfo& instance);
   ~PVRDispatcharr() override;
 
+  // Called from CAddonDispatcharr::SetSetting() (addon.cpp) -- the
+  // addon-base-level callback Kodi invokes once per changed setting when
+  // the user edits addon settings via the GUI, without restarting Kodi.
+  // Not a CInstancePVRClient override; there's no per-instance equivalent
+  // wired into the PVR C++ API, only the addon-base one, so
+  // CAddonDispatcharr forwards to whichever instance it created. Updates
+  // the specific atomic member(s) named in settings.xml that this addon
+  // can safely apply live; returns ADDON_STATUS_NEED_RESTART for anything
+  // it can't (the Dispatcharr connection settings, which are baked into
+  // DispatcharrClient's Config at construction, and
+  // enable_realtime_updates, which would need to dynamically start/stop a
+  // background thread -- deliberately left out of scope here).
+  ADDON_STATUS OnAddonSettingChanged(const std::string& settingName,
+                                     const kodi::addon::CSettingValue& settingValue);
+
   // --- General ---
   PVR_ERROR GetCapabilities(kodi::addon::PVRCapabilities& capabilities) override;
   PVR_ERROR GetBackendName(std::string& name) override;
@@ -163,8 +178,24 @@ private:
 
   std::chrono::steady_clock::time_point m_channelsLoadedAt{};
   std::chrono::steady_clock::time_point m_epgLoadedAt{};
-  int m_channelRefreshHours = 12;
-  int m_epgRefreshHours = 4;
+  // Every setting below is atomic rather than plain, and updated live by
+  // OnAddonSettingChanged() (called via CAddonDispatcharr::SetSetting() in
+  // addon.cpp, Kodi's own per-setting change notification) rather than
+  // only read once at construction. Confirmed as a real bug otherwise, not
+  // just a theoretical one: live_timeshift_mode changed via Kodi's addon
+  // settings GUI had no effect on an already-running instance until Kodi
+  // was fully restarted -- silently defeating the whole point of
+  // switching to Off for a non-admin account, since the addon kept trying
+  // the now-stale server-side/admin-only path in the meantime. Each of
+  // these is read from more than one thread already (Kodi's own
+  // PVR-calling threads plus this addon's background refresh threads), so
+  // now that a write can also arrive at any time from whichever thread
+  // Kodi delivers SetSetting() on, atomic is the correct minimum fix --
+  // simpler and less invasive than threading a mutex through every read
+  // site, and sufficient since none of these values have a cross-field
+  // invariant that needs a single consistent snapshot.
+  std::atomic<int> m_channelRefreshHours{12};
+  std::atomic<int> m_epgRefreshHours{4};
   // 0 = off, 2 = server-side (this addon's companion Dispatcharr plugin --
   // see dispatcharr-plugin/timeshift_buffer/ in this repo); 1 (local,
   // inputstream.ffmpegdirect's own on-device buffer) was removed once
@@ -174,17 +205,16 @@ private:
   // with NOT being (or the owner not wanting it to be) a Dispatcharr admin
   // -- the timeshift_buffer plugin's run/ API requires that role; a plain
   // stream needs nothing beyond ordinary channel-browsing/streaming
-  // permission. Read-only after construction, so no lock needed to read it
-  // from multiple threads.
-  int m_liveTimeshiftMode = kLiveTimeshiftServer;
-  bool m_enableCatchupFfmpegdirectSeek = false;
-  bool m_debugLogging = false;
+  // permission.
+  std::atomic<int> m_liveTimeshiftMode{kLiveTimeshiftServer};
+  std::atomic<bool> m_enableCatchupFfmpegdirectSeek{false};
+  std::atomic<bool> m_debugLogging{false};
   // See recurring_rule_utc_offset_minutes in settings.xml/strings.po --
   // bridges Kodi's UTC-based timer times against Dispatcharr's own
   // recurring-rule scheduler, which interprets a rule's start/end
   // time-of-day using its configured (non-UTC-by-default) system
   // timezone with no server-side conversion available.
-  int m_recurringRuleUtcOffsetMinutes = 0;
+  std::atomic<int> m_recurringRuleUtcOffsetMinutes{0};
 
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/
@@ -205,7 +235,10 @@ private:
   std::mutex m_recordingRefreshMutex;
   std::condition_variable m_recordingRefreshCv;
   std::atomic<bool> m_stopRecordingRefreshThread{false};
-  int m_recordingRefreshMinutes = 5;
+  // Atomic and re-read fresh every wait_for() cycle (see
+  // StartRecordingRefreshThread()) -- OnAddonSettingChanged() updating
+  // this takes effect on the thread's very next wake, no restart needed.
+  std::atomic<int> m_recordingRefreshMinutes{5};
 
   // Channels/EPG were previously only ever loaded synchronously, on
   // whichever Kodi-owned thread first called GetChannels()/

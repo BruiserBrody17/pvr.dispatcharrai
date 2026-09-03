@@ -46,6 +46,75 @@ Confirmed live: `canseek: false` (by design -- a plain stream has no
 buffer to seek within), stable playback with real elapsed time
 progressing and zero decode errors.
 
+**A real bug, found by a user right after Off was reintroduced: changing
+`live_timeshift_mode` via Kodi's settings GUI had no effect on an
+already-running instance until Kodi was fully restarted.** Root cause,
+confirmed directly in source: `PVRDispatcharr`'s constructor read every
+setting exactly once (`kodi::addon::GetSettingInt(...)` etc.) into a
+plain member, and nothing in this addon ever overrode Kodi's
+settings-changed notification -- every consumer
+(`GetChannelStreamProperties()`, `OpenLiveStream()`, ...) kept reading
+that now-stale cached value indefinitely. Isolated cleanly (not just
+inferred): started fresh with Off on disk, confirmed the Off-mode
+property signature via a real `Play`; without restarting, edited
+`settings.xml` to server-side (isolating "does the addon ever re-read
+this" from whatever mechanism the GUI itself uses to notify the addon);
+played the same channel again on the same still-running instance and got
+the *identical* Off-mode signature -- proving the instance never re-read
+it. **Silently defeated the entire point of the fix that just
+reintroduced Off**: a user switching to it specifically because their
+account isn't admin-level would still get an immediate playback failure
+on the very first attempt after changing the setting, since the addon
+kept trying the now-stale server-side/admin-only path until they figured
+out to restart Kodi.
+
+Fixed by implementing `kodi::addon::CAddonBase::SetSetting()` (in
+`addon.cpp`'s `CAddonDispatcharr`, which Kodi calls once per changed
+setting whenever the user edits addon settings via the GUI, without
+restarting Kodi -- there's no per-instance equivalent wired into the PVR
+C++ API, only this addon-base-level one, so `CAddonDispatcharr` tracks a
+pointer to the `PVRDispatcharr` instance it created and forwards to a new
+`OnAddonSettingChanged()` there). `live_timeshift_mode` and every other
+setting this addon can safely apply without reconnecting
+(`channel_refresh_hours`, `epg_refresh_hours`,
+`enable_catchup_ffmpegdirect_seek`, `recording_refresh_minutes`,
+`recurring_rule_utc_offset_minutes`, `debug_logging`) now take effect
+immediately, no restart needed -- each was already read from more than
+one thread (Kodi's own PVR-calling threads plus this addon's background
+refresh threads), so each became `std::atomic` rather than plain,
+matching this project's own established data-race-fixing standard rather
+than introducing a new unsynchronized-write path deliberately. The
+Dispatcharr connection settings (`host`/`port`/`use_https`/`username`/
+`password`/`verify_ssl`/`timeout`/`api_key`, baked into
+`DispatcharrClient`'s `Config` at construction) and
+`enable_realtime_updates` (would need dynamically starting/stopping a
+background thread outside its normal constructor/destructor lifecycle)
+are deliberately left restart-only -- `SetSetting()` returns
+`ADDON_STATUS_NEED_RESTART` for those specifically, rather than silently
+doing nothing.
+
+Verified the fix doesn't regress anything (both timeshift modes still
+confirmed working correctly against a real build with every setting
+above converted to atomic), and that `OnAddonSettingChanged()` correctly
+stays silent at normal startup (doesn't fire spuriously just from Kodi
+loading the addon's current settings) via a temporary diagnostic log
+line, removed before landing. **Not independently confirmed end-to-end
+through Kodi's own real settings-dialog save** -- no GUI automation was
+available in either this addon's own dev environment or the session that
+found the bug (both API/log-only access); a disable/re-enable of the
+addon via JSON-RPC was tried as a possible substitute trigger and ruled
+out (confirmed via `kodi.log` timestamps that it fully destroys and
+recreates the PVR client instance -- equivalent to a restart for this
+addon, not a test of the live-update path at all). The fix follows Kodi's
+own documented `SetSetting()` contract precisely (kodi-dev-kit's own
+`AddonBase.h`, including its worked code example), and the
+forwarding/locking/atomic-update logic was reviewed carefully rather than
+assumed correct by construction alone -- but a real GUI-driven
+confirmation (change the setting through the actual Settings dialog while
+a channel is open, confirm behavior changes with no restart) is the one
+piece of end-to-end evidence still open, tracked for whoever next has
+real GUI access to this addon.
+
 **Local** (`live_timeshift_mode = 1`, retired -- not currently
 selectable): `GetChannelStreamProperties()` routed live channel playback
 through `inputstream.ffmpegdirect`'s `stream_mode: timeshift`. Confirmed

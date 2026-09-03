@@ -95,6 +95,63 @@ PVRDispatcharr::~PVRDispatcharr()
     m_realtimeUpdateThread.join();
 }
 
+ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingName,
+                                                   const kodi::addon::CSettingValue& settingValue)
+{
+  if (settingName == "live_timeshift_mode")
+  {
+    m_liveTimeshiftMode = settingValue.GetInt();
+  }
+  else if (settingName == "channel_refresh_hours")
+  {
+    m_channelRefreshHours = settingValue.GetInt();
+  }
+  else if (settingName == "epg_refresh_hours")
+  {
+    m_epgRefreshHours = settingValue.GetInt();
+  }
+  else if (settingName == "enable_catchup_ffmpegdirect_seek")
+  {
+    m_enableCatchupFfmpegdirectSeek = settingValue.GetBoolean();
+  }
+  else if (settingName == "recording_refresh_minutes")
+  {
+    m_recordingRefreshMinutes = settingValue.GetInt();
+    // Wake the thread immediately rather than leaving it asleep for up to
+    // the *old* interval before it notices the new one -- wait_for() only
+    // re-reads m_recordingRefreshMinutes when it actually wakes.
+    m_recordingRefreshCv.notify_all();
+  }
+  else if (settingName == "recurring_rule_utc_offset_minutes")
+  {
+    m_recurringRuleUtcOffsetMinutes = settingValue.GetInt();
+  }
+  else if (settingName == "debug_logging")
+  {
+    m_debugLogging = settingValue.GetBoolean();
+  }
+  else if (settingName == "enable_realtime_updates")
+  {
+    // Deliberately not applied live -- would mean dynamically starting or
+    // stopping m_realtimeUpdateThread outside its normal
+    // constructor/destructor lifecycle, real added complexity for a
+    // setting that's already documented experimental. Restart picks it up
+    // the same way every setting used to work before this method existed.
+    return ADDON_STATUS_NEED_RESTART;
+  }
+  else if (settingName == "host" || settingName == "port" || settingName == "use_https" ||
+           settingName == "username" || settingName == "password" ||
+           settingName == "verify_ssl" || settingName == "timeout" || settingName == "api_key")
+  {
+    // Baked into DispatcharrClient's Config at construction (see
+    // LoadConfigFromSettings()) -- changing the connection this addon
+    // talks to, or re-authenticating against it, isn't something to
+    // attempt on a live instance.
+    return ADDON_STATUS_NEED_RESTART;
+  }
+  return ADDON_STATUS_OK;
+}
+
 void PVRDispatcharr::StartRecordingRefreshThread()
 {
   m_recordingRefreshThread = std::thread([this]() {
