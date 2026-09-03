@@ -42,6 +42,7 @@ constexpr const char* kEpgOutputPath = "/output/epg";
 // endpoint/payload notes in DispatcharrClient.h.
 constexpr const char* kRecordingsPath = "/api/channels/recordings/";
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";
+constexpr const char* kRecurringRulesPath = "/api/channels/recurring-rules/";
 constexpr const char* kLogosPath = "/api/channels/logos/";
 // Confirmed against a live instance: creates a session-bound catch-up
 // (archived programme) playback URL that stays valid via a sliding idle
@@ -195,6 +196,66 @@ time_t TimeFromIso(const std::string& isoStr)
     tmVal.tm_hour = std::stoi(isoStr.substr(11, 2));
     tmVal.tm_min = std::stoi(isoStr.substr(14, 2));
     tmVal.tm_sec = std::stoi(isoStr.substr(17, 2));
+  }
+  catch (const std::exception&)
+  {
+    return 0;
+  }
+  return PortableTimeGm(&tmVal);
+}
+
+// "HH:MM:SS" for a plain seconds-since-midnight value, wrapping into
+// [0, 86400) first -- callers may have shifted a UTC time-of-day by
+// recurring_rule_utc_offset_minutes, which can push it negative or past
+// 24h before this is called.
+std::string TimeOfDayString(int secondsSinceMidnight)
+{
+  int s = secondsSinceMidnight % 86400;
+  if (s < 0)
+    s += 86400;
+  char buf[16];
+  std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60);
+  return std::string(buf);
+}
+
+// Inverse of TimeOfDayString(): parses "HH:MM:SS" (or "HH:MM") into
+// seconds since midnight. Returns 0 on anything unparseable.
+int SecondsSinceMidnightFromString(const std::string& hms)
+{
+  int h = 0, m = 0, s = 0;
+  if (std::sscanf(hms.c_str(), "%d:%d:%d", &h, &m, &s) < 2)
+    return 0;
+  return h * 3600 + m * 60 + s;
+}
+
+// "YYYY-MM-DD" for the UTC calendar date of a time_t (this addon only
+// ever stores a rule's start_date/end_date as UTC midnight of the
+// intended local calendar date -- see RecurringRule's own comment).
+std::string DateStringFromTime(time_t t)
+{
+  char buf[16];
+  struct tm tmVal{};
+#if defined(_WIN32)
+  gmtime_s(&tmVal, &t);
+#else
+  gmtime_r(&t, &tmVal);
+#endif
+  std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tmVal);
+  return std::string(buf);
+}
+
+// Inverse of DateStringFromTime(): parses "YYYY-MM-DD" into a UTC
+// midnight time_t. Returns 0 on anything unparseable.
+time_t TimeFromDateString(const std::string& dateStr)
+{
+  if (dateStr.size() < 10)
+    return 0;
+  struct tm tmVal{};
+  try
+  {
+    tmVal.tm_year = std::stoi(dateStr.substr(0, 4)) - 1900;
+    tmVal.tm_mon = std::stoi(dateStr.substr(5, 2)) - 1;
+    tmVal.tm_mday = std::stoi(dateStr.substr(8, 2));
   }
   catch (const std::exception&)
   {
@@ -901,6 +962,15 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
         r.subtitle = FieldOr<std::string>(custom, "sub_title", "");
       if (r.description.empty())
         r.description = FieldOr<std::string>(custom, "description", "");
+
+      // Tagged by Dispatcharr's own recurring-rule scheduler (confirmed
+      // against its source: custom_properties.rule =
+      // {"type": "recurring", "id": <rule id>, ...}) -- see
+      // RecurringRule's own comment for how this links back to its
+      // parent rule as a Kodi timer.
+      const json& rule = custom.contains("rule") ? custom["rule"] : json();
+      if (rule.is_object() && FieldOr<std::string>(rule, "type", "") == "recurring")
+        r.recurringRuleId = FieldOr(rule, "id", 0);
     }
     if (r.title.empty())
     {
@@ -1152,6 +1222,88 @@ bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::st
     path += "&tvg_id=" + UrlEncode(tvgId);
   json response;
   return Request("DELETE", path, json(), response, error);
+}
+
+bool DispatcharrClient::GetRecurringRules(std::vector<RecurringRule>& out, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json response;
+  if (!Request("GET", kRecurringRulesPath, json(), response, error))
+    return false;
+
+  const json& list = response.contains("results") ? response["results"] : response;
+  if (!list.is_array())
+  {
+    error = "Unexpected recurring-rules response shape";
+    return false;
+  }
+
+  out.clear();
+  for (const auto& item : list)
+  {
+    RecurringRule rule;
+    rule.id = FieldOr(item, "id", 0);
+    rule.channelId = FieldOr(item, "channel", 0);
+    rule.name = FieldOr<std::string>(item, "name", "");
+    rule.enabled = FieldOr(item, "enabled", true);
+    rule.startTimeOfDaySeconds =
+        SecondsSinceMidnightFromString(FieldOr<std::string>(item, "start_time", ""));
+    rule.endTimeOfDaySeconds =
+        SecondsSinceMidnightFromString(FieldOr<std::string>(item, "end_time", ""));
+    rule.startDate = TimeFromDateString(FieldOr<std::string>(item, "start_date", ""));
+    rule.endDate = TimeFromDateString(FieldOr<std::string>(item, "end_date", ""));
+    const json& days = item.contains("days_of_week") ? item["days_of_week"] : json();
+    if (days.is_array())
+    {
+      for (const auto& d : days)
+      {
+        if (d.is_number_integer())
+          rule.daysOfWeek.push_back(d.get<int>());
+      }
+    }
+    out.push_back(std::move(rule));
+  }
+  return true;
+}
+
+bool DispatcharrClient::CreateRecurringRule(int channelId, const std::string& name,
+                                            const std::vector<int>& daysOfWeek,
+                                            int startTimeOfDaySeconds, int endTimeOfDaySeconds,
+                                            time_t startDate, time_t endDate, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  // Confirmed against the live RecurringRecordingRuleSerializer: channel is
+  // a plain FK id (no uuid field on this model, unlike Channel itself),
+  // days_of_week a non-empty list of ints 0-6, start_time/end_time plain
+  // "HH:MM:SS" with no timezone suffix, and start_date/end_date are both
+  // required despite the model declaring them nullable -- confirmed by its
+  // validate() raising "Start date is required"/"End date is required"
+  // when either is omitted, so both are always sent here.
+  json body = {
+      {"channel", channelId},
+      {"name", name},
+      {"days_of_week", daysOfWeek},
+      {"start_time", TimeOfDayString(startTimeOfDaySeconds)},
+      {"end_time", TimeOfDayString(endTimeOfDaySeconds)},
+      {"start_date", DateStringFromTime(startDate)},
+      {"end_date", DateStringFromTime(endDate)},
+      {"enabled", true},
+  };
+  json response;
+  return Request("POST", kRecurringRulesPath, body, response, error);
+}
+
+bool DispatcharrClient::DeleteRecurringRule(int ruleId, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json response;
+  return Request("DELETE", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/",
+                 json(), response, error);
 }
 
 bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const

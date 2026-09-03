@@ -111,6 +111,25 @@ private:
   static constexpr int kTimerTypeOneTime = 1;
   static constexpr int kTimerTypeSeries = 2;
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
+  static constexpr int kTimerTypeRecurring = 4;
+  // ClientIndex namespace bits: series rules already use 0x40000000 (see
+  // GetTimers()); recurring rules use a separate bit so a real Dispatcharr
+  // id (unlike series rules, which have none and must be hashed) can be
+  // used directly without colliding with either namespace.
+  static constexpr unsigned int kRecurringRuleIndexFlag = 0x20000000u;
+  // How far past a rule's start a newly-created recurring rule's
+  // Dispatcharr-side end_date is set to. Kodi's own repeating-timer UI has
+  // no "last day" field to expose per-timer (confirmed against
+  // kodi-dev-kit's PVR_TIMER_TYPE_SUPPORTS_* flags -- only
+  // SUPPORTS_FIRST_DAY exists, no equivalent for an end), but Dispatcharr's
+  // serializer requires a real end_date -- see CreateRecurringRule(). A
+  // generous, cheap default: only the next 14 days actually get
+  // materialized into real Recording rows regardless (Dispatcharr's own
+  // rolling horizon), so a far-future end_date costs nothing but the
+  // rule's own validity window. Deleting the timer in Kodi ends it for
+  // good at any point; there's no separate "stop repeating" concept to
+  // expose beyond that.
+  static constexpr int kRecurringRuleDefaultYears = 3;
 
   dispatcharr::Config LoadConfigFromSettings() const;
   // Returns true if this call actually performed a fetch (cache was stale
@@ -139,6 +158,12 @@ private:
   int m_epgRefreshHours = 4;
   bool m_enableCatchupFfmpegdirectSeek = false;
   bool m_debugLogging = false;
+  // See recurring_rule_utc_offset_minutes in settings.xml/strings.po --
+  // bridges Kodi's UTC-based timer times against Dispatcharr's own
+  // recurring-rule scheduler, which interprets a rule's start/end
+  // time-of-day using its configured (non-UTC-by-default) system
+  // timezone with no server-side conversion available.
+  int m_recurringRuleUtcOffsetMinutes = 0;
 
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/

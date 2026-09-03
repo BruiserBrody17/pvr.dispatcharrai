@@ -108,6 +108,15 @@
           <default>false</default>
           <control type="toggle" />
         </setting>
+        <setting id="recurring_rule_utc_offset_minutes" type="integer" label="30049" help="30050">
+          <level>1</level>
+          <default>0</default>
+          <constraints>
+            <minimum>-720</minimum>
+            <maximum>840</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
       </group>
     </category>
 
