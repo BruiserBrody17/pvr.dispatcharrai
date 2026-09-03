@@ -223,6 +223,9 @@ public:
   // client only returns the raw document.
   bool GetXmlTvGuide(std::string& xmlOut, std::string& error);
 
+  // Plain live-stream URL passthrough for live_timeshift_mode's "Off"
+  // setting -- no server-side buffering, no admin-account requirement.
+  std::string GetLiveStreamUrl(const Channel& channel) const;
   // logoId is a Logo object's own id (Channel::logoId), not the channel's id.
   std::string GetChannelLogoUrl(int logoId) const;
 
