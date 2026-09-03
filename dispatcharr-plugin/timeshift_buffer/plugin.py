@@ -654,6 +654,68 @@ def _remove_channel_files(state: dict, logger):
         logger.exception("timeshift_buffer: couldn't fully clean up %s", channel_dir)
 
 
+def _find_orphaned_channel_dirs(storage_path: str, min_age_seconds: int) -> list:
+    """Directories directly under storage_path with no matching
+    Redis-tracked buffer state, old enough to rule out a buffer that's
+    still mid-start.
+
+    Exists because the normal cleanup paths (the reaper's idle-heartbeat
+    check, stop_buffer, stop_all) all work by iterating *currently
+    Redis-tracked* buffers -- confirmed live that this leaves a real gap:
+    a channel directory whose Redis state key is simply gone (expired
+    past _BUFFER_STATE_TTL with nothing left to refresh it -- e.g. a
+    client killed hard enough that it never sent stop_buffer, and no
+    heartbeat arrived again before the TTL ran out -- or a state write
+    that never happened at all, e.g. a crash between _start_ffmpeg()
+    creating the directory and _set_buffer_state() persisting it) is
+    invisible to every one of those, since none of them ever look at
+    what's actually sitting in storage_path independent of what Redis
+    currently says. This closes that gap by reconciling the filesystem
+    against Redis directly, the one place these leaks are actually
+    visible from.
+
+    A directory's own mtime changes whenever ffmpeg writes a new segment
+    file into it (a new directory entry), so "how long since this
+    directory's mtime" is a real idle-since signal for an actively
+    written buffer, not just a creation timestamp -- and for a
+    freshly-mkdir'd but not-yet-written one, mtime is the creation time
+    itself, so min_age_seconds also covers _start_ffmpeg's own narrow
+    directory-created-before-state-persisted window.
+    """
+    root = Path(storage_path)
+    if not root.is_dir():
+        return []
+    now = time.time()
+    orphans = []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        if _get_buffer_state(entry.name) is not None:
+            continue  # tracked -- not an orphan
+        try:
+            age = now - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age < min_age_seconds:
+            continue  # too recent to be sure it isn't just starting up
+        orphans.append(entry)
+    return orphans
+
+
+def _scrub_orphaned_dirs(storage_path: str, min_age_seconds: int, logger) -> list:
+    removed = []
+    for entry in _find_orphaned_channel_dirs(storage_path, min_age_seconds):
+        try:
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+        except OSError:
+            logger.exception("timeshift_buffer: couldn't scrub orphaned directory %s", entry)
+    if removed:
+        logger.info("timeshift_buffer: scrubbed %d orphaned buffer director%s: %s",
+                    len(removed), "y" if len(removed) == 1 else "ies", ", ".join(removed))
+    return removed
+
+
 def _get_live_manifest(state: dict, logger) -> dict:
     """Builds a byte-addressable manifest of the buffer's currently-listed
     (live.m3u8) segments -- filename, byte size, duration, and cumulative
@@ -841,7 +903,8 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                     client.expire(_REDIS_LEADER_KEY, _REDIS_LEADER_TTL)
 
             if got_leadership:
-                idle_timeout = int(settings_getter().get("idle_timeout_seconds", 120))
+                settings_dict = settings_getter()
+                idle_timeout = int(settings_dict.get("idle_timeout_seconds", 120))
                 now = time.time()
                 for key in _list_buffer_keys():
                     raw = client.get(key)
@@ -856,6 +919,18 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                         _stop_ffmpeg(state, logger)
                         _remove_channel_files(state, logger)
                         _delete_buffer_state(state["channel_uuid"])
+
+                # Reconciles storage_path against Redis directly, catching
+                # the class of leak the loop above structurally can't (see
+                # _find_orphaned_channel_dirs' own comment) -- makes
+                # scrub_orphaned_buffers a manual-cleanup convenience
+                # rather than the only way this ever gets fixed. Same
+                # min-age floor reasoning as that action's own default:
+                # at least 5 minutes regardless of a shorter
+                # idle_timeout_seconds, since there's no tracked state
+                # here to double-check against before deleting.
+                storage_path = settings_dict.get("storage_path", "/data/timeshift")
+                _scrub_orphaned_dirs(storage_path, max(idle_timeout, 300), logger)
         except Exception:
             logger.exception("timeshift_buffer: reaper tick failed")
 
@@ -1042,6 +1117,20 @@ class Plugin:
             "button_color": "red",
             "confirm": {"required": True, "title": "Stop all buffers?", "message": "This ends every active rolling buffer right now, for every channel and every viewer currently using one."},
         },
+        {
+            "id": "scrub_orphaned_buffers", "label": "Scrub Orphaned Buffer Directories",
+            "description": (
+                "Removes leftover directories under storage_path that Redis no longer has any "
+                "record of (a client killed hard enough that it never sent stop_buffer, and no "
+                "heartbeat arrived again before the tracked state's own TTL expired, is the usual "
+                "cause) -- the reaper above already does this automatically on every tick, so this "
+                "is mainly for cleaning up right now rather than waiting for the next one. Only "
+                "touches directories untouched for several minutes; anything that could still be "
+                "an actively-starting buffer is left alone."
+            ),
+            "button_label": "Scrub Now",
+            "confirm": {"required": True, "title": "Scrub orphaned directories?", "message": "Permanently deletes any buffer directory under storage_path with no matching tracked state and no recent activity. Does not touch anything currently active."},
+        },
     ]
 
     def run(self, action: str, params: dict, context: dict):
@@ -1067,6 +1156,8 @@ class Plugin:
             return self._list_buffers()
         if action == "stop_all":
             return self._stop_all(logger)
+        if action == "scrub_orphaned_buffers":
+            return self._scrub_orphaned_buffers(settings_dict, logger)
 
         return {"status": "error", "message": f"Unknown action: {action}"}
 
@@ -1076,6 +1167,11 @@ class Plugin:
         if _reaper_stop_event is not None:
             _reaper_stop_event.set()
         self._stop_all(logger)
+        # Also scrub anything already-orphaned at the moment of teardown --
+        # _stop_all() above only touches what's still Redis-tracked, so
+        # without this a disable/delete would leave existing orphans behind
+        # rather than actually cleaning storage_path out.
+        self._scrub_orphaned_buffers(context.get("settings", {}), logger)
         _stop_http_server(logger)
 
     # -- action implementations --------------------------------------------
@@ -1248,3 +1344,13 @@ class Plugin:
             _delete_buffer_state(state["channel_uuid"])
             stopped.append(state["channel_uuid"])
         return {"status": "ok", "stopped": stopped}
+
+    def _scrub_orphaned_buffers(self, settings_dict, logger):
+        storage_path = settings_dict.get("storage_path", "/data/timeshift")
+        idle_timeout = int(settings_dict.get("idle_timeout_seconds", 120))
+        # Same floor as the reaper's own automatic pass -- see
+        # _find_orphaned_channel_dirs' comment on why an orphan (no
+        # tracked state to double-check against) gets more margin than
+        # ordinary heartbeat-based reaping.
+        removed = _scrub_orphaned_dirs(storage_path, max(idle_timeout, 300), logger)
+        return {"status": "ok", "removed": removed}
