@@ -393,6 +393,24 @@ public:
                            std::string& error);
   bool DeleteRecurringRule(int ruleId, std::string& error);
 
+  // Dispatcharr's global recording pre/post padding, in minutes
+  // (custom_properties has no per-recording/per-rule equivalent -- this
+  // is genuinely global-only, confirmed against Dispatcharr's own
+  // source). Only actually applied server-side to EPG-based scheduling
+  // (series rules, an EPG-matched one-time recording) -- confirmed a
+  // recurring (day-of-week) rule's own scheduler never reads or applies
+  // this at all, a real inconsistency on Dispatcharr's side this addon
+  // can't fix, just report accurately.
+  bool GetDvrOffsetMinutes(int& preMinutesOut, int& postMinutesOut, std::string& error);
+  // Read-modify-write: Dispatcharr stores this alongside several other,
+  // unrelated settings (comskip mode/hw-accel, recording path templates)
+  // in the same single JSON blob (CoreSettings key "dvr_settings") --
+  // confirmed live that this is one shared row, not a dedicated one for
+  // just padding. Fetches the current blob first and only changes the
+  // two offset keys within it, so a naive whole-field overwrite doesn't
+  // silently wipe out the unrelated settings sharing that same row.
+  bool SetDvrOffsetMinutes(int preMinutes, int postMinutes, std::string& error);
+
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
   // LengthRecordedStream. Kodi's kodi-dev-kit docs describe
@@ -491,6 +509,12 @@ private:
   std::string BaseUrl() const;
   bool Login(std::string& error);
   bool RefreshAccessToken(std::string& error);
+
+  // Finds the one CoreSettings row with key kDvrSettingsKey and returns
+  // its id and full value blob (unmodified) -- both GetDvrOffsetMinutes()
+  // and SetDvrOffsetMinutes() need this same lookup, the latter as the
+  // read half of its read-modify-write.
+  bool FindDvrSettingsRow(int& idOut, nlohmann::json& valueOut, std::string& error);
 
   // Fetches the raw HLS playlist text for an in-progress recording, with a
   // self-healing retry on a 401. Returns false (with `error` set) on a

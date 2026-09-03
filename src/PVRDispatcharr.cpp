@@ -62,6 +62,37 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to generate API key: %s", error.c_str());
   }
 
+  // Dispatcharr's recording pre/post padding is genuinely global-only --
+  // no per-timer override exists server-side (confirmed against its own
+  // source) -- so rather than a Kodi per-timer margin UI, which would
+  // misleadingly imply a per-timer effect Dispatcharr doesn't have, this
+  // is surfaced as a plain settings-screen value that mirrors
+  // Dispatcharr's real global setting directly. Synced FROM Dispatcharr
+  // on every startup, not just once, so Kodi's display never goes stale
+  // relative to a change made another way (Dispatcharr's own web UI, a
+  // different Kodi install sharing the account) -- same self-heal
+  // reasoning as the API key above, just reading instead of generating.
+  // Only actually rewrites Kodi's own persisted setting if the value is
+  // genuinely different, so a normal restart with nothing changed
+  // doesn't churn OnAddonSettingChanged() for no reason.
+  {
+    int pre = 0, post = 0;
+    std::string offsetError;
+    if (m_client.GetDvrOffsetMinutes(pre, post, offsetError))
+    {
+      if (kodi::addon::GetSettingInt("recording_pre_offset_minutes", -1) != pre)
+        kodi::addon::SetSettingInt("recording_pre_offset_minutes", pre);
+      if (kodi::addon::GetSettingInt("recording_post_offset_minutes", -1) != post)
+        kodi::addon::SetSettingInt("recording_post_offset_minutes", post);
+    }
+    else if (m_debugLogging)
+    {
+      kodi::Log(ADDON_LOG_DEBUG,
+                "pvr.dispatcharrai: could not read Dispatcharr's DVR padding settings: %s",
+                offsetError.c_str());
+    }
+  }
+
   StartRecordingRefreshThread();
   StartChannelEpgRefreshThread();
   if (m_enableRealtimeUpdates)
@@ -125,6 +156,37 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
   else if (settingName == "recurring_rule_utc_offset_minutes")
   {
     m_recurringRuleUtcOffsetMinutes = settingValue.GetInt();
+  }
+  else if (settingName == "recording_pre_offset_minutes" ||
+           settingName == "recording_post_offset_minutes")
+  {
+    // Global-only on Dispatcharr's side (see DispatcharrClient::
+    // SetDvrOffsetMinutes()'s own comment) -- always push both current
+    // values together regardless of which one actually changed, since
+    // that's what Dispatcharr's own storage expects; whichever of the
+    // two ISN'T the one that just changed is read back from Kodi's own
+    // already-current settings rather than tracked separately here.
+    int pre = settingName == "recording_pre_offset_minutes"
+                  ? settingValue.GetInt()
+                  : kodi::addon::GetSettingInt("recording_pre_offset_minutes", 0);
+    int post = settingName == "recording_post_offset_minutes"
+                   ? settingValue.GetInt()
+                   : kodi::addon::GetSettingInt("recording_post_offset_minutes", 0);
+    // Detached: this is a real network round-trip (unlike every other
+    // branch here, a plain in-memory write), and there's no reason to
+    // block whatever thread Kodi delivers SetSetting() on for it --
+    // best-effort, with the constructor's own sync-from-Dispatcharr on
+    // the next restart as a natural retry if this particular push
+    // silently fails.
+    std::thread([this, pre, post]() {
+      std::string offsetError;
+      if (!m_client.SetDvrOffsetMinutes(pre, post, offsetError))
+      {
+        kodi::Log(ADDON_LOG_ERROR,
+                  "pvr.dispatcharrai: failed to update Dispatcharr's DVR padding: %s",
+                  offsetError.c_str());
+      }
+    }).detach();
   }
   else if (settingName == "debug_logging")
   {
@@ -1104,6 +1166,20 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
     kodi::addon::PVRRecording recording;
     recording.SetRecordingId(std::to_string(rec.id));
     recording.SetTitle(rec.title);
+    // Groups recordings into a per-show folder in Kodi's own recordings UI.
+    // rec.title is already the show name, not an episode-specific one --
+    // confirmed against Dispatcharr's own source: the exact same
+    // custom_properties.program.title read that populates this field is
+    // also, verbatim, what Dispatcharr itself uses as the show-folder
+    // path segment when it writes the file to disk (apps/channels/
+    // tasks.py's _build_output_paths), so this always matches the real
+    // on-disk layout rather than risking a second, possibly-divergent
+    // opinion about what the "show" is. Never empty -- rec.title already
+    // falls back to "Recording <id>" server-side when nothing else is
+    // available, so a one-off/unmatched recording gets its own
+    // single-item folder rather than an empty Directory, matching normal
+    // Kodi PVR/video-library grouping conventions.
+    recording.SetDirectory(rec.title);
     recording.SetEpisodeName(rec.subtitle);
     recording.SetPlot(rec.description);
     recording.SetChannelUid(rec.channelId > 0 ? rec.channelId : PVR_CHANNEL_INVALID_UID);

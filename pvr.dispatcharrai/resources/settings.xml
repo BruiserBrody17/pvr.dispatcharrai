@@ -128,6 +128,24 @@
           </constraints>
           <control type="edit" format="integer" />
         </setting>
+        <setting id="recording_pre_offset_minutes" type="integer" label="30054" help="30055">
+          <level>0</level>
+          <default>0</default>
+          <constraints>
+            <minimum>0</minimum>
+            <maximum>120</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
+        <setting id="recording_post_offset_minutes" type="integer" label="30056" help="30057">
+          <level>0</level>
+          <default>0</default>
+          <constraints>
+            <minimum>0</minimum>
+            <maximum>120</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+        </setting>
       </group>
     </category>
 
