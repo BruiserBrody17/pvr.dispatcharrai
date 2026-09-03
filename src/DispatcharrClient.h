@@ -301,7 +301,12 @@ public:
   bool StopRecording(int recordingId, std::string& error);
 
   // True if Config::apiKey is already set. Callers use this to decide
-  // whether GenerateApiKey() is worth calling at all.
+  // whether GenerateApiKey() is worth calling at all. Deliberately reads
+  // m_config.apiKey directly rather than through GetApiKey() -- safe
+  // unlocked only because its one real call site (PVRDispatcharr's
+  // constructor) runs before any thread that could concurrently call
+  // GenerateApiKey() exists yet; do not add a second call site without
+  // reconsidering that.
   bool HasApiKey() const { return !m_config.apiKey.empty(); }
   // A currently-valid JWT access token, for the real-time-updates
   // WebSocket connection (see PVRDispatcharr's realtime-update thread) --
@@ -316,7 +321,16 @@ public:
   // ReadRecordingStream() have silently regenerated a stale one (see their
   // comments below) -- this client has no knowledge of Kodi's settings
   // storage, so the caller must notice the change and save it itself.
-  std::string GetApiKey() const { return m_config.apiKey; }
+  // Thread-safe (m_apiKeyMutex) -- GenerateApiKey() can be triggered by a
+  // self-healing regenerate-on-401 from any of this client's several
+  // stream-opening call sites, on whichever Kodi/background thread
+  // happens to be using them, concurrently with another thread reading
+  // the key for its own request.
+  std::string GetApiKey() const
+  {
+    std::lock_guard<std::mutex> lock(m_apiKeyMutex);
+    return m_config.apiKey;
+  }
   // Generates a new Dispatcharr API key and stores it in this client's own
   // config for immediate use by GetRecordingStreamUrl(). Regenerating
   // replaces any previous key for the account (confirmed against a live
@@ -539,7 +553,30 @@ private:
                                  const nlohmann::json& extraParams);
 
   Config m_config;
-  std::mutex m_authMutex;
+  // Guards only m_config.apiKey -- every other Config field is set once in
+  // the constructor (from LoadConfigFromSettings()) and never written
+  // again, so reading them elsewhere needs no synchronization; apiKey
+  // alone can be rewritten later, at any time, by GenerateApiKey() (see
+  // its own comment on why -- a self-healing regenerate-on-401, callable
+  // from several different stream-opening code paths on whichever thread
+  // happens to be using them). Mutable so the several const read sites
+  // (GetApiKey(), IsApiKeyValidFor()) can still lock it.
+  mutable std::mutex m_apiKeyMutex;
+  // Recursive: Login()/RefreshAccessToken() each hold this for their own
+  // full duration (including the nested Request() call that actually
+  // performs the HTTP round-trip) so every write to the token fields
+  // below is serialized regardless of caller -- EnsureAuthenticated()
+  // already held this across calling them, but Request()'s own 401-retry
+  // path (see Request()'s definition) calls them directly, with no lock
+  // of its own, and Request() also reads m_accessToken to build the auth
+  // header. A plain mutex would deadlock the moment any of these nest on
+  // the same thread (EnsureAuthenticated -> Login -> Request all doing
+  // so already); recursive_mutex allows that same-thread re-entry while
+  // still serializing genuinely concurrent callers on different threads
+  // -- confirmed necessary, not just theoretical, once the channel/EPG
+  // refresh thread and realtime-updates thread joined Kodi's own
+  // PVR-calling threads as concurrent callers into this client.
+  std::recursive_mutex m_authMutex;
   std::string m_accessToken;
   std::string m_refreshToken;
   std::chrono::steady_clock::time_point m_accessTokenExpiry;

@@ -372,7 +372,11 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
       for (int i = 0; i < 8; ++i)
         len = (len << 8) | ext[i];
     }
-    if (len > kMaxFramePayload)
+    // kMaxFramePayload caps a single frame, but a message fragmented
+    // across many continuation frames (opcode 0x0) could otherwise
+    // accumulate in `assembled` without any overall bound -- cap the
+    // running total too, not just each individual frame.
+    if (len > kMaxFramePayload || assembled.size() + len > kMaxFramePayload)
     {
       error = "WebSocket frame payload exceeds sanity limit";
       return -1;

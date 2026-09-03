@@ -401,10 +401,21 @@ bool DispatcharrClient::Request(const std::string& method,
   headers = curl_slist_append(headers, "Content-Type: application/json");
   headers = curl_slist_append(headers, "Accept: application/json");
   std::string authHeader;
-  if (withAuth && !m_accessToken.empty())
+  if (withAuth)
   {
-    authHeader = "Authorization: Bearer " + m_accessToken;
-    headers = curl_slist_append(headers, authHeader.c_str());
+    // Copy under the lock rather than reading m_accessToken directly here
+    // -- this can run concurrently with Login()/RefreshAccessToken()
+    // writing it from another thread (see m_authMutex's own comment).
+    std::string token;
+    {
+      std::lock_guard<std::recursive_mutex> lock(m_authMutex);
+      token = m_accessToken;
+    }
+    if (!token.empty())
+    {
+      authHeader = "Authorization: Bearer " + token;
+      headers = curl_slist_append(headers, authHeader.c_str());
+    }
   }
 
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -491,6 +502,7 @@ bool DispatcharrClient::Request(const std::string& method,
 
 bool DispatcharrClient::Login(std::string& error)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_authMutex);
   json body = {{"username", m_config.username}, {"password", m_config.password}};
   json response;
   if (!Request("POST", kTokenPath, body, response, error, /*withAuth=*/false, /*retry=*/0))
@@ -514,6 +526,7 @@ bool DispatcharrClient::Login(std::string& error)
 
 bool DispatcharrClient::RefreshAccessToken(std::string& error)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_authMutex);
   if (m_refreshToken.empty())
   {
     error = "No refresh token available";
@@ -536,7 +549,7 @@ bool DispatcharrClient::RefreshAccessToken(std::string& error)
 
 bool DispatcharrClient::EnsureAuthenticated(std::string& error)
 {
-  std::lock_guard<std::mutex> lock(m_authMutex);
+  std::lock_guard<std::recursive_mutex> lock(m_authMutex);
   if (!m_accessToken.empty() && std::chrono::steady_clock::now() < m_accessTokenExpiry)
     return true;
   if (!m_refreshToken.empty() && RefreshAccessToken(error))
@@ -548,6 +561,7 @@ bool DispatcharrClient::GetAccessToken(std::string& tokenOut, std::string& error
 {
   if (!EnsureAuthenticated(error))
     return false;
+  std::lock_guard<std::recursive_mutex> lock(m_authMutex);
   tokenOut = m_accessToken;
   return true;
 }
@@ -1070,7 +1084,10 @@ bool DispatcharrClient::GenerateApiKey(std::string& keyOut, std::string& error)
     error = "API key generation response did not contain a key";
     return false;
   }
-  m_config.apiKey = key;
+  {
+    std::lock_guard<std::mutex> lock(m_apiKeyMutex);
+    m_config.apiKey = key;
+  }
   keyOut = std::move(key);
   return true;
 }
@@ -1313,7 +1330,7 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
     return true; // fail open: a local curl-init failure isn't evidence the key is bad
 
   struct curl_slist* headers = nullptr;
-  std::string apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+  std::string apiKeyHeader = "X-API-Key: " + GetApiKey();
   headers = curl_slist_append(headers, apiKeyHeader.c_str());
 
   std::string discard;
@@ -1352,9 +1369,10 @@ bool DispatcharrClient::FetchRawInProgressPlaylist(int recordingId, const std::s
 
     struct curl_slist* headers = nullptr;
     std::string apiKeyHeader;
-    if (!m_config.apiKey.empty())
+    std::string apiKey = GetApiKey();
+    if (!apiKey.empty())
     {
-      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      apiKeyHeader = "X-API-Key: " + apiKey;
       headers = curl_slist_append(headers, apiKeyHeader.c_str());
     }
 
@@ -1405,9 +1423,10 @@ int64_t DispatcharrClient::ProbeSegmentByteSize(const std::string& segmentUrl) c
 
   struct curl_slist* headers = nullptr;
   std::string apiKeyHeader;
-  if (!m_config.apiKey.empty())
+  std::string apiKey = GetApiKey();
+  if (!apiKey.empty())
   {
-    apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+    apiKeyHeader = "X-API-Key: " + apiKey;
     headers = curl_slist_append(headers, apiKeyHeader.c_str());
   }
 
@@ -1551,7 +1570,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   m_inProgressRecordingStream.finished = !stillInProgress;
 
   // Proactive self-heal: cheaper to catch a stale key here than mid-read.
-  if (!m_config.apiKey.empty() && !IsApiKeyValidFor(playlistUrl))
+  if (!GetApiKey().empty() && !IsApiKeyValidFor(playlistUrl))
   {
     std::string regenKey, regenError;
     GenerateApiKey(regenKey, regenError);
@@ -1715,9 +1734,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
 
       struct curl_slist* headers = nullptr;
       std::string apiKeyHeader;
-      if (!m_config.apiKey.empty())
+      std::string apiKey = GetApiKey();
+      if (!apiKey.empty())
       {
-        apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+        apiKeyHeader = "X-API-Key: " + apiKey;
         headers = curl_slist_append(headers, apiKeyHeader.c_str());
       }
 
@@ -1867,9 +1887,10 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
 
     struct curl_slist* headers = nullptr;
     std::string apiKeyHeader;
-    if (!m_config.apiKey.empty())
+    std::string apiKey = GetApiKey();
+    if (!apiKey.empty())
     {
-      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      apiKeyHeader = "X-API-Key: " + apiKey;
       headers = curl_slist_append(headers, apiKeyHeader.c_str());
     }
 
@@ -1972,9 +1993,10 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
 
     struct curl_slist* headers = nullptr;
     std::string apiKeyHeader;
-    if (!m_config.apiKey.empty())
+    std::string apiKey = GetApiKey();
+    if (!apiKey.empty())
     {
-      apiKeyHeader = "X-API-Key: " + m_config.apiKey;
+      apiKeyHeader = "X-API-Key: " + apiKey;
       headers = curl_slist_append(headers, apiKeyHeader.c_str());
     }
 
