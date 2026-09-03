@@ -1259,4 +1259,76 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   Confirmed live after the change: a fresh in-progress recording opened
   and played correctly (`canseek: true`, growing `totaltime`, zero decode
   errors) with no setting enabled at all -- there's nothing left to enable.
+- **Recordings are grouped into per-show folders in Kodi's own recordings
+  UI (`PVRRecording::SetDirectory()`), using `rec.title` -- confirmed
+  against Dispatcharr's own source that this is genuinely the show name,
+  not an episode-specific one, and that it's the exact same value
+  Dispatcharr itself uses as the on-disk folder segment
+  (`apps/channels/tasks.py`'s `_build_output_paths`: `show` and `title`
+  are both `program.get('title')`, read once and used for both).** Using
+  this instead of parsing `file_path` directly means no dependency on
+  knowing Dispatcharr's currently-configured `tv_template`/
+  `tv_fallback_template` strings to correctly strip the show segment back
+  out -- the two are provably identical at the source, so the cheaper one
+  wins. Never empty: `rec.title` already falls back to "Recording <id>"
+  server-side when nothing else is available (see the first entry in this
+  file), so an unmatched/manual recording gets its own single-item folder
+  rather than an empty `Directory`, the same grouping behavior a real
+  named show gets. Confirmed live: a real EPG-matched test recording
+  (`"Cold Case"`) came back from `PVR.GetRecordingDetails` with
+  `directory: "Cold Case"` matching `title: "Cold Case"` exactly.
+- **Recording pre/post padding is now surfaced as two addon settings
+  (`recording_pre_offset_minutes`/`recording_post_offset_minutes`) that
+  mirror Dispatcharr's own global padding setting directly, rather than
+  Kodi's per-timer margin fields
+  (`PVRTimer::SetMarginStart()`/`SetMarginEnd()`).** That per-timer route
+  was the original plan, but confirmed against Dispatcharr's own source
+  (an exhaustive search of `Recording`/`RecurringRecordingRule`/
+  `SeriesRuleRequest` for any offset/padding/margin-shaped field, not
+  just absence in one file) that Dispatcharr has no per-item override at
+  all -- padding is one value pair, global, period. Exposing it as a
+  per-timer Kodi field would have implied a per-timer effect that doesn't
+  exist server-side; a plain settings-screen value that reads/writes
+  Dispatcharr's real global setting is the honest fit instead. Also
+  confirmed a real, non-obvious gap on Dispatcharr's own side while
+  researching this: the offset only ever gets applied to *EPG-based*
+  scheduling (series rules, an EPG-matched one-time recording) --
+  `sync_recurring_rule_impl` (the day-of-week recurring-rule scheduler,
+  see `docs/RECURRING_RULES.md`) builds its recordings straight from the
+  rule's own `start_time`/`end_time` with no offset applied at all.
+  Recurring-rule recordings are simply unaffected by this setting no
+  matter what it's set to -- not something this addon can fix, just
+  documented rather than silently wrong.
+
+  Dispatcharr stores this pair (`pre_offset_minutes`/`post_offset_minutes`,
+  minutes, default 0 for both) inside a single shared `CoreSettings` row
+  (`key: "dvr_settings"`) alongside several unrelated settings -- comskip
+  mode/hw-accel/custom-path, and the recording path templates
+  (`tv_template`, `movie_template`, `tv_fallback_dir`,
+  `tv_fallback_template`, `movie_fallback_template`). Confirmed live
+  against a real instance's actual current row (not an assumed empty
+  one) before writing `SetDvrOffsetMinutes()`: it's read-modify-write,
+  fetching the full blob first and only changing the two offset keys
+  within it -- a naive whole-field overwrite would have silently wiped
+  every other key sharing that row. Verified directly (bypassing Kodi
+  entirely, since this is server-side HTTP mechanics, not addon logic):
+  PATCHed the row with the offsets changed (1/2 -> 3/4 minutes) and
+  confirmed every other key -- `tv_template`, `comskip_mode`,
+  `series_rules`, all the rest -- came back byte-for-byte unchanged, then
+  restored the real values afterward.
+
+  Synced *from* Dispatcharr into Kodi's own settings on every addon
+  startup (only actually rewriting Kodi's persisted value when it's
+  genuinely different, so a normal restart doesn't churn
+  `OnAddonSettingChanged()` for no reason) -- confirmed live against this
+  same real instance, which already had non-default padding configured
+  (1/2 minutes, not 0/0): a fresh Kodi start picked up exactly `1` and
+  `2` into `recording_pre_offset_minutes`/`recording_post_offset_minutes`
+  with no user action, rather than showing a misleading `0` default that
+  didn't match reality. Pushing the other direction (Kodi setting changed
+  -> Dispatcharr updated) runs on a detached background thread from
+  `OnAddonSettingChanged()`, unlike every other setting handled there --
+  this is the first one requiring a real network round-trip rather than
+  an in-memory write, and there's no reason to block whatever thread
+  Kodi delivers the settings-changed callback on for it.
 

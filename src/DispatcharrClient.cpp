@@ -43,6 +43,15 @@ constexpr const char* kEpgOutputPath = "/output/epg";
 constexpr const char* kRecordingsPath = "/api/channels/recordings/";
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";
 constexpr const char* kRecurringRulesPath = "/api/channels/recurring-rules/";
+constexpr const char* kCoreSettingsPath = "/api/core/settings/";
+// Confirmed against a live instance: every CoreSettings "group" (system
+// timezone, DVR padding/comskip/path-templates, proxy tuning, ...) is one
+// row in this generic key/value table, addressed by its own numeric id
+// (not by key directly) -- GetDvrOffsetMinutes()/SetDvrOffsetMinutes()
+// find the row with this key by listing and filtering, not by assuming a
+// fixed id (that id is a plain auto-increment DB primary key and isn't
+// guaranteed the same across different Dispatcharr installs).
+constexpr const char* kDvrSettingsKey = "dvr_settings";
 constexpr const char* kLogosPath = "/api/channels/logos/";
 // Confirmed against a live instance: creates a session-bound catch-up
 // (archived programme) playback URL that stays valid via a sliding idle
@@ -1334,6 +1343,69 @@ bool DispatcharrClient::DeleteRecurringRule(int ruleId, std::string& error)
   json response;
   return Request("DELETE", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/",
                  json(), response, error);
+}
+
+bool DispatcharrClient::FindDvrSettingsRow(int& idOut, json& valueOut, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json response;
+  if (!Request("GET", kCoreSettingsPath, json(), response, error))
+    return false;
+
+  // Confirmed against a live instance: a bare array, not {"results": [...]}
+  // -- but tolerate that wrapper too, matching this client's usual
+  // defensive style for list endpoints (see GetChannels()'s own comment).
+  const json& list = response.contains("results") ? response["results"] : response;
+  if (!list.is_array())
+  {
+    error = "Unexpected /api/core/settings/ response shape";
+    return false;
+  }
+
+  for (const auto& row : list)
+  {
+    if (FieldOr<std::string>(row, "key", "") == kDvrSettingsKey)
+    {
+      idOut = FieldOr(row, "id", 0);
+      valueOut = row.contains("value") && row["value"].is_object() ? row["value"] : json::object();
+      return idOut != 0;
+    }
+  }
+  error = "Dispatcharr has no dvr_settings row in /api/core/settings/";
+  return false;
+}
+
+bool DispatcharrClient::GetDvrOffsetMinutes(int& preMinutesOut, int& postMinutesOut, std::string& error)
+{
+  int id = 0;
+  json value;
+  if (!FindDvrSettingsRow(id, value, error))
+    return false;
+  preMinutesOut = FieldOr(value, "pre_offset_minutes", 0);
+  postMinutesOut = FieldOr(value, "post_offset_minutes", 0);
+  return true;
+}
+
+bool DispatcharrClient::SetDvrOffsetMinutes(int preMinutes, int postMinutes, std::string& error)
+{
+  int id = 0;
+  json value;
+  if (!FindDvrSettingsRow(id, value, error))
+    return false;
+
+  // Modify only the two offset keys -- everything else already in this
+  // blob (comskip settings, path templates, ...) is sent back exactly as
+  // read, not reconstructed, so nothing this addon doesn't know about
+  // ever gets silently dropped.
+  value["pre_offset_minutes"] = preMinutes;
+  value["post_offset_minutes"] = postMinutes;
+
+  json body = {{"value", value}};
+  json response;
+  return Request("PATCH", std::string(kCoreSettingsPath) + std::to_string(id) + "/", body, response,
+                 error);
 }
 
 bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
