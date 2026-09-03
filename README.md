@@ -31,7 +31,19 @@ This is a first working scaffold, not a finished addon. Implemented:
   what, and what's deliberately not mapped
 - Live channel playback (see the live TV pause/rewind bullet below for the
   current mechanism)
-- Recording listing, playback, and deletion
+- Recording listing, playback, and deletion -- grouped into per-show
+  folders in Kodi's own recordings UI, matching how Dispatcharr itself
+  organizes completed recordings on disk (confirmed against its own
+  source, not just a guess -- see `docs/RECORDINGS.md`)
+- Recording pre/post padding, as two addon settings mirroring
+  Dispatcharr's own global padding setting directly (there's no per-timer
+  equivalent to expose -- confirmed against Dispatcharr's own source that
+  it's genuinely one global value, not per-recording/per-rule). Kept in
+  sync with Dispatcharr's real current value on every restart; only
+  applies to EPG-based scheduling (series rules, EPG-matched one-time
+  recordings) -- recurring day-of-week timers are unaffected by design on
+  Dispatcharr's own side, not something this addon can change; see
+  `docs/RECORDINGS.md`
 - Commercial-break markers on a recording's seekbar, for a recording
   Dispatcharr's own comskip integration has processed in "mark" mode --
   requires the companion `dispatcharr-plugin/recording_edl/` plugin

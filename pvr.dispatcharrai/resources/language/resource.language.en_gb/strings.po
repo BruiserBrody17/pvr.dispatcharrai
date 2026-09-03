@@ -129,6 +129,22 @@ msgctxt "#30053"
 msgid "Server-side (Dispatcharr plugin)"
 msgstr ""
 
+msgctxt "#30054"
+msgid "Recording padding: start early (minutes)"
+msgstr ""
+
+msgctxt "#30055"
+msgid "Mirrors Dispatcharr's own global recording padding setting (Settings -> DVR in Dispatcharr's web UI) -- there is no per-timer equivalent, Dispatcharr only has one global value shared by every EPG-based recording (series rules and one-time recordings matched to a guide entry), so changing this here changes it for all of them at once, the same as changing it in Dispatcharr's own UI would. Does NOT affect recurring (day-of-week) timers -- confirmed against Dispatcharr's own source that its recurring-rule scheduler never applies this setting at all, a gap on Dispatcharr's side this addon can't work around. Kept in sync with Dispatcharr's real current value on every Kodi restart, so this display doesn't go stale if it's changed another way (Dispatcharr's own UI, a different Kodi install sharing the account)."
+msgstr ""
+
+msgctxt "#30056"
+msgid "Recording padding: stop late (minutes)"
+msgstr ""
+
+msgctxt "#30057"
+msgid "The end-of-recording counterpart to the start-padding setting above -- see its help text for the full explanation (global-only, EPG-based recordings only, kept in sync with Dispatcharr's real value on restart)."
+msgstr ""
+
 msgctxt "#30047"
 msgid "Improve catch-up seek reliability (experimental)"
 msgstr ""
