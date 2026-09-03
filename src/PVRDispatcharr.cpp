@@ -61,6 +61,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   }
 
   StartRecordingRefreshThread();
+  StartChannelEpgRefreshThread();
   if (m_enableRealtimeUpdates)
     StartRealtimeUpdateThread();
 }
@@ -74,6 +75,14 @@ PVRDispatcharr::~PVRDispatcharr()
   m_recordingRefreshCv.notify_all();
   if (m_recordingRefreshThread.joinable())
     m_recordingRefreshThread.join();
+
+  {
+    std::lock_guard<std::mutex> lock(m_channelEpgRefreshMutex);
+    m_stopChannelEpgRefreshThread = true;
+  }
+  m_channelEpgRefreshCv.notify_all();
+  if (m_channelEpgRefreshThread.joinable())
+    m_channelEpgRefreshThread.join();
 
   {
     std::lock_guard<std::mutex> lock(m_realtimeUpdateMutex);
@@ -97,6 +106,53 @@ void PVRDispatcharr::StartRecordingRefreshThread()
         break;
       TriggerRecordingUpdate();
       TriggerTimerUpdate();
+    }
+  });
+}
+
+void PVRDispatcharr::StartChannelEpgRefreshThread()
+{
+  m_channelEpgRefreshThread = std::thread([this]() {
+    while (true)
+    {
+      // Checked (and, if stale, fetched) immediately on every wake,
+      // starting with the very first one -- this is what actually
+      // pre-warms the cache ahead of Kodi's own first GetChannels() call,
+      // rather than only reacting after channel_refresh_hours/
+      // epg_refresh_hours has already elapsed once.
+      if (EnsureChannelsLoaded())
+      {
+        if (m_debugLogging)
+          kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: background thread refreshed channels/groups");
+        TriggerChannelGroupsUpdate();
+        TriggerChannelUpdate();
+      }
+      if (EnsureEpgLoaded())
+      {
+        if (m_debugLogging)
+          kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: background thread refreshed EPG");
+        // No bulk/whole-guide equivalent exists in Kodi's PVR API --
+        // TriggerEpgUpdate() is per-channel only (confirmed in
+        // kodi-dev-kit's PVR.h). Channel/EPG refreshes are already coarse
+        // (hours, not minutes), so iterating every known channel here
+        // isn't a hot path.
+        std::vector<int> channelUids;
+        {
+          std::lock_guard<std::mutex> lock(m_dataMutex);
+          channelUids.reserve(m_channels.size());
+          for (const auto& ch : m_channels)
+            channelUids.push_back(ch.id);
+        }
+        for (int uid : channelUids)
+          TriggerEpgUpdate(static_cast<unsigned int>(uid));
+      }
+
+      std::unique_lock<std::mutex> lock(m_channelEpgRefreshMutex);
+      bool stopped = m_channelEpgRefreshCv.wait_for(
+          lock, std::chrono::minutes(kChannelEpgRefreshCheckMinutes),
+          [this]() { return m_stopChannelEpgRefreshThread.load(); });
+      if (stopped)
+        break;
     }
   });
 }
@@ -266,13 +322,13 @@ PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
 // Data loading / caching
 // ---------------------------------------------------------------------
 
-void PVRDispatcharr::EnsureChannelsLoaded()
+bool PVRDispatcharr::EnsureChannelsLoaded()
 {
   auto now = std::chrono::steady_clock::now();
   bool stale = m_channelsLoadedAt.time_since_epoch().count() == 0 ||
                now - m_channelsLoadedAt > std::chrono::hours(m_channelRefreshHours);
   if (!stale)
-    return;
+    return false;
 
   std::vector<Channel> channels;
   std::vector<ChannelGroup> groups;
@@ -281,7 +337,7 @@ void PVRDispatcharr::EnsureChannelsLoaded()
   if (!ok)
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load channels: %s", error.c_str());
-    return;
+    return false;
   }
 
   // Groups are best-effort: a channel list is still useful without them.
@@ -309,33 +365,35 @@ void PVRDispatcharr::EnsureChannelsLoaded()
   m_channels = std::move(channels);
   m_groups = std::move(groups);
   m_channelsLoadedAt = now;
+  return true;
 }
 
-void PVRDispatcharr::EnsureEpgLoaded()
+bool PVRDispatcharr::EnsureEpgLoaded()
 {
   auto now = std::chrono::steady_clock::now();
   bool stale = m_epgLoadedAt.time_since_epoch().count() == 0 ||
                now - m_epgLoadedAt > std::chrono::hours(m_epgRefreshHours);
   if (!stale)
-    return;
+    return false;
 
   std::string xml, error;
   if (!m_client.GetXmlTvGuide(xml, error))
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to fetch XMLTV guide: %s", error.c_str());
-    return;
+    return false;
   }
 
   std::unordered_map<std::string, std::vector<EpgEntry>> parsed;
   if (!XmlTvParser::Parse(xml, parsed, error))
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to parse XMLTV guide: %s", error.c_str());
-    return;
+    return false;
   }
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_epgByChannelNumber = std::move(parsed);
   m_epgLoadedAt = now;
+  return true;
 }
 
 const Channel* PVRDispatcharr::FindChannelByUid(int uid) const
