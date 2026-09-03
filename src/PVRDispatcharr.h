@@ -112,6 +112,15 @@ private:
   static constexpr int kTimerTypeSeries = 2;
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
   static constexpr int kTimerTypeRecurring = 4;
+  static constexpr int kLiveTimeshiftOff = 0;
+  // 1 used to be "local" (inputstream.ffmpegdirect's own on-device buffer),
+  // removed once server-side timeshift proved stable -- deliberately left
+  // unreused rather than renumbering kLiveTimeshiftServer down to 1, so an
+  // existing install with 2 already saved keeps meaning server-side rather
+  // than silently losing it (see m_liveTimeshiftMode's own comment on why
+  // this addon treats a persisted setting value as something to never
+  // repurpose).
+  static constexpr int kLiveTimeshiftServer = 2;
   // ClientIndex namespace bits: series rules already use 0x40000000 (see
   // GetTimers()); recurring rules use a separate bit so a real Dispatcharr
   // id (unlike series rules, which have none and must be hashed) can be
@@ -156,6 +165,18 @@ private:
   std::chrono::steady_clock::time_point m_epgLoadedAt{};
   int m_channelRefreshHours = 12;
   int m_epgRefreshHours = 4;
+  // 0 = off, 2 = server-side (this addon's companion Dispatcharr plugin --
+  // see dispatcharr-plugin/timeshift_buffer/ in this repo); 1 (local,
+  // inputstream.ffmpegdirect's own on-device buffer) was removed once
+  // server-side proved stable -- see kLiveTimeshiftServer's own comment on
+  // why 1 stays unreused rather than the two remaining values getting
+  // renumbered down. Off exists for the account this addon is configured
+  // with NOT being (or the owner not wanting it to be) a Dispatcharr admin
+  // -- the timeshift_buffer plugin's run/ API requires that role; a plain
+  // stream needs nothing beyond ordinary channel-browsing/streaming
+  // permission. Read-only after construction, so no lock needed to read it
+  // from multiple threads.
+  int m_liveTimeshiftMode = kLiveTimeshiftServer;
   bool m_enableCatchupFfmpegdirectSeek = false;
   bool m_debugLogging = false;
   // See recurring_rule_utc_offset_minutes in settings.xml/strings.po --

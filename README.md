@@ -59,20 +59,25 @@ This is a first working scaffold, not a finished addon. Implemented:
   repo, installed separately on your Dispatcharr instance, not through
   Kodi; requires the Dispatcharr account configured above to be an admin
   account). Real pause/rewind/fast-forward from a plain Play, no extra
-  step or setting -- exposes the Dispatcharr-held buffer through this
-  addon's own `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream`
-  implementation so Kodi's native demuxer handles seeking directly, rather
-  than routing through the separate `inputstream.ffmpegdirect` addon (an
-  earlier approach that did that, and was confirmed live to have unfixable
+  step -- exposes the Dispatcharr-held buffer through this addon's own
+  `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` implementation so
+  Kodi's native demuxer handles seeking directly, rather than routing
+  through the separate `inputstream.ffmpegdirect` addon (an earlier
+  approach that did that, and was confirmed live to have unfixable
   seeking -- see `docs/TIMESHIFT.md` for that investigation and the
-  architecture that replaced it). **Unconditional as of this addon's
-  current version -- it used to be opt-in via a `live_timeshift_mode`
-  setting (off, local-device, or server-side), removed once server-side
-  proved stable, so this addon now requires the companion plugin to be
-  installed and enabled for live TV playback to work at all, not just for
-  pause/rewind.** Confirmed live end-to-end, including a 95-second rewind
-  spanning several buffer refreshes. See `docs/TIMESHIFT.md` and that
-  plugin's own `README.md`
+  architecture that replaced it). Confirmed live end-to-end, including a
+  95-second rewind spanning several buffer refreshes. This is the
+  default (`live_timeshift_mode`, default `2`/server-side) -- an `Off`
+  setting (`0`) is available for anyone who doesn't want (or can't get)
+  an admin-level Dispatcharr account: a plain live stream straight from
+  Dispatcharr's own proxy, no companion plugin, no elevated account, no
+  pause/rewind. (This addon briefly made server-side unconditional with
+  no setting at all; that turned out to be a real problem for a
+  non-admin account, since it meant live playback failed outright, not
+  just pause/rewind -- Off was reintroduced as a result. A third,
+  local-device mode this addon also used to offer, via
+  `inputstream.ffmpegdirect`'s own on-device buffer, stays retired.) See
+  `docs/TIMESHIFT.md` and that plugin's own `README.md`
 - In-progress recording playback -- lets you start watching a recording
   before Dispatcharr finishes writing it, from the true beginning, with
   real pause/rewind/fast-forward *and* live-follow together in the same
@@ -142,11 +147,13 @@ Not yet implemented / worth hardening next:
 
 Set these in Kodi's addon settings once installed: Dispatcharr host, port,
 HTTPS toggle, username, and password. The account needs permission to read
-channels/EPG and manage recordings on your Dispatcharr instance, and --
-since live TV playback requires server-side timeshift, which is
-unconditional -- must be a Dispatcharr **admin** account, with the
-companion `dispatcharr-plugin/timeshift_buffer/` plugin (see above)
-installed and enabled on your Dispatcharr instance.
+channels/EPG and manage recordings on your Dispatcharr instance. With the
+default `live_timeshift_mode` (server-side timeshift), the account must
+also be a Dispatcharr **admin** account, with the companion
+`dispatcharr-plugin/timeshift_buffer/` plugin (see above) installed and
+enabled on your Dispatcharr instance -- set `live_timeshift_mode` to
+`Off` instead if you'd rather not grant an admin account or install that
+plugin; live channels still play, just without pause/rewind.
 
 ## Building
 
