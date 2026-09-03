@@ -21,6 +21,35 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   as a result, and `GetRecordings()` reads the nested `program.*` fields
   first, falling back to flat `custom_properties.title` etc. for anything
   that did set them directly.
+  **Confirmed (this was previously flagged unconfirmed in
+  `docs/TROUBLESHOOTING.md`): a recording that genuinely can't match any
+  EPG programme gets no title-shaped field from Dispatcharr at all, ever
+  -- not even a placeholder.** Created a real recording (no
+  `custom_properties` sent) on a channel with `epg_data_id: null` (one of
+  the auto-created "LIVE EVENT NN" placeholder channels, which carry no
+  EPG data whatsoever, so there's nothing to enrich from by construction,
+  not just bad luck on timing). Checked its `custom_properties` at both
+  `status: "recording"` and, after the channel's placeholder stream
+  predictably had nothing to actually record,
+  `status: "interrupted"` -- neither ever contained `program`, `title`,
+  or anything else title-shaped; `file_name`/`file_path` were a bare
+  timestamp (`20260903_043645.mkv`), not a channel- or title-derived
+  name. So the pending-title cache and Kodi's own manual-timer title
+  really are the *only* source of a title in this case, not just the
+  more-visible one -- Dispatcharr's own data never independently agrees
+  or disagrees, because it never expresses an opinion at all.
+  Independently confirmed by reading Dispatcharr's own source, not just
+  this one live test: `Recording` (`apps/channels/models.py`) has no
+  `title` field at all, only `custom_properties`, and the EPG-enrichment
+  matcher (`_match_epg_program_by_timeslot` in `apps/channels/tasks.py`)
+  requires a programme covering at least 80% of the recording window --
+  its own docstring calls out that a recording spanning multiple
+  programmes with no dominant show, or matching none at all, "return[s]
+  None (displayed as 'Custom Recording')". That string is purely a
+  frontend display fallback (`frontend/src/components/cards/
+  RecordingCard.jsx`), never written back to the Recording row --
+  confirming an external API consumer (this addon included) never sees
+  it, only an absent field.
 - A series rule has **no numeric id field at all** -- a real one is just
   `{mode, title, tvg_id, channel_id, title_mode, description,
   description_mode}`. `GetTimers()` previously used `rule.id` (always 0)
@@ -761,21 +790,44 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   hit the end of the current snapshot, rather than letting it run out on
   its own.
 
-  **Separately-noticed, likely pre-existing bug: a recording's Kodi-
-  visible duration can be stuck far too low (6 seconds observed against a
-  real ~3-hour scheduled game) even though Dispatcharr's own `start_time`/
-  `end_time` for that same recording are correct.** `TimeFromIso()`
-  parsing was checked directly against the real API response and is
-  correct (handles both the `Z` and `+00:00` suffix styles fine). Most
-  likely explanation: Dispatcharr sets a short placeholder `end_time` at
-  the moment a recording is created (e.g. for a manually-triggered "record
-  now" without a fixed stop time) and extends it shortly after via EPG
-  matching, and this addon's periodic refresh thread (`recording_refresh_
-  minutes`, default 5) or the real-time-updates feed hasn't caught the
-  correction yet by the time it's checked. Not confirmed against
-  Dispatcharr's own source, and not chased further this session -- flagged
-  here since it may explain some of the seek-capability inconsistency
-  above, not because it's confirmed as a real ongoing bug.
+  **Separately-noticed: a recording's Kodi-visible duration can be stuck
+  far too low (6 seconds observed against a real ~3-hour scheduled game)
+  even though Dispatcharr's own `start_time`/`end_time` for that same
+  recording are correct.** `TimeFromIso()` parsing was checked directly
+  against the real API response and is correct (handles both the `Z` and
+  `+00:00` suffix styles fine). The theory originally floated here --
+  "Dispatcharr sets a short placeholder `end_time` at creation and extends
+  it shortly after via EPG matching, and this addon's refresh thread
+  hasn't caught the correction yet" -- **is refuted, confirmed by directly
+  reading Dispatcharr's own source, not just re-guessed.** `Recording.
+  end_time` (`apps/channels/models.py`) is a required, non-nullable field
+  with no default; every one of the (exactly two) server-side creation
+  paths sets a real value up front, and the plain manual/one-off path
+  (the generic `RecordingViewSet.create()`) requires the *client* to
+  supply both `start_time` and `end_time` -- there is no "record now,
+  fill in the real end time later" mechanism anywhere in the source.
+  `end_time` only ever changes afterward via the explicit, user-triggered
+  `POST .../extend/` action, or an offset-reschedule task that only
+  touches recordings already anchored to an EPG programme and only while
+  still in the future -- neither is "a short-lived placeholder silently
+  self-correcting soon after creation," and EPG-matching itself
+  (`_match_epg_program_by_timeslot`) only ever updates
+  `custom_properties.program`'s title/description fields, never
+  `start_time`/`end_time`.
+  **Much better fit, given the refuted theory pointed at exactly this
+  symptom shape (correct backend duration, a small stuck Kodi-side
+  value): this is very likely the same `m_streamDetails`/stream-details-
+  caching bug already documented in `docs/TROUBLESHOOTING.md`'s "Known
+  Kodi-core quirks" section**, which produces precisely this signature --
+  Kodi's own probed-duration cache winning over the correct value this
+  addon reports on every call -- and was root-caused there by reading
+  Kodi's own source (`CVideoInfoTag::GetDuration()` preferring
+  `m_streamDetails.GetVideoDuration()` unless it's under 60% of the
+  addon-supplied duration), not by a Dispatcharr-side data problem at all.
+  That entry has since been re-verified live as no longer reproducing
+  under the current native-demuxer in-progress-recording mechanism, which
+  narrows this passage's original "not chased further" status considerably
+  even without a fresh dedicated repro of this exact 6-second case.
   Gap found by a companion session's real multi-install testing: unlike
   `OpenRecordingStream()`/`ReadRecordingStream()`, there's no way to
   self-heal a stale API key *after the fact* here -- the URL (with the

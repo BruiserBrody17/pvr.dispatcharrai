@@ -116,12 +116,17 @@ Not yet implemented / worth hardening next:
   Dispatcharr's own models already include a matching
   `RecurringRecordingRule` (days_of_week, start/end time, enabled), so
   this may not need any server-side work, just wiring it up here
-- A small number of Dispatcharr API paths/field names remain genuinely
-  unconfirmed against a live instance (flagged as such, not silently
-  assumed, in `docs/API_NOTES.md`) -- most of what was originally
-  best-effort here has since been confirmed against real data over this
-  project's history and folded into `docs/API_NOTES.md` and the
-  topic-specific docs it indexes.
+- The remaining genuinely-open items are narrow and already tracked
+  in-place rather than listed here: `docs/RECORDINGS.md`/`docs/CATCHUP.md`
+  each flag one or two specific, inherently hard-to-verify edge cases
+  (a macOS WiFi power-save theory with no available macOS test
+  environment; a provider's real catch-up archive depth, which has no
+  API to query directly). The two items previously tracked here -- a
+  no-EPG-match recording's title, and a theory about Dispatcharr setting
+  a placeholder `end_time` -- were both run down (one confirmed live and
+  against Dispatcharr's own source, the other refuted by the source and
+  redirected at a better-fitting, already-resolved explanation); see
+  `docs/RECORDINGS.md`.
 
 ## Configuration
 
