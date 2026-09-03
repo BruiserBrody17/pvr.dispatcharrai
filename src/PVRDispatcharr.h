@@ -113,8 +113,15 @@ private:
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
 
   dispatcharr::Config LoadConfigFromSettings() const;
-  void EnsureChannelsLoaded();
-  void EnsureEpgLoaded();
+  // Returns true if this call actually performed a fetch (cache was stale
+  // or never loaded), false if it was a no-op (still fresh). The
+  // background thread below uses this to know when to call
+  // TriggerChannelUpdate()/TriggerEpgUpdate() -- Kodi's own calling
+  // threads (GetChannels(), GetEPGForChannel(), ...) ignore it, since
+  // they're already inside the callback that answers Kodi's question
+  // either way.
+  bool EnsureChannelsLoaded();
+  bool EnsureEpgLoaded();
   const dispatcharr::Channel* FindChannelByUid(int uid) const;
 
   dispatcharr::DispatcharrClient m_client;
@@ -153,6 +160,34 @@ private:
   std::condition_variable m_recordingRefreshCv;
   std::atomic<bool> m_stopRecordingRefreshThread{false};
   int m_recordingRefreshMinutes = 5;
+
+  // Channels/EPG were previously only ever loaded synchronously, on
+  // whichever Kodi-owned thread first called GetChannels()/
+  // GetEPGForChannel() after the cache went stale (EnsureChannelsLoaded()/
+  // EnsureEpgLoaded() above did the actual blocking fetch inline). Fine
+  // for a home server with one Dispatcharr instance and a moderate
+  // channel count, but a real full XMLTV fetch+parse is genuinely slow
+  // enough to be worth moving off Kodi's calling thread. This thread
+  // proactively calls the same EnsureChannelsLoaded()/EnsureEpgLoaded()
+  // (unchanged -- still the correctness fallback if this thread hasn't
+  // caught up yet, e.g. the first moment after construction) on a much
+  // shorter cadence than channel_refresh_hours/epg_refresh_hours actually
+  // requires, so in steady state the cache is essentially always already
+  // warm by the time Kodi asks and those calls become instant, cache-only
+  // reads. When a check here does find the cache stale and refreshes it,
+  // this thread also calls TriggerChannelUpdate()/
+  // TriggerChannelGroupsUpdate()/TriggerEpgUpdate() itself, the same way
+  // the recording refresh thread above does for recordings/timers --
+  // Kodi's own periodic EPG re-poll would eventually pick this up anyway,
+  // but there's no reason to wait for that when this addon already knows
+  // the moment new data landed. Started in the constructor, joined in the
+  // destructor.
+  void StartChannelEpgRefreshThread();
+  std::thread m_channelEpgRefreshThread;
+  std::mutex m_channelEpgRefreshMutex;
+  std::condition_variable m_channelEpgRefreshCv;
+  std::atomic<bool> m_stopChannelEpgRefreshThread{false};
+  static constexpr int kChannelEpgRefreshCheckMinutes = 10;
 
   // Real-time alternative/complement to the polling thread above: connects
   // to Dispatcharr's own WebSocket push (ws(s)://host:port/ws/?token=<JWT>,
