@@ -92,3 +92,46 @@ data** forces an immediate full re-fetch through the addon and is the
 reliable way to verify an EPG-mapping change live without waiting out the
 interval.
 
+## Background loading
+
+`EnsureChannelsLoaded()`/`EnsureEpgLoaded()` (`PVRDispatcharr.cpp`) used to
+be called only lazily, inline, on whichever Kodi-owned thread first asked
+after the cache went stale -- meaning a real fetch (channel list +
+channel groups, or a full XMLTV guide fetch+parse) could block that
+calling thread. Fine on a small install, but confirmed live against a
+~9,000-channel instance that this is a genuinely slow operation (~7
+seconds) worth moving off Kodi's calling thread.
+
+Fixed with `StartChannelEpgRefreshThread()`, a background thread (started
+in the constructor, joined in the destructor -- same pattern as the
+recording refresh thread documented in `docs/RECORDINGS.md`) that calls
+the same two functions itself, immediately on start and then every 10
+minutes (`kChannelEpgRefreshCheckMinutes`, not user-configurable -- it's
+just how often the *check* happens, not how often a real fetch happens;
+that's still governed by `channel_refresh_hours`/`epg_refresh_hours` as
+before). `EnsureChannelsLoaded()`/`EnsureEpgLoaded()` themselves are
+unchanged other than now returning `bool` (did this call actually
+perform a fetch, vs. find the cache still fresh) -- Kodi's own calling
+threads still call them directly and still get a correct answer either
+way, so a fetch racing the very first moment after construction (before
+the background thread's first pass completes) still works exactly as
+before, just no longer the common case. When a background pass finds the
+cache stale and actually refreshes it, it also calls
+`TriggerChannelUpdate()`/`TriggerChannelGroupsUpdate()`/`TriggerEpgUpdate()`
+(once per known channel -- confirmed against kodi-dev-kit's `PVR.h` that
+there's no bulk/whole-guide trigger) so Kodi picks up the change promptly
+rather than waiting out its own separate `epg.epgupdate` polling interval
+mentioned above.
+
+**Confirmed live**, debug logging enabled: `kodi.log` showed the
+background thread's own log lines
+(`background thread refreshed channels/groups`, then
+`background thread refreshed EPG`) on a distinct thread id from both the
+addon's construction (`creating PVR client instance`) and the realtime-
+update thread, completing a few seconds after startup with no gap in
+responsiveness elsewhere in Kodi. Verified the actual data too, not just
+that the calls didn't error: `PVR.GetChannels` returned all 8,919
+channels and `PVR.GetBroadcasts` against a normal channel (not one of the
+placeholder "LIVE EVENT NN - NO EVENT" ones, which have no programming to
+return) came back with a full day-plus of real programme data.
+
