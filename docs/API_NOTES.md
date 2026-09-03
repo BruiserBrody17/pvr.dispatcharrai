@@ -51,6 +51,9 @@ the same "confirmed live, not just assumed" standard as this one.
   investigation for the server-side snapshot path
 - [RECORDINGS.md](RECORDINGS.md) -- recordings and timers, confirmed
   end-to-end against real data (the largest file here)
+- [RECORDING_EDL.md](RECORDING_EDL.md) -- commercial-break markers
+  (comskip EDL) on the recording seekbar, and the companion plugin that
+  makes them reachable at all
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) -- the channel-switching
   IPv6 root cause, known Kodi-core quirks that aren't this addon's
   bug, multi-client limitations, and what's still unconfirmed

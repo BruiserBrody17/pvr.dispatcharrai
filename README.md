@@ -32,6 +32,15 @@ This is a first working scaffold, not a finished addon. Implemented:
 - Live channel playback (see the live TV pause/rewind bullet below for the
   current mechanism)
 - Recording listing, playback, and deletion
+- Commercial-break markers on a recording's seekbar, for a recording
+  Dispatcharr's own comskip integration has processed in "mark" mode --
+  requires the companion `dispatcharr-plugin/recording_edl/` plugin
+  (installed separately, same as the live-timeshift one) since there's no
+  other HTTP-reachable way to fetch a comskip `.edl` file's content; see
+  `docs/RECORDING_EDL.md`. No setting to enable -- unconditional, and a
+  recording with no markers (comskip never ran, or ran in the default
+  "cut" mode that removes commercials directly instead of just marking
+  them) is unaffected either way
 - One-time and series timers, backed by Dispatcharr's recording and
   series-rule endpoints
 - Catch-up/archive playback ("play from guide") for channels whose upstream
