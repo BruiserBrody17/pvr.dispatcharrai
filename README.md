@@ -123,16 +123,20 @@ This is a first working scaffold, not a finished addon. Implemented:
 Not yet implemented / worth hardening next:
 
 - The remaining genuinely-open items are narrow and already tracked
-  in-place rather than listed here: `docs/RECORDINGS.md`/`docs/CATCHUP.md`
-  each flag one or two specific, inherently hard-to-verify edge cases
-  (a macOS WiFi power-save theory with no available macOS test
-  environment; a provider's real catch-up archive depth, which has no
-  API to query directly). The two items previously tracked here -- a
-  no-EPG-match recording's title, and a theory about Dispatcharr setting
-  a placeholder `end_time` -- were both run down (one confirmed live and
-  against Dispatcharr's own source, the other refuted by the source and
-  redirected at a better-fitting, already-resolved explanation); see
-  `docs/RECORDINGS.md`.
+  in-place rather than listed here. `docs/CATCHUP.md` flags a provider's
+  real catch-up archive depth, which has no API to query directly --
+  inherent, not something further testing resolves. `docs/RECORDINGS.md`
+  flags a one-off macOS WiFi timer-latency spike (8.4s, 1 of 3 runs):
+  since investigated properly on a real Mac (7 idle-gap trials, zero
+  reproduction) -- not a clean confirm or refute, since that machine's
+  own continuous background network traffic turned out to confound the
+  test, but real evidence surfaced a more plausible unrelated alternate
+  cause than the original theory, and the speculative keep-alive-traffic
+  "fix" is explicitly not recommended as a result. The three items
+  previously tracked here -- a no-EPG-match recording's title, a theory
+  about Dispatcharr setting a placeholder `end_time`, and this WiFi
+  theory -- have all now been run down with real evidence one way or
+  another; see `docs/RECORDINGS.md`.
 
 ## Configuration
 

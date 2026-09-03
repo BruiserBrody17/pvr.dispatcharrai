@@ -960,18 +960,66 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   ~20ms API latency) but one run at 8.4s, still in the original
   complaint's range. They ruled out the network path for that outlier --
   a 30-second/60-packet ping to the Dispatcharr host in a calm window
-  right after showed 0% loss, 6-17ms throughout, no anomaly -- and their
-  read (not confirmed, no lower-level instrumentation attempted) is macOS
-  WiFi radio power-save/idle-wake behavior: if the radio dozes during a
-  quiet spell between guide navigation and the record press, the next
-  transmission can eat a real multi-second wake latency no HTTP-layer fix
-  touches, and a sustained ping (which itself keeps the radio busy)
-  wouldn't reproduce it. Left as a documented, likely-environmental
-  caveat rather than chased further in the addon -- if confirmed later,
-  the fix would be periodic background keep-alive traffic to prevent the
-  radio from idling, but that's a real battery-life cost to pay for an
-  unconfirmed cause and an already-rare (1 of 3 runs, likely rarer in
-  normal use than in back-to-back test cycles) case.
+  right after showed 0% loss, 6-17ms throughout, no anomaly -- and floated
+  (not confirmed at the time, no lower-level instrumentation attempted)
+  macOS WiFi radio power-save/idle-wake behavior: if the radio dozes
+  during a quiet spell between guide navigation and the record press, the
+  next transmission can eat a real multi-second wake latency no HTTP-layer
+  fix touches, and a sustained ping (which itself keeps the radio busy)
+  wouldn't reproduce it.
+
+  **Later investigated properly on a real Mac, with better evidence
+  either way -- still not a clean confirm or refute, but no longer just a
+  guess.** Ran 7 real `PVR.AddTimer` calls through Kodi's own JSON-RPC
+  (not a synthetic HTTP probe) against distinct future EPG broadcasts,
+  each preceded by a genuine idle gap (1s, 1s, 15s, 20s, 25s, 30s, 35s --
+  no JSON-RPC/script traffic during the gap), cleaning up each timer
+  immediately after. Two real bugs in the test harness itself were caught
+  and fixed *before* trusting any result from it, not after: a cleanup
+  pass that omitted `istimerrule` from its `PVR.GetTimers` properties
+  request caused a "delete anything non-rule" filter to misfire against
+  the pre-existing recurring-rule timer (`Quick Pitch`, see
+  `docs/RECURRING_RULES.md`) -- confirmed no actual harm (a full Kodi
+  restart forced a clean resync from Dispatcharr and the rule was still
+  there, untouched), fixed to match by title against the test's own
+  broadcasts before deleting anything, and re-verified the real rule was
+  untouched before proceeding; separately, an early netstat-based
+  packet-counter correlation attempt was reading the wrong column
+  (`Ibytes` as `Opkts`) and was fixed before drawing any conclusion from
+  it. With the harness actually correct: **all 7 trials landed in a tight
+  218-300ms band, zero spikes, no reproduction of the slow case.**
+
+  That non-reproduction doesn't cleanly settle it, though -- this
+  specific test Mac turned out to have continuous outbound WiFi traffic
+  at all times (~75 packets/sec sampled over 30s), confirmed unrelated to
+  Kodi/this addon by repeating the same measurement with Kodi fully
+  killed (`pkill -9`) and getting the identical rate. A radio that never
+  goes quiet can't enter 802.11 power-save doze in the first place, so
+  this machine's own environment can't actually distinguish "the theory
+  is true" from "the theory is false" -- absence of reproduction here is
+  confounded, not a refutation. Digging into *why* the radio stays busy
+  (`nettop -l 1 -x` during a quiet window) surfaced a more parsimonious
+  candidate for the original single 8.4s spike than radio wake-up: an
+  established, already-present `kernel_task` connection to a **different,
+  unrelated** host (an SMB/file-sharing IP, not the Dispatcharr host)
+  showing over 20,000 retransmits and 1,400 out-of-order packets in one
+  one-second sample -- a lossy background connection (likely a mounted
+  share or Time Machine target) that could plausibly cause a coincidental
+  jitter spike at the moment of an `AddTimer` call, independent of
+  anything Dispatcharr- or radio-specific. Not proven either (no slow
+  `AddTimer` was actually caught in the act to check against it directly)
+  -- a better-evidenced hypothesis, not a confirmed alternate cause.
+
+  Net effect on how this should be read: **downgrade from "likely
+  environmental, would fix with keep-alive traffic" to "unconfirmed, with
+  a plausible unrelated alternate explanation and no clean way to test
+  the original theory on typical hardware that has any other steady
+  background network activity at all."** The periodic keep-alive-traffic
+  mitigation floated originally was already speculative and this pass
+  didn't strengthen the case for it -- not implemented, and not
+  recommended unless the radio-doze theory gets real, direct confirmation
+  (e.g. a slow `AddTimer` actually caught alongside a genuine power-save
+  wake event, on a machine quiet enough for that state to occur at all).
 - Unrelated discovery while testing the fix above: Kodi can reject
   `PVR.AddTimer` outright with "The PVR backend does not allow to record
   this event" for some EPG broadcasts and not others, with **zero** log
