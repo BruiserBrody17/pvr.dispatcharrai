@@ -136,6 +136,12 @@ struct Recording
   int channelId = 0;
   bool isInProgress = false; // startTime <= now < endTime
   bool isUpcoming = false;   // now < startTime (scheduled, not yet started)
+  // Non-zero when this Recording was materialized by Dispatcharr's own
+  // recurring-rule scheduler (custom_properties.rule.{type:"recurring",id})
+  // rather than created directly -- see RecurringRule below. Used to link
+  // this occurrence back to its parent rule as a Kodi PVR_TIMER child
+  // (PVRTimer::SetParentClientIndex()).
+  int recurringRuleId = 0;
 };
 
 // A scheduled recording: either a one-off (isSeries == false) or a
@@ -151,6 +157,40 @@ struct TimerRule
   time_t endTime = 0;
   bool isSeries = false;
   bool recordNewOnly = false; // Dispatcharr's mode == "new" vs "all"
+};
+
+// A recurring day-of-week rule, backed by Dispatcharr's own
+// RecurringRecordingRule model/scheduler (confirmed against its live
+// source and API: GET/POST /api/channels/recurring-rules/, an hourly
+// Celery task materializing real Recording rows up to 14 days ahead,
+// each tagged custom_properties.rule.{type:"recurring",id} -- see
+// GetRecurringRules()/CreateRecurringRule() below). Distinct from
+// TimerRule (series rules): this one has a real numeric id, and its
+// schedule is a fixed weekly time-of-day pattern rather than
+// EPG-title matching.
+struct RecurringRule
+{
+  int id = 0;
+  int channelId = 0;
+  std::string name;
+  // 0=Monday .. 6=Sunday (confirmed against Dispatcharr's own source:
+  // RecurringRecordingRuleSerializer's validation error text and
+  // sync_recurring_rule_impl's date.weekday() comparison both agree on
+  // this convention) -- conveniently the same convention Kodi's own
+  // PVR_WEEKDAY_MONDAY=(1<<0)..PVR_WEEKDAY_SUNDAY=(1<<6) bitmask uses, so
+  // converting between the two is a plain 1 << day, no reordering.
+  std::vector<int> daysOfWeek;
+  // Seconds since midnight, in Dispatcharr's own configured system
+  // timezone (NOT UTC -- confirmed via source that Dispatcharr's
+  // recurring-rule scheduler combines these naive values with its system
+  // timezone CoreSetting, with no server-side conversion; see
+  // recurring_rule_utc_offset_minutes in settings.xml for how this addon
+  // bridges that against Kodi's UTC-based timer times).
+  int startTimeOfDaySeconds = 0;
+  int endTimeOfDaySeconds = 0;
+  time_t startDate = 0; // UTC midnight of Dispatcharr's local start_date
+  time_t endDate = 0;   // likewise, end_date
+  bool enabled = true;
 };
 
 // One comskip-detected commercial break (or other marker), as returned by
@@ -312,6 +352,29 @@ public:
   // deleted by DELETE /api/channels/series-rules/?title=...&tvg_id=...
   // (confirmed against the live OpenAPI schema), not by path id.
   bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error);
+
+  bool GetRecurringRules(std::vector<RecurringRule>& out, std::string& error);
+  // daysOfWeek: 0=Monday..6=Sunday (see RecurringRule's own comment).
+  // startTimeOfDaySeconds/endTimeOfDaySeconds: seconds since midnight in
+  // Dispatcharr's own configured system timezone, already offset-adjusted
+  // by the caller (PVRDispatcharr::AddTimer()) using the
+  // recurring_rule_utc_offset_minutes setting -- this method sends them
+  // through as plain "HH:MM:SS" with no further conversion. startDate/
+  // endDate: UTC time_t values (midnight); only the calendar date portion
+  // is sent, as Dispatcharr's own start_date/end_date DateField expects.
+  // Dispatcharr's serializer requires both start_date and end_date on
+  // create despite the model declaring them nullable (confirmed against
+  // its live validation code) -- endDate should already reflect the
+  // caller's chosen "how far out" default (see AddTimer()), not left at 0.
+  bool CreateRecurringRule(int channelId,
+                           const std::string& name,
+                           const std::vector<int>& daysOfWeek,
+                           int startTimeOfDaySeconds,
+                           int endTimeOfDaySeconds,
+                           time_t startDate,
+                           time_t endDate,
+                           std::string& error);
+  bool DeleteRecurringRule(int ruleId, std::string& error);
 
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/

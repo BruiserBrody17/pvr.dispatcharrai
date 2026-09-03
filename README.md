@@ -109,13 +109,19 @@ This is a first working scaffold, not a finished addon. Implemented:
   own calls are normally served from cache instead of blocking on a fetch;
   confirmed live against a real ~9,000-channel instance (a genuinely slow
   fetch+parse otherwise) -- see `docs/EPG.md`
+- Recurring (day-of-week) timer rules, backed by Dispatcharr's own
+  `RecurringRecordingRule` model/scheduler -- shown in Kodi as a normal
+  repeating timer (parent rule + individual materialized occurrences as
+  child timers). One setting to be aware of:
+  `recurring_rule_utc_offset_minutes` (default 0) -- Dispatcharr
+  interprets a rule's time-of-day using its own configured system
+  timezone, not UTC, with no server-side conversion available, so this
+  bridges the gap; leave at 0 if Dispatcharr's system timezone is UTC,
+  otherwise see `docs/RECURRING_RULES.md` for exactly what to set (and
+  why it needs manual adjustment across DST if your zone observes it)
 
 Not yet implemented / worth hardening next:
 
-- Recurring (day-of-week) timer rules beyond simple series rules --
-  Dispatcharr's own models already include a matching
-  `RecurringRecordingRule` (days_of_week, start/end time, enabled), so
-  this may not need any server-side work, just wiring it up here
 - The remaining genuinely-open items are narrow and already tracked
   in-place rather than listed here: `docs/RECORDINGS.md`/`docs/CATCHUP.md`
   each flag one or two specific, inherently hard-to-verify edge cases
