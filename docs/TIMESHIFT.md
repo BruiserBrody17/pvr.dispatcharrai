@@ -98,22 +98,29 @@ confirmed working correctly against a real build with every setting
 above converted to atomic), and that `OnAddonSettingChanged()` correctly
 stays silent at normal startup (doesn't fire spuriously just from Kodi
 loading the addon's current settings) via a temporary diagnostic log
-line, removed before landing. **Not independently confirmed end-to-end
-through Kodi's own real settings-dialog save** -- no GUI automation was
-available in either this addon's own dev environment or the session that
-found the bug (both API/log-only access); a disable/re-enable of the
-addon via JSON-RPC was tried as a possible substitute trigger and ruled
-out (confirmed via `kodi.log` timestamps that it fully destroys and
-recreates the PVR client instance -- equivalent to a restart for this
-addon, not a test of the live-update path at all). The fix follows Kodi's
-own documented `SetSetting()` contract precisely (kodi-dev-kit's own
-`AddonBase.h`, including its worked code example), and the
-forwarding/locking/atomic-update logic was reviewed carefully rather than
-assumed correct by construction alone -- but a real GUI-driven
-confirmation (change the setting through the actual Settings dialog while
-a channel is open, confirm behavior changes with no restart) is the one
-piece of end-to-end evidence still open, tracked for whoever next has
-real GUI access to this addon.
+line, removed before landing. Neither this addon's own dev environment
+nor the session that found the original bug had GUI automation available
+(both API/log-only access) -- a disable/re-enable of the addon via
+JSON-RPC was tried as a possible substitute trigger and ruled out
+(confirmed via `kodi.log` timestamps that it fully destroys and recreates
+the PVR client instance, equivalent to a restart, not a test of the
+live-update path at all).
+
+**Confirmed end-to-end afterward by the same user who found the original
+bug, through Kodi's real settings dialog**: flipped `live_timeshift_mode`
+both directions (Off -> Server-side and back) and played a channel each
+time with no Kodi restart in between -- the new mode was picked up
+immediately both ways, the exact scenario the original bug report
+described, now clean. (A follow-up attempt to also drive that same
+dialog via JSON-RPC synthetic input, purely to have an automated
+supplement to the direct user confirmation, hit its own unrelated wall --
+the AddonSettings dialog's content rendered blank under screencapture and
+didn't respond to `Input.Down`/`Input.Select`, while the rest of Kodi's
+UI navigated normally in the same session and the user's own real mouse/
+keyboard interaction with that exact dialog worked cleanly -- read as a
+JSON-RPC-synthetic-input limitation specific to that one dialog, not an
+addon or fix problem, and not chased further given the direct
+confirmation already in hand.)
 
 **Local** (`live_timeshift_mode = 1`, retired -- not currently
 selectable): `GetChannelStreamProperties()` routed live channel playback
