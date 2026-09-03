@@ -223,7 +223,14 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   capabilities.SetSupportsRecordingsDelete(true);
   capabilities.SetSupportsTimers(true);
   capabilities.SetSupportsRecordingPlayCount(false);
-  capabilities.SetSupportsRecordingEdl(false);
+  // Backed by this addon's companion recording_edl Dispatcharr plugin (see
+  // GetRecordingEdl() below) -- safe to declare unconditionally the same
+  // way SetHandlesInputStream() is: a recording with no comskip markers
+  // (the common case) or with the plugin not installed just gets an empty
+  // EDL back, not an error, so there's no reason to gate this on a
+  // setting the way, say, enable_catchup_ffmpegdirect_seek gates a
+  // genuinely optional dependency.
+  capabilities.SetSupportsRecordingEdl(true);
   capabilities.SetSupportsDescrambleInfo(false);
   // For server-side timeshift's OpenLiveStream()/ReadLiveStream()/
   // SeekLiveStream() (see GetChannelStreamProperties()) and in-progress
@@ -1006,6 +1013,33 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerRecordingUpdate();
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recording,
+                                          std::vector<kodi::addon::PVREDLEntry>& edl)
+{
+  int id = std::atoi(recording.GetRecordingId().c_str());
+  std::vector<RecordingEdlEntry> entries;
+  std::string error;
+  if (!m_client.GetRecordingEdl(id, entries, error))
+  {
+    // Not installing the companion recording_edl plugin is an entirely
+    // normal, expected configuration (unlike the timeshift plugin, this
+    // one has no setting gating it, so most installs simply won't have
+    // it) -- log at DEBUG rather than ERROR so declining to install an
+    // optional plugin doesn't read as a real problem in the log.
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: no EDL for recording %d: %s", id, error.c_str());
+    return PVR_ERROR_NO_ERROR; // empty edl -- not a failure, just nothing to show
+  }
+  for (const auto& entry : entries)
+  {
+    kodi::addon::PVREDLEntry e;
+    e.SetStart(entry.startMs);
+    e.SetEnd(entry.endMs);
+    e.SetType(static_cast<PVR_EDL_TYPE>(entry.type));
+    edl.emplace_back(std::move(e));
+  }
   return PVR_ERROR_NO_ERROR;
 }
 

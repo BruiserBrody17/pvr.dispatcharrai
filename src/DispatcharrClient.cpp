@@ -56,6 +56,9 @@ constexpr const char* kApiKeyGeneratePath = "/api/accounts/api-keys/generate/";
 // (apps/plugins/api_urls.py) that the generic run endpoint takes the
 // plugin key as a URL segment, not a request body field.
 constexpr const char* kTimeshiftPluginRunPath = "/api/plugins/plugins/timeshift_buffer/run/";
+// Same mechanism, this addon's other companion plugin (see
+// dispatcharr-plugin/recording_edl/ in this repo).
+constexpr const char* kRecordingEdlPluginRunPath = "/api/plugins/plugins/recording_edl/run/";
 
 // Writes into a fixed-size caller-owned buffer, capping at its capacity --
 // used for recording stream reads, where the caller (Kodi's demuxer) owns
@@ -929,6 +932,55 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
     if (r.title.empty())
       r.title = "Recording " + std::to_string(r.id);
     out.push_back(std::move(r));
+  }
+  return true;
+}
+
+bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEdlEntry>& out,
+                                         std::string& error)
+{
+  out.clear();
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json body = {
+      {"action", "get_edl"},
+      {"params", {{"recording_id", recordingId}}},
+  };
+
+  json response;
+  // Same response shape as CallTimeshiftPluginAction()'s own comment
+  // describes: Request() already turns any non-2xx (plugin not installed/
+  // enabled, non-admin account, exception inside the plugin's own run())
+  // into a failure here, so only the 200 case needs handling below.
+  if (!Request("POST", kRecordingEdlPluginRunPath, body, response, error))
+    return false;
+
+  if (!FieldOr(response, "success", false))
+  {
+    error = FieldOr<std::string>(response, "error", "recording_edl plugin call did not succeed");
+    return false;
+  }
+
+  const json& result = response.contains("result") ? response["result"] : json();
+  if (FieldOr<std::string>(result, "status", "") != "ok")
+  {
+    error = FieldOr<std::string>(result, "message", "recording_edl plugin returned an error");
+    return false;
+  }
+
+  const json& entries = result.contains("entries") ? result["entries"] : json();
+  if (entries.is_array())
+  {
+    for (const auto& item : entries)
+    {
+      RecordingEdlEntry entry;
+      entry.startMs = FieldOr<int64_t>(item, "start", 0);
+      entry.endMs = FieldOr<int64_t>(item, "end", 0);
+      entry.type = FieldOr(item, "type", 3);
+      if (entry.endMs > entry.startMs)
+        out.push_back(entry);
+    }
   }
   return true;
 }

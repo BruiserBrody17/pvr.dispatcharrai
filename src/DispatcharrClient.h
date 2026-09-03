@@ -153,6 +153,16 @@ struct TimerRule
   bool recordNewOnly = false; // Dispatcharr's mode == "new" vs "all"
 };
 
+// One comskip-detected commercial break (or other marker), as returned by
+// the recording_edl companion plugin's get_edl action -- see
+// GetRecordingEdl()'s own comment.
+struct RecordingEdlEntry
+{
+  int64_t startMs = 0;
+  int64_t endMs = 0;
+  int type = 3; // matches Kodi's own PVR_EDL_TYPE_COMBREAK; see plugin.py
+};
+
 // Thin, synchronous REST client. Callers (PVRDispatcharr) are responsible
 // for running these off Kodi's calling thread where the PVR API allows it;
 // none of the calls here touch Kodi's own API.
@@ -220,6 +230,24 @@ public:
   bool StopTimeshiftBuffer(const std::string& channelUuid, std::string& error);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
+  // Fetches comskip-detected commercial-break markers for a completed
+  // recording via this addon's companion Dispatcharr plugin
+  // (dispatcharr-plugin/recording_edl/ in this repo -- not built into
+  // Dispatcharr itself, must be installed and enabled separately, same
+  // admin-account requirement as StartTimeshiftBuffer()'s own plugin).
+  // Confirmed against Dispatcharr's own source that there is no other way
+  // to reach this data over HTTP at all: the /file/ endpoint always
+  // serves exactly custom_properties.file_path with no way to redirect it
+  // at a sibling .edl file, and no generic static route reaches
+  // /data/recordings/... either -- see the plugin's own README for the
+  // full investigation. Returns true with an empty `out` (not an error)
+  // when the recording simply has no markers -- comskip never ran, found
+  // nothing, or ran in "cut" mode (which deletes the .edl file once it's
+  // done physically removing the commercials, so there's nothing left to
+  // report) -- since that's the normal outcome for most recordings, not a
+  // failure. Only returns false for a genuine call failure (plugin not
+  // installed/enabled, wrong account, network error).
+  bool GetRecordingEdl(int recordingId, std::vector<RecordingEdlEntry>& out, std::string& error);
   bool DeleteRecording(int recordingId, std::string& error);
   // Confirmed against the live schema: POST .../recordings/{id}/stop/
   // "Stop[s] a recording early while retaining the partial content for
