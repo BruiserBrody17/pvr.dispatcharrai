@@ -218,13 +218,6 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
 
 ## Still unconfirmed (verify before relying on in production)
 
-- Whether a one-time recording that doesn't match any real EPG programme
-  (a fully manual/custom time range with nothing airing to auto-enrich
-  from) ever gets a title *from Dispatcharr itself*. Less consequential
-  than it used to be: the pending-title cache above now shows whatever
-  title Kodi's manual-timer dialog was given regardless, so this only
-  matters for whether Dispatcharr's own data independently agrees once
-  its enrichment (or lack thereof) resolves -- not tested.
 - The account used to verify this (`claude`) initially got "You do not
   have permission to perform this action" trying to create a recording or
   series rule -- same account that could log in, browse channels, and
