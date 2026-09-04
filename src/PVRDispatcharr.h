@@ -142,21 +142,57 @@ private:
   // id (unlike series rules, which have none and must be hashed) can be
   // used directly without colliding with either namespace.
   static constexpr unsigned int kRecurringRuleIndexFlag = 0x20000000u;
-  // How far past a rule's start a newly-created recurring rule's
-  // Dispatcharr-side end_date is set to. Kodi's own repeating-timer UI has
-  // no "last day" field to expose per-timer (confirmed against
-  // kodi-dev-kit's PVR_TIMER_TYPE_SUPPORTS_* flags -- only
-  // SUPPORTS_FIRST_DAY exists, no equivalent for an end), but Dispatcharr's
-  // serializer requires a real end_date -- see CreateRecurringRule(). A
-  // generous, cheap default: only the next 14 days actually get
-  // materialized into real Recording rows regardless (Dispatcharr's own
-  // rolling horizon), so a far-future end_date costs nothing but the
-  // rule's own validity window. Deleting the timer in Kodi ends it for
-  // good at any point; there's no separate "stop repeating" concept to
-  // expose beyond that.
-  static constexpr int kRecurringRuleDefaultYears = 3;
+  // How many days ahead a recurring rule's Dispatcharr-side end_date is
+  // kept, both at creation and via the periodic renewal below. Kodi's own
+  // repeating-timer UI has no "last day" field to expose per-timer
+  // (confirmed against kodi-dev-kit's PVR_TIMER_TYPE_SUPPORTS_* flags --
+  // only SUPPORTS_FIRST_DAY exists, no equivalent for an end), but
+  // Dispatcharr's serializer requires a real end_date on every create --
+  // see CreateRecurringRule(). This used to be a flat 3-year end_date on
+  // the theory that Dispatcharr only lazily materializes ~14 days ahead
+  // regardless of how far out end_date sits, making a far-future value
+  // "free". Confirmed live that theory was wrong: Dispatcharr eagerly
+  // materializes *every* occurrence between start_date and end_date
+  // synchronously, right when the rule is created (or its end_date is
+  // changed) -- a single weekly rule with a 3-year end_date produced 157
+  // real Recording rows immediately, which would show as 157 child timers
+  // in Kodi's own timer list. A much shorter rolling window, kept topped
+  // up by RenewRecurringRules() below, keeps that cost bounded while still
+  // behaving like a "create once, forget about it" repeating timer from
+  // the user's side -- deleting the timer in Kodi still ends it for good
+  // at any point; there's no separate "stop repeating" concept to expose
+  // beyond that.
+  static constexpr int kRecurringRuleWindowDays = 30;
+  // RenewRecurringRules() extends a rule's end_date once less than half
+  // this window remains, rather than waiting until it's about to actually
+  // run out -- keeps the periodic check (which runs on the existing
+  // recording-refresh cadence, not a dedicated timer) cheap: most cycles
+  // see a rule comfortably inside its window and do nothing at all.
+  // Skips a rule with an occurrence currently recording or starting within
+  // this many seconds, even though live testing confirmed Dispatcharr's
+  // own regeneration on this kind of update already leaves an in-progress
+  // or completed occurrence alone (see ExtendRecurringRuleEndDate()'s own
+  // comment and docs/RECURRING_RULES.md) -- defense in depth rather than
+  // relying solely on that server-side scoping.
+  static constexpr int kRecurringRuleRenewalSafetyMarginSeconds = 3600;
 
   dispatcharr::Config LoadConfigFromSettings() const;
+  // Snapshot of LoadConfigFromSettings()'s result, taken once at
+  // construction and updated only by OnAddonSettingChanged() itself below
+  // -- exists purely so that method can tell a *genuine* change to a
+  // connection setting (host/port/.../api_key, every one of which needs a
+  // restart to take effect) apart from a spurious re-notification of the
+  // same value. That second case is real, not hypothetical: Kodi has a
+  // documented quirk where a settings-dialog save's terminal SetSetting()
+  // call can arrive mislabeled with the name of the *last* setting defined
+  // in settings.xml (api_key, here) even when nothing about that setting
+  // actually changed -- confirmed live against a real CoreELEC install:
+  // saving `debug_logging` alone, with nothing else touched, reliably
+  // produced a spurious "api_key changed" notification and restarted the
+  // PVR client instance every time, defeating live-apply for every
+  // setting, not just the connection ones. Comparing against this snapshot
+  // turns that spurious case into a no-op instead of an unwanted restart.
+  dispatcharr::Config m_lastAppliedConfig;
   // Returns true if this call actually performed a fetch (cache was stale
   // or never loaded), false if it was a no-op (still fresh). The
   // background thread below uses this to know when to call
@@ -242,6 +278,15 @@ private:
   // regardless of local activity. Started in the constructor, joined in
   // the destructor.
   void StartRecordingRefreshThread();
+  // Keeps every enabled recurring rule's Dispatcharr-side end_date topped
+  // up (see kRecurringRuleWindowDays's own comment for why this exists at
+  // all) -- called from the recording-refresh thread's own cadence rather
+  // than a dedicated thread/setting, since it needs to run periodically
+  // regardless of local activity the same way that thread's existing
+  // TriggerRecordingUpdate()/TriggerTimerUpdate() calls do. Best-effort:
+  // a failed GetRecurringRules()/GetRecordings()/ExtendRecurringRuleEndDate()
+  // call just tries again next cycle, same as the rest of this thread.
+  void RenewRecurringRules();
   std::thread m_recordingRefreshThread;
   std::mutex m_recordingRefreshMutex;
   std::condition_variable m_recordingRefreshCv;
@@ -300,5 +345,9 @@ private:
   std::mutex m_realtimeUpdateMutex;
   std::condition_variable m_realtimeUpdateCv;
   std::atomic<bool> m_stopRealtimeUpdateThread{false};
-  bool m_enableRealtimeUpdates = false;
+  // Atomic because OnAddonSettingChanged() now reads-then-writes this (to
+  // detect a genuine change vs. the spurious-renotification quirk
+  // documented on m_lastAppliedConfig above) on whatever thread Kodi
+  // delivers SetSetting() on, not just the constructor's own thread.
+  std::atomic<bool> m_enableRealtimeUpdates{false};
 };

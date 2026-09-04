@@ -150,7 +150,7 @@ rather than assuming either one.
    since a standalone Windows install can't assume those are already present
    the way Kodi's own bundled curl, or Linux's system libcurl, would be.
 
-## CoreELEC on an ODROID N2+ (aarch64 / Amlogic S922X)
+## CoreELEC on an ODROID N2+ (Amlogic S922X)
 
 This is the part that most often causes "it built but Kodi won't load it"
 problems, because CoreELEC ships its own cross-compiled Kodi build with a
@@ -184,57 +184,160 @@ tagged release tarball with a pinned `PKG_SHA256`. A package definition for
 this addon following that same pattern is checked in at
 [`packaging/coreelec/pvr.dispatcharrai/package.mk`](../packaging/coreelec/pvr.dispatcharrai/package.mk).
 
+**This whole path -- package.mk, checksum, branch, device, arch -- has now
+been confirmed by an actual successful cross-compile** (`0.3.0`, against a
+real WSL2/Ubuntu build machine): `ALL ADDONS BUILT SUCCESSFULLY`, producing
+a genuine `pvr.dispatcharrai-0.3.0.1.zip` whose `.so` is a real stripped
+ELF binary, and every specific claim below (branch, device, arch, output
+path) reflects what that run actually did, not documentation guesswork.
+Several real problems surfaced and were fixed along the way -- they're
+called out inline so a future rebuild doesn't have to rediscover them.
+
 1. Tag and publish a GitHub release matching the version in
-   `pvr.dispatcharrai/addon.xml.in` (e.g. `0.1.0`, no `v` prefix -- CoreELEC's
+   `pvr.dispatcharrai/addon.xml.in` (e.g. `0.4.0`, no `v` prefix -- CoreELEC's
    own package.mk files use the tag name verbatim in the archive URL, and
    keeping it identical to `PKG_VERSION` avoids a mismatch):
    ```bash
-   git tag 0.1.0
-   git push origin 0.1.0
-   gh release create 0.1.0 --generate-notes
+   git tag 0.4.0
+   git push origin 0.4.0
+   gh release create 0.4.0 --generate-notes
    ```
+   **The GitHub repo must be public.** CoreELEC's build harness fetches
+   `PKG_URL` with a plain anonymous `curl`/`wget` -- no auth, no token --
+   so a private repo's archive URL 404s (GitHub's standard "hide
+   existence" response to an unauthenticated request against a private
+   repo). Confirmed live: this addon's own repo was still private from an
+   earlier session, the cross-compile's very last step
+   (`pvr.dispatcharrai:target`, after the entire toolchain had already
+   built successfully) failed on exactly this 404, and switching the repo
+   to public (`gh repo edit <repo> --visibility public
+   --accept-visibility-change-consequences`) immediately fixed it -- no
+   package.mk or build-harness change needed.
 2. Compute the tarball's checksum and fill it into
-   `packaging/coreelec/pvr.dispatcharrai/package.mk`'s `PKG_SHA256`
-   (it currently holds a placeholder of zeros):
+   `packaging/coreelec/pvr.dispatcharrai/package.mk`'s `PKG_SHA256`:
    ```bash
-   curl -L https://github.com/BruiserBrody17/pvr.dispatcharrai/archive/0.1.0.tar.gz | sha256sum
+   curl -L https://github.com/BruiserBrody17/pvr.dispatcharrai/archive/0.3.0.tar.gz | sha256sum
    ```
+   Do this *after* the repo is public, against the real tarball -- doing
+   it while the repo is still private silently hashes GitHub's 404 error
+   page instead (confirmed live: this is exactly what happened building
+   `0.3.0`, and the build failed with an explicit
+   `Incorrect checksum calculated on downloaded file` once the repo was
+   made public and the real tarball could finally be fetched, until the
+   checksum was recomputed against the real content).
 3. On a Debian/Ubuntu-based Linux build machine (not the N2+ itself --
    cross-compiling needs real CPU and disk; per CoreELEC's own build docs,
    budget 50GB free disk and expect the first build to take a while, since
-   it also has to fetch/build the aarch64 cross toolchain), clone CoreELEC
-   at the branch matching your device's installed CoreELEC major version
-   (`coreelec-22` is current as of this writing) and copy the package.mk in:
+   it also has to fetch/build the whole cross toolchain including GCC from
+   source), clone CoreELEC at the branch matching your device's installed
+   CoreELEC major version -- **use the branch matching CoreELEC's current
+   *stable* release, not whatever branch happens to be default/newest**:
+   `coreelec-22` tracks Kodi 22 "Piers", which as of this writing is still
+   a beta (`22.0b2`) with a materially different PVR addon API (the
+   recorded-stream methods gained a `streamId` parameter for
+   concurrent-stream support) -- confirmed live by actually
+   cross-compiling against it, which failed with `override` mismatches on
+   `GetChannelStreamProperties`/`OpenRecordedStream`/
+   `CloseRecordedStream`/`ReadRecordedStream`/`SeekRecordedStream`/
+   `LengthRecordedStream`, all six exactly matching the API's real,
+   deliberate signature change, not a bug in this addon's code. CoreELEC's
+   actual latest stable release is `21.3-Omega` (confirmed against
+   CoreELEC's own GitHub releases), tracking Kodi 21/Omega -- the same
+   branch this addon's Windows/macOS/Linux CI already targets
+   (`KODI_BRANCH` in `.github/workflows/build.yml`) and what a real device
+   almost certainly runs unless deliberately flashed onto a dev/nightly
+   build. This is the branch that actually built successfully:
    ```bash
-   git clone --branch coreelec-22 --depth 1 https://github.com/CoreELEC/CoreELEC.git
+   git clone --branch coreelec-21 --depth 1 https://github.com/CoreELEC/CoreELEC.git
    mkdir -p CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharrai
    cp packaging/coreelec/pvr.dispatcharrai/package.mk \
      CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharrai/
    ```
-4. Build it. The N2+'s S922X is confirmed (by reading CoreELEC's own source
-   tree -- `projects/Amlogic-ce/devices/Amlogic-no` is the directory that
-   ships `Odroid_N2_boot.ini`) to fall under the `Amlogic-ce` project,
-   `Amlogic-no` device, `aarch64` arch:
+4. Build it. Both the device name *and* the arch value have changed across
+   CoreELEC branches -- don't assume either is stable across branches, and
+   don't assume the SoC being 64-bit means the build's `ARCH` is
+   `aarch64`:
+   - **Device**: confirm by reading the target branch's own source tree
+     for which device directory under `projects/Amlogic-ce/devices/` ships
+     `Odroid_N2_boot.ini`. On `coreelec-21` it's `Amlogic-ng` (confirmed
+     live -- `coreelec-22`, which this doc no longer recommends, instead
+     used a single combined `Amlogic-no` device that doesn't exist on
+     `coreelec-21`).
+   - **Arch**: CoreELEC's own official `21.3-Omega` release for this
+     device is literally named
+     `CoreELEC-Amlogic-ng.arm-21.3-Omega-Odroid_N2.img.gz` (confirmed
+     against CoreELEC's own GitHub releases) -- `arm`, not `aarch64`,
+     despite the S922X being a 64-bit SoC: CoreELEC's `Amlogic-ng` device
+     on the Omega branch runs a 32-bit (`armhf`/EABI5) userland on a
+     64-bit kernel, not a true AArch64 userland. Passing `ARCH=aarch64`
+     doesn't fail outright -- the build harness silently resolves the
+     actual target to `arm` regardless (confirmed by the resulting build
+     directory being named `...arm-21`, not `...aarch64-21`, and by the
+     finished `.so` being `ELF 32-bit LSB shared object, ARM, EABI5`, not
+     64-bit) -- but passing `ARCH=arm` explicitly matches reality and
+     avoids the confusion:
    ```bash
    cd CoreELEC
-   PROJECT=Amlogic-ce ARCH=aarch64 DEVICE=Amlogic-no ./scripts/create_addon pvr.dispatcharrai
+   PROJECT=Amlogic-ce ARCH=arm DEVICE=Amlogic-ng ./scripts/create_addon pvr.dispatcharrai
    ```
+   Two more real, confirmed-live failure modes to expect and how they were
+   fixed, in case a future build hits them again (both are about *fetching
+   dependency source tarballs*, not about this addon's own code):
+   - **GNU mirror unreachability**: `ftpmirror.gnu.org` (and CoreELEC's
+     own mirrors, `sources.coreelec.org` / `sources.libreelec.tv`) were
+     unreachable from the network this was built on, failing `make`,
+     `m4`, `autoconf`, `autoconf-archive`, `automake`, `bison`,
+     `libtool`, `mpc`, `mpfr`, `readline`, `gcc`, and `gmp` in turn (each
+     one only discovered by retrying after the previous one was fixed).
+     `ftp.gnu.org` (the canonical, non-redirector GNU host) worked
+     throughout. If this happens again: fetch the exact `PKG_VERSION`
+     tarball from `https://ftp.gnu.org/gnu/<pkg>/...` (or, for `gmp`,
+     `https://ftp.gnu.org/gnu/gmp/...`, since `gmp` doesn't use the
+     `ftpmirror.gnu.org` host in its own `package.mk` but is served by
+     the same broken `sources.coreelec.org`/`sources.libreelec.tv`
+     mirrors as a fallback), verify it against that package's own
+     `PKG_SHA256` in `packages/.../<pkg>/package.mk`, then drop it into
+     `sources/<pkg>/<pkg>-<version>.<ext>` in the CoreELEC checkout
+     alongside two matching sidecar files, `<same filename>.sha256`
+     (just the hex digest) and `<same filename>.url` (the original
+     `PKG_URL`) -- the build script skips fetching anything it finds
+     already staged there with a matching checksum.
+   - **`repo.or.cz` bot wall**: `rtmpdump`'s pinned git-snapshot URL
+     (`repo.or.cz/rtmpdump.git/snapshot/<commit>.tar.gz`) returned an
+     Anubis bot-check HTML page instead of the real tarball, from a plain
+     `curl`/`wget` with no way to pass the JS challenge nor via a
+     browser-like `User-Agent` header. The Wayback Machine had a genuine
+     cached copy from before the bot wall existed (fetched via
+     `https://web.archive.org/web/2023/<original URL>` -- note this
+     worked even though `https://archive.org/wayback/available?url=...`
+     reported no snapshot for the same URL) that matched `rtmpdump`'s own
+     pinned `PKG_SHA256` exactly; staged the same way as the GNU packages
+     above.
    Per CoreELEC's own wiki, the result lands under `target/addons/`; this
-   hasn't been verified against a real run, so if it's not there, search
-   `target/` for `pvr.dispatcharrai*.zip` instead.
+   is now confirmed against a real run -- exact path is
+   `target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharrai/`,
+   e.g. `target/addons/Amlogic-ng/21.3/arm/pvr.dispatcharrai/pvr.dispatcharrai-0.3.0.1.zip`
+   for this build (the `.1` is CoreELEC's own `PKG_REV`, not part of this
+   addon's own version).
 5. Install the resulting zip on the N2+ via Kodi's "install from zip file"
    option, or copy it over SSH and extract into
    `/storage/.kodi/addons/pvr.dispatcharrai/` directly, then restart Kodi.
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
-repeating -- the CoreELEC checkout itself can be reused.
+repeating -- the CoreELEC checkout itself can be reused, and with the
+toolchain and every dependency already built and cached, a rebuild that
+only touches this addon's own package is fast (~1 minute wall clock,
+confirmed live, versus well over an hour for the first build from
+scratch).
 
 ### Manual cross-compile + side-load (fallback)
 
 If you'd rather not maintain a package.mk (e.g. testing an unreleased
 commit), cross-compile using the same toolchain CoreELEC's build system
-uses for the N2+ (`Amlogic-ce`/`Amlogic-no`, aarch64), matching their exact
-GCC version and the Kodi commit their release is built from, then copy the
+uses for the N2+ (`Amlogic-ce`/`Amlogic-ng`, `arm` -- see the confirmed
+details above; not `Amlogic-no`/`aarch64`, which was true of an older,
+no-longer-recommended branch), matching their exact GCC version and the
+Kodi commit their release is built from, then copy the
 resulting `.so` and a rendered `addon.xml` into
 `/storage/.kodi/addons/pvr.dispatcharrai/` over SSH and restart Kodi. This
 is more fragile than the package.mk route above (nothing pins the toolchain

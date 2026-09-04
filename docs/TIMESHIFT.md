@@ -122,6 +122,25 @@ JSON-RPC-synthetic-input limitation specific to that one dialog, not an
 addon or fix problem, and not chased further given the direct
 confirmation already in hand.)
 
+**Follow-up bug in the live-apply mechanism itself, found via real
+CoreELEC testing: any settings save at all silently restarted the PVR
+client, defeating live-apply for every setting, not just the connection
+ones.** Root cause: Kodi has a documented quirk where a settings-dialog
+save's terminal `SetSetting()` call can arrive mislabeled with the name
+of the *last* setting defined in `settings.xml` (`api_key`, in this
+addon) even when nothing about that setting actually changed. Since
+`api_key` is one of the settings `OnAddonSettingChanged()` treats as
+always needing a restart, this spurious re-notification triggered a
+restart on *every* save -- confirmed live, reproducibly: saving
+`debug_logging` alone, isolated, with nothing else touched, restarted the
+instance every time. Fixed by caching the addon's own last-known value
+for each restart-triggering setting (`m_lastAppliedConfig` in
+`PVRDispatcharr.h`) and only actually requesting a restart when the
+incoming value genuinely differs from that cache -- a spurious
+re-notification carrying an unchanged value becomes a no-op instead.
+Confirmed live afterward: the identical isolated `debug_logging` toggle,
+repeated, produced no restart at all.
+
 **Local** (`live_timeshift_mode = 1`, retired -- not currently
 selectable): `GetChannelStreamProperties()` routed live channel playback
 through `inputstream.ffmpegdirect`'s `stream_mode: timeshift`. Confirmed
@@ -696,4 +715,85 @@ from what was already there.
 `user_id: "0"`, `ip_address: "127.0.0.1"` to the real account's id and the
 actual LAN IP of the machine running Kodi, both through a direct plugin
 action call and through actual Kodi playback.
+
+## Real hardware (CoreELEC/ODROID N2+) surfaced four more real bugs
+
+Everything above was developed and confirmed against Windows/macOS. A
+dedicated live-TV stress-testing pass on a real N2+ found four further
+issues -- all confirmed live on that device, not theorized -- because
+real embedded hardware and a real home network surface timing edge cases
+a dev machine's faster CPU and LAN rarely hit.
+
+**A multi-worker-process port race in the plugin's own HTTP server.**
+Dispatcharr's plugin `run()` calls can land on any of its several WSGI
+worker processes, but `_ensure_http_server_running()`'s own
+`_http_server`/`_http_server_thread` tracking was a plain module-level
+global -- invisible across processes, exactly the reason buffer *state*
+already lives in Redis instead (see this file's `plugin.py` for that
+comment). Confirmed live: a real instance repeatedly logged `couldn't
+bind http server on port 9192: Address already in use` from workers other
+than whichever one happened to bind first, and when that first worker
+later died or got recycled (routine for a WSGI server), port 9192 went
+briefly unserved until another worker won the race to rebind -- during
+that gap, this addon's HTTP reads against the buffer's file server failed
+outright, producing a real live-playback stall. Fixed with `SO_REUSEPORT`
+on the plugin's listening socket: every worker process binds its own
+socket on the same port, the kernel load-balances incoming connections
+across all of them, and no single worker dying creates a gap -- safe
+specifically because every worker's listener serves identical content
+(the same shared `storage_path` files on disk).
+
+**The catch-up-to-tail retry margin (1.5x the last segment's duration)
+ran thinner than intended.** Confirmed live: ordinary, non-error catch-up
+cycles routinely used 60-95% of that budget just to catch up under normal
+jitter, not just during a real outage -- leaving too little real margin
+before a read genuinely gave up and reported a stall to Kodi. Widened to
+3x.
+
+**Seeking to the live edge left zero buffer margin, causing a predictable
+stutter almost every time.** `SeekLiveTimeshiftStream()`'s `SEEK_END`
+clamp landed exactly at the known tail (`totalBytes`, off by under 1KB in
+one traced case) -- confirmed live that this meant playback immediately
+re-caught-up to the tail within a couple of seconds of real playback and
+had to wait through a full segment-production cycle a second time, long
+enough to trigger Kodi's own stall/rebuffer right after what looked like
+a completed seek. Fixed by backing the clamp off by roughly one segment's
+worth of bytes (`m_liveTimeshiftStream.segments.back().byteSize`) instead
+of landing exactly on `totalBytes` -- the same "live edge minus a little"
+margin real-world HLS/DASH players keep for this exact reason. Confirmed
+live: the same seek-to-live sequence that previously stuttered noticeably
+completed with no unreasonable delay and clean playback afterward.
+
+**A genuine crash, traced to a single noisy sample sizing a
+safety-critical budget.** The catch-up loop's retry budget was computed
+from the *single last segment's own duration* -- fine under the original
+6-second default, but after tuning `segment_seconds` down to 2 (see
+below) a real instance produced one segment just 151ms long (ffmpeg's
+segment cutter targets `segment_seconds` but cuts at the next keyframe
+at/after it, so real durations vary run to run). That collapsed the
+budget to 2 attempts / 0.5s -- nowhere near enough margin -- and the read
+gave up for real, repeatedly, until ffmpeg's own demuxer read the
+resulting silence as genuine end-of-stream and closed playback outright
+(`VideoPlayer: eof, waiting for queues to empty`, then Kodi kicked back
+to the main menu). Fixed by averaging the last 5 segments' durations
+instead of trusting the single most recent one, with a 1.5s floor
+regardless (covers a fresh buffer's still-warming-up first few segments
+too). Confirmed live afterward: the same rewind-then-seek-to-live
+sequence that previously crashed played cleanly, with sane, stable
+segment-duration estimates in the log instead of one-off outliers.
+
+**Tuning note, not a bug: `segment_seconds` trades burst size for file
+count.** The plugin's buffer is built from *closed* HLS-style segments --
+ffmpeg only exposes a segment once fully written, so content arrives in
+bursts sized by `segment_seconds` (default 6s), not a smooth trickle, no
+matter how generous the client's own retry margin is. Reducing it (2s
+tested live) shrinks both the burst size and the worst-case wait per
+cycle, measurably reducing stall frequency/severity in the same live test
+-- at the cost of more, smaller segment files on disk and more frequent
+requests, exactly the trade-off the setting's own help text already
+documents. A deeper fix -- serving the *currently-being-written* segment
+for partial reads instead of waiting for it to close, eliminating the
+burstiness at the root -- would need a real redesign of the plugin's
+manifest/addressing model (which currently assumes a segment is stable
+once listed) and hasn't been attempted.
 
