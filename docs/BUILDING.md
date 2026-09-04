@@ -67,6 +67,31 @@ automates the Windows/macOS/Linux steps below on every push.
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
 
+**Confirmed live on a real Rocky Linux 10 install (0.4.0):** the steps
+above work as documented -- gcc 14/cmake 3.31 from the distro's own repos
+built it cleanly, no compatibility issues, once `libcurl-devel` was
+installed (the one dependency not present by default). Kodi itself
+wasn't packaged for RHEL10/Rocky10 yet at the time (too new for RPM
+Fusion); the official Kodi Flatpak (`flatpak install flathub
+tv.kodi.Kodi`) worked as a real, officially-supported alternative --
+confirmed the natively-built `.so` above loads and runs correctly inside
+that Flatpak's sandboxed runtime with no ABI issues.
+
+**A real, non-obvious gotcha if launching Kodi non-interactively (e.g.
+over SSH) rather than from the desktop's own app launcher: Kodi's own
+process crashed on startup** (`std::vector<...>::front() [CpuData]:
+Assertion '!this->empty()' failed`, inside Kodi's own CPU-monitoring
+code, before this addon was even instantiated) **when launched without
+the logged-in session's actual display environment.** `ssh user@host
+'flatpak run tv.kodi.Kodi'` doesn't inherit `WAYLAND_DISPLAY`/`DISPLAY`/
+`DBUS_SESSION_BUS_ADDRESS` from the real graphical session at all --
+confirmed fixed by pulling those from an already-running process that
+*is* part of that session (e.g. `tr '\0' '\n' < /proc/<gnome-shell
+pid>/environ`) and exporting them (along with `XDG_RUNTIME_DIR`) before
+the `flatpak run` call. Once launched with the correct display
+environment, Kodi ran completely stably -- this was an environmental
+launch-context issue, not a bug in Kodi or this addon.
+
 ## Windows (x86_64)
 
 Windows has no `make` and no system libcurl, so this doesn't go through
