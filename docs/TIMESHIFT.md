@@ -504,15 +504,16 @@ fix. No hitching on a cold buffer either (0 stalls across 45s on ESPN,
 seconds' cushion before playback starts rather than reading right at its
 own bleeding edge.
 
-**Trade-off**: stopping and restarting the buffer on every Open() means a
-second Kodi client (or profile) watching the same channel concurrently
-would have its buffer torn out from under it mid-playback -- the plugin's
-`start_buffer` is otherwise idempotent specifically so multiple viewers
-can share one upstream connection per channel (see the plugin's own
-README). This trades that sharing away for correct per-session seeking,
-which is the right trade for a single-viewer setup but worth knowing if
-this addon is ever used from more than one Kodi client against the same
-Dispatcharr account at once.
+**Trade-off, later found to be worse in practice than described here, and
+superseded -- see "Concurrent viewers" further down**: stopping and
+restarting the buffer on every Open() means a second Kodi client (or
+profile) watching the same channel concurrently would have its buffer torn
+out from under it mid-playback -- the plugin's `start_buffer` is otherwise
+idempotent specifically so multiple viewers can share one upstream
+connection per channel (see the plugin's own README). This trades that
+sharing away for correct per-session seeking, which is the right trade for
+a single-viewer setup but worth knowing if this addon is ever used from
+more than one Kodi client against the same Dispatcharr account at once.
 
 ## Follow-up bug from the fresh-buffer fix: repeated "live playlist not found"
 
@@ -656,7 +657,11 @@ absolute-position testing, read `Player.Time`/`Player.Duration` (or the
 
 ## Buffer teardown was slow to notice a Stop
 
-Real use surfaced one more gap: `CloseLiveTimeshiftStream()` (called on a
+**This section's own fix is itself superseded -- see "Concurrent viewers"
+further down**: the `StopTimeshiftBuffer()` call this section added to
+`CloseLiveTimeshiftStream()` turned out to have the same concurrent-viewer
+problem as the seeking fix's own stop-before-start, and has since been
+removed; kept here for the history. Real use surfaced one more gap: `CloseLiveTimeshiftStream()` (called on a
 plain Stop) only ever reset this addon's own local state -- it never told
 the plugin to actually stop the server-side buffer. That only happened at
 the *start* of the next `OpenLiveTimeshiftStream()` (see the fresh-buffer
@@ -781,6 +786,164 @@ regardless (covers a fresh buffer's still-warming-up first few segments
 too). Confirmed live afterward: the same rewind-then-seek-to-live
 sequence that previously crashed played cleanly, with sane, stable
 segment-duration estimates in the log instead of one-off outliers.
+
+## Concurrent viewers: the stop-on-Open/stop-on-Close fix above was itself a real bug
+
+The "seeking after a Stop/reopen" fix a few sections up traded away
+concurrent-viewer support deliberately (see its own "Trade-off" paragraph)
+-- but real multi-device use surfaced that the actual consequence was worse
+than "the first viewer loses pause/rewind": **a second viewer opening the
+same channel killed the first viewer's playback outright, and the first
+viewer's own eventual Stop then killed the second viewer's replacement
+buffer too**, leaving both viewers broken in sequence rather than one.
+Confirmed live: watching ESPN (1080p) on a Mac, then opening the same
+channel on a second, separate device (a Rocky Linux laptop) -- the Mac's
+playback stopped, and the second device's own playback stalled
+indefinitely a few seconds later. Dispatcharr's own `list_buffers` plugin
+action showed zero active buffers afterward (the second device's own fresh
+buffer had also been torn down), and the second device's `kodi.log` showed
+a 20+ second gap with zero addon debug output between `VideoPlayer::OpenFile`
+and an eventual `stream stalled`/`CloseFile` -- consistent with the addon
+blocking inside a network call (most likely `CURLOPT_TIMEOUT`,
+`m_config.timeoutSeconds`, default 30s) after its own buffer was killed
+out from under it by the first viewer's Close.
+
+Root cause: `OpenLiveTimeshiftStream()` unconditionally called
+`StopTimeshiftBuffer()` before every `StartTimeshiftBuffer()` (the seeking
+fix above), and `CloseLiveTimeshiftStream()` unconditionally called
+`StopTimeshiftBuffer()` too (the "buffer teardown was slow to notice a
+Stop" fix above) -- neither call site had any way to know whether another
+viewer was still using the same channel's buffer, so each one's
+"just tearing down my own stream" was actually "tearing down *the*
+buffer, unconditionally," for however many viewers happened to be using
+it.
+
+**First fix attempted, and confirmed live NOT to work on its own:** the
+working theory was that the failure the original fix prevented wasn't
+really "a fresh demuxer instance can never seek into content it hasn't
+personally read this session," but rather a *stale, discontinuous* buffer
+(content from a much earlier, long-since-restarted or partially
+plugin-side-evicted encoder run, with its own incompatible PTS timeline) --
+and that simply no longer stopping the buffer at all (reattaching via
+`StartTimeshiftBuffer()`'s existing idempotent `start_buffer`, which already
+reports back an already-running buffer rather than restarting one) would
+keep the whole addressed byte range one continuous, valid encoder run and
+fix concurrency for free. **Tested live and confirmed wrong**: opened ESPN
+(1080p) on Windows, played ~20s, Stop, waited ~22s, reopened the same
+channel -- the reopen reattached to the still-running buffer instantly (no
+cold-start wait; the manifest already had ~90MB/several minutes of history
+from before this reopen, direct evidence the buffer had genuinely never
+been restarted), then a plain `Player.Seek {"seconds": -20}` reproduced the
+*exact same failure signature* the original fix was written to prevent:
+
+```
+SeekLiveTimeshiftStream(position=0, whence=0) from current=125098280, totalBytes=126204964 -> newPos=0
+SeekLiveTimeshiftStream(position=564, whence=0) from current=524288, totalBytes=126204964 -> newPos=564
+CDVDDemuxFFmpeg::SeekTime - seek ended up on time 95376117
+```
+
+`95376117` ms is ~26.49 hours -- unmistakably the MPEG-TS 33-bit PTS
+wraparound point (2^33 / 90kHz ≈ 26.51h), not anywhere near a plain -20s
+target. Decoding didn't stall (`speed: 1`, `Player.Duration` kept growing
+normally throughout), but the reported playback position was garbage --
+the demuxer had landed near byte 0 of this addon's own *entire* local
+address space (all ~126MB/several minutes this reopen's cold-start fetch
+had pulled in from the still-running buffer), not anywhere near -20s from
+where playback actually was. **This confirms the original diagnosis was
+right after all**: Kodi's own demuxer genuinely cannot reliably seek
+backward into buffer content *this* demuxer instance hasn't itself read
+forward through this session, regardless of whether that content belongs
+to one continuous, never-restarted encoder run -- continuity alone doesn't
+fix it. (It also directly answers, live, the "can a second viewer join a
+running buffer and rewind into its pre-join history" question this was
+investigated alongside: no, not with Kodi's current PVR API and generic
+ffmpeg MPEG-TS seek -- the exact same mechanism that breaks a *single*
+viewer's own reopen would break a second viewer's join identically.)
+
+**The actual fix**: keep not stopping the server-side buffer (still
+correctly fixes the concurrency bug -- see below), but after the
+cold-start manifest fetch populates this addon's own local address space
+from *everything* the buffer currently holds, `OpenLiveTimeshiftStream()`
+now discards all but the trailing `kLiveEdgeMarginSegments` (3) segments of
+it and rebases the byte/time offsets of what's kept so the oldest
+surviving segment becomes local byte 0 -- i.e., this addon's own exposed
+address space is trimmed back down to the same small, near-live-edge
+window a genuinely fresh (just-restarted) buffer would have had, matching
+exactly what made seeking reliable before, without ever telling the plugin
+to stop or restart anything server-side. As playback continues past that
+point, new segments accumulate locally via the normal sequence-based merge
+in `RefreshLiveManifest()`, unaffected -- within-session backward seeking
+into everything read *since* this Open() keeps working exactly as it always
+has; only the pre-existing history from before this particular Open() is
+no longer exposed.
+
+`OpenLiveTimeshiftStream()` also no longer calls `StopTimeshiftBuffer()`
+before `StartTimeshiftBuffer()`, and `CloseLiveTimeshiftStream()` no longer
+calls it on Stop either -- `StopTimeshiftBuffer()` (the addon-side wrapper
+around the plugin's `stop_buffer` action) has been removed entirely, since
+nothing calls it anymore. Buffer lifecycle is now entirely the plugin's own
+job: `start_buffer` is idempotent (reattach if already running, start fresh
+if not), and the plugin's existing heartbeat-driven idle-timeout reaper
+(`idle_timeout_seconds`, 120s by default) cleans up a buffer once *nothing*
+is fetching from it anymore -- correct regardless of how many viewers there
+were, since every fetch (from any viewer) refreshes the same heartbeat, and
+the reaper only cares whether *any* fetch landed recently, not a count.
+This is the design the plugin's `start_buffer` was always meant to support
+("idempotent specifically to let multiple viewers share one upstream
+connection per channel," per its own original comment) -- this addon's own
+stop-on-Open/stop-on-Close calls were what had been overriding it.
+
+**Trade-off, accepted deliberately**: a genuine single-viewer Stop no longer
+proactively tears the buffer down (previously ~12s via a detached
+`StopTimeshiftBuffer()` call) -- cleanup now waits for the plugin's own
+idle-timeout reaper instead, up to 120s. Chosen over the alternative (some
+form of viewer reference-counting so the addon could tell "am I the last
+one" before deciding to stop) since the addon has no cross-instance/
+cross-device signal of how many viewers exist at all, and the plugin's
+existing heartbeat mechanism already solves exactly this without needing
+one. Separately, and not something this fix can do anything about: joining
+an already-running buffer and rewinding into history from before that join
+is confirmed **not achievable** with Kodi's current PVR API (no `IPosTime`
+hook on `CInputStreamPVRBase`, confirmed earlier in this file) and generic
+ffmpeg MPEG-TS byte-domain seeking -- the trim above is what makes a
+second viewer's join safe *for the first viewer*, not a way to grant the
+second viewer any extra rewind range.
+
+**Confirmed live on Windows after the trim fix**: the same Stop -> wait
+~22s -> reopen -> `Player.Seek {"seconds": -20}` sequence above, repeated
+against the trimmed design, this time landed on `CDVDDemuxFFmpeg::SeekTime
+- seek ended up on time 100` (100ms -- a real, sane, small value) instead of
+the ~26.5h wraparound garbage, with `Player.Time`/`Player.Duration` (via
+`XBMC.GetInfoLabels`) correctly showing a small buffer-relative `00:02`/
+`00:30` right after the seek, `canseek: true`, `speed: 1` throughout, and
+`Player.Time` continuing to progress normally (00:02 -> 00:27 over the next
+10 real seconds) with no stall or EOF in the log afterward.
+
+**Confirmed live across two real, separate devices** (Windows and a Rocky
+Linux laptop, the same two-device setup that originally surfaced this bug),
+exercising the actual scenario rather than a same-instance stand-in:
+Windows opened ESPN (1080p) and played cleanly (`speed: 1`, `Player.Time`
+progressing normally); with Windows still playing, Rocky opened the *same*
+channel -- Rocky started playing cleanly, and Windows's own `kodi.log`
+showed no `ClosePVRStream`, no stall, and `Player.Time` continuing to
+advance in real time throughout (previously, this exact step killed the
+first viewer outright). Windows was then stopped while Rocky kept
+playing -- Rocky's own playback continued unaffected (`speed: 1`,
+`Player.Time` still advancing, no stall/EOF in its log) and a further
+`-20s` seek on Rocky landed correctly with no PTS-wraparound garbage and
+playback continuing afterward (previously, this exact step killed the
+second viewer's replacement buffer). Both halves of the original cascading
+failure are confirmed fixed.
+
+(Getting to this point on the Rocky Linux side also surfaced two purely
+environmental issues, unrelated to this addon's code: a stale relaunch
+script had grabbed display environment variables from `gnome-shell`'s own
+process, which doesn't carry `WAYLAND_DISPLAY` -- fixed by sourcing it from
+a real Wayland client process instead (`pipewire`, in this case) -- and
+Kodi's local PVR cache database (`TV46.db`) had become unable to open
+(`SQLITE_CANTOPEN`), which blocked `PVR.GetChannels` entirely until the
+file was renamed aside and Kodi rebuilt it fresh on next launch. Neither
+is a bug in this addon; noted here only because they blocked testing.)
 
 **Tuning note, not a bug: `segment_seconds` trades burst size for file
 count.** The plugin's buffer is built from *closed* HLS-style segments --
