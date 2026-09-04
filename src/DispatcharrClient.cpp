@@ -896,35 +896,6 @@ bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
   return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error, extraParams);
 }
 
-bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, std::string& error)
-{
-  // Doesn't use CallTimeshiftPluginAction(): that helper requires
-  // http_port/playlist_route in the response, which stop_buffer's own
-  // {"status": "ok"} reply doesn't carry.
-  if (!EnsureAuthenticated(error))
-    return false;
-
-  json body = {
-      {"action", "stop_buffer"},
-      {"params", {{"channel_uuid", channelUuid}}},
-  };
-  json response;
-  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
-    return false;
-  if (!FieldOr(response, "success", false))
-  {
-    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
-    return false;
-  }
-  const json& result = response.contains("result") ? response["result"] : json();
-  if (FieldOr<std::string>(result, "status", "") != "ok")
-  {
-    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
-    return false;
-  }
-  return true;
-}
-
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))
@@ -2313,37 +2284,54 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error)
 
 bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, std::string& error)
 {
-  // Tried preserving segment history across a same-channel Close/reopen
-  // here (so "rewind" could reach further back than the plugin's current
-  // rolling-manifest window) -- confirmed live this doesn't actually help:
-  // Kodi's own ffmpeg demuxer is a brand-new instance on every Open(), with
-  // no PTS index for anything it hasn't itself read yet in *this* session,
-  // regardless of what our own byte-address-space nominally contains.
+  // This addon's own local bookkeeping always starts fresh on Open() --
+  // the merge-by-sequence-number logic in RefreshLiveManifest() below
+  // repopulates it from whatever the plugin's buffer currently holds,
+  // which is the *server-side* buffer's history, not this addon's own.
+  // (See the trim step further down: repopulating from everything the
+  // buffer currently holds is an intermediate state, not the final local
+  // address space this method leaves in place.)
   m_liveTimeshiftStream = LiveTimeshiftStreamState();
 
-  // Stop any buffer already running for this channel before starting a new
-  // one, so every Play gets a genuinely fresh ffmpeg process/segment
-  // sequence rather than reattaching to whatever's been accumulating since
-  // an earlier session (possibly a long time ago). This is what actually
-  // fixes seeking after a Stop/reopen (see docs/TIMESHIFT.md's "Known
-  // limitation" section for the full diagnosis): Kodi's own ffmpeg demuxer
-  // starts a fresh, empty seek index on every OpenLiveStream() regardless
-  // of what this addon's address space contains, so it can only seek
-  // reliably within what *this* demuxer instance has itself read since
-  // opening -- previously that meant seeking after a reopen would silently
-  // fall back to wherever the buffer's own true byte 0 happened to be,
-  // however long ago that was. Starting fresh here makes "byte 0" and "when
-  // this Kodi session's demuxer started reading" the same point again, the
-  // same alignment that already made full-precision seeking work within one
-  // continuous session. Trade-off: a second Kodi client (or profile)
-  // watching the same channel concurrently would have its own buffer torn
-  // out from under it -- the plugin's start_buffer is otherwise idempotent
-  // specifically to let multiple viewers share one upstream connection per
-  // channel; this trades that sharing away for correct per-session seeking,
-  // reasonable for a single-viewer setup. Best-effort: nothing running is
-  // not an error, and StartTimeshiftBuffer() below still works from cold.
-  std::string stopError;
-  StopTimeshiftBuffer(channelUuid, stopError);
+  // Deliberately does NOT stop a buffer already running for this channel
+  // before starting/reattaching -- see docs/TIMESHIFT.md's "Concurrent
+  // viewers" section for the real, live-confirmed bug this used to cause:
+  // a second viewer's Open() killed the first viewer's still-playing
+  // buffer outright, and (via CloseLiveTimeshiftStream()'s own former
+  // symmetric stop-on-close) the first viewer's eventual Close() then
+  // killed the second viewer's fresh replacement too -- a cascading
+  // failure that left *both* viewers broken, not just the first.
+  //
+  // This addon previously stopped-then-restarted the buffer on every
+  // Open() specifically to fix a *different*, also real bug: seeking
+  // after a Stop/reopen of the same channel used to silently fall back to
+  // byte 0 instead of the requested target (see docs/TIMESHIFT.md's
+  // "Fixed: seeking after a Stop/reopen didn't land on target"). Simply
+  // no longer stopping the buffer here was **tried and confirmed live to
+  // reintroduce that exact regression**: reattaching to a buffer that had
+  // kept running (never restarted) since an earlier session, then seeking,
+  // reproduced the identical failure signature (`CDVDDemuxFFmpeg::SeekTime`
+  // landing on a garbage time near the MPEG-TS 33-bit PTS wraparound point)
+  // from a plain -20s relative seek. Kodi's own demuxer genuinely can't
+  // reliably seek backward into buffer content *this* demuxer instance
+  // hasn't itself read forward through this session -- true regardless of
+  // whether that content is part of one continuous, never-restarted
+  // encoder run, which rules out "just don't restart the buffer" as a
+  // complete fix on its own. The trim step below (discarding everything
+  // except a small trailing window before this method returns) is what
+  // actually restores correct seeking while still not touching the
+  // server-side buffer -- see its own comment for the full reasoning and
+  // what this means for the "join a running buffer and rewind into its
+  // pre-join history" feature this was investigated alongside (not
+  // achievable, confirmed by the same test).
+  //
+  // Buffer cleanup when a viewer stops watching is now entirely the
+  // plugin's own job (its existing heartbeat-driven idle-timeout reaper --
+  // see CloseLiveTimeshiftStream()'s own comment) rather than something
+  // Open()/Close() force via an explicit stop -- that reaper already
+  // tolerates any number of concurrent viewers correctly, since it only
+  // cares whether *any* fetch has landed recently, not how many viewers
+  // there are.
 
   std::string unusedPlaylistUrl;
   if (!StartTimeshiftBuffer(channelUuid, unusedPlaylistUrl, error))
@@ -2357,16 +2345,17 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // StartTimeshiftBuffer() returns -- ffmpeg needs to connect to
   // Dispatcharr's live proxy and produce a full first segment
   // (segment_seconds, 6s by default) before there's anything to report.
-  // This wasn't a problem when start_buffer reattached to an
-  // already-running, already-producing buffer; now that every Open() above
-  // forces a genuinely fresh one, failing on the very first check turned a
-  // normal cold start into a hard error -- confirmed live, and retrying
-  // Play right after such a failure made it *worse*: each retry's own
-  // StopTimeshiftBuffer() killed the previous attempt's buffer moments
-  // before it would have finished starting, repeating indefinitely until a
-  // manual stop outside Kodi (not immediately followed by a restart) broke
-  // the cycle. Retry for a real cold start's worth of time instead of
-  // failing on the first check.
+  // Only a genuinely first-ever start of a channel's buffer (no earlier
+  // viewer already has one running) hits this at all now that Open() no
+  // longer force-restarts an existing buffer -- reattaching to one already
+  // producing segments succeeds on this loop's very first attempt, same as
+  // before this addon ever force-restarted anything. Kept from an earlier
+  // version of this addon that *did* force-restart on every Open() (where
+  // every single reopen paid this cold-start cost, and a failed attempt's
+  // own since-removed restart-on-retry made a slow cold start actively
+  // worse by repeatedly killing the previous attempt moments before it
+  // would have finished) -- retry for a real cold start's worth of time
+  // instead of failing on the first check.
   constexpr int kColdStartMaxAttempts = 30;
   constexpr int kColdStartSleepMs = 500;
   bool manifestReady = false;
@@ -2385,13 +2374,53 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     return false;
   }
 
+  // Discard everything except the trailing kLiveEdgeMarginSegments worth of
+  // segments from what the cold-start fetch above just returned, rebasing
+  // the kept ones so the oldest of them becomes local byte 0 -- **confirmed
+  // live** this is necessary even though the buffer above was never
+  // stopped/restarted: reattaching to a channel whose buffer had been
+  // running a while (this addon's own local state spanning everything the
+  // plugin still had, tens of MB/several minutes) and then seeking into the
+  // *older* part of that history reproduced the exact failure this addon's
+  // Stop/reopen seeking fix (elsewhere in this file) was written to
+  // prevent -- `CDVDDemuxFFmpeg::SeekTime` landing on a garbage time near
+  // the MPEG-TS 33-bit PTS wraparound point (~26.5h) instead of anywhere
+  // near the requested target, from a plain -20s relative seek, no
+  // multi-minute rewind involved. Kodi's own demuxer, it turns out, still
+  // can't reliably seek backward into buffer content *this* demuxer
+  // instance hasn't itself read forward through this session, regardless of
+  // whether that content is part of one continuous, never-restarted
+  // encoder run -- continuity alone doesn't fix it, only trimming this
+  // addon's own exposed address space down to what a genuinely fresh
+  // session would have does. See docs/TIMESHIFT.md's "Concurrent viewers"
+  // section for the full account, including why this also answers (in the
+  // negative) whether a viewer can join an already-running buffer and
+  // rewind into history from before they joined.
+  constexpr size_t kLiveEdgeMarginSegments = 3;
+  if (m_liveTimeshiftStream.segments.size() > kLiveEdgeMarginSegments)
+  {
+    size_t dropCount = m_liveTimeshiftStream.segments.size() - kLiveEdgeMarginSegments;
+    int64_t byteBase = m_liveTimeshiftStream.segments[dropCount].byteOffset;
+    int64_t timeBase = m_liveTimeshiftStream.segments[dropCount].timeOffsetMs;
+    m_liveTimeshiftStream.segments.erase(m_liveTimeshiftStream.segments.begin(),
+                                          m_liveTimeshiftStream.segments.begin() + dropCount);
+    for (auto& seg : m_liveTimeshiftStream.segments)
+    {
+      seg.byteOffset -= byteBase;
+      seg.timeOffsetMs -= timeBase;
+    }
+    m_liveTimeshiftStream.totalBytes -= byteBase;
+    m_liveTimeshiftStream.totalDurationMs -= timeBase;
+  }
+
   // Start near the live edge, not the earliest content still known about in
-  // the buffer's address space -- position defaults to 0, which without
-  // this would replay from whatever's oldest every time a channel is
-  // (re)opened, rather than resuming at "now" the way a plain live feed
-  // does. The OSD's rewind range still reaches all the way back to byte 0
-  // via GetStreamTimes()/SeekLiveStream(); this only changes where
-  // playback starts.
+  // the (now-trimmed) address space above -- position defaults to 0, which
+  // without this would replay from the start of that trimmed window every
+  // time a channel is (re)opened, rather than resuming at "now" the way a
+  // plain live feed does. The OSD's rewind range reaches back to this
+  // session's own local byte 0 (the trim above, not the buffer's true
+  // beginning) via GetStreamTimes()/SeekLiveStream(); this only changes
+  // where playback starts.
   //
   // Deliberately a few segments *behind* totalBytes, not exactly at it:
   // ffmpeg only exposes a segment once it's fully closed (segment_seconds
@@ -2408,7 +2437,12 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // service already has. Falls back to the true tail (0 margin) if fewer
   // than that many segments exist yet, e.g. right after a cold
   // StartTimeshiftBuffer() -- nothing to back up from yet in that case.
-  constexpr size_t kLiveEdgeMarginSegments = 3;
+  // (After the trim above, segments.size() here is always <=
+  // kLiveEdgeMarginSegments, so this always lands on the trimmed window's
+  // own start -- kept in this same "few segments behind the tail" shape
+  // rather than simplified to a flat 0, since a genuinely cold buffer with
+  // fewer than kLiveEdgeMarginSegments segments still needs the tail
+  // fallback below.)
   size_t segmentCount = m_liveTimeshiftStream.segments.size();
   size_t marginIndex =
       segmentCount > kLiveEdgeMarginSegments ? segmentCount - kLiveEdgeMarginSegments : 0;
@@ -2742,26 +2776,32 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamDurationMs()
 
 void DispatcharrClient::CloseLiveTimeshiftStream()
 {
-  // Stop the server-side buffer here too, not only at the start of the
-  // next OpenLiveTimeshiftStream() -- confirmed live that without this,
-  // Dispatcharr's own stream/client state for the channel (and the
-  // underlying ffmpeg process) stuck around until either the user pressed
-  // Play again or the plugin's own idle-timeout reaper noticed (2 minutes
-  // by default) -- neither is "as close to Stop as possible". Detached: a
-  // network round trip (plus the plugin's own up-to-5s SIGTERM-then-
-  // SIGKILL grace period for the ffmpeg process) has no business blocking
-  // Kodi's calling thread just to tear this down. Safe to race against a
-  // near-immediate reopen's own StopTimeshiftBuffer() call for the same
-  // channel -- the plugin's stop_buffer action is idempotent and its file
-  // cleanup already tolerates "already gone" (confirmed in plugin.py).
-  if (m_liveTimeshiftStream.open && !m_liveTimeshiftStream.channelUuid.empty())
-  {
-    std::string channelUuid = m_liveTimeshiftStream.channelUuid;
-    std::thread([this, channelUuid]() {
-      std::string stopError;
-      StopTimeshiftBuffer(channelUuid, stopError);
-    }).detach();
-  }
+  // Deliberately does NOT stop the server-side buffer here anymore. It
+  // used to (a detached-thread StopTimeshiftBuffer() call, so Dispatcharr's
+  // stream/client state and the underlying ffmpeg process didn't linger
+  // until the plugin's own idle-timeout reaper noticed, 2 minutes by
+  // default) -- but that had a real, live-confirmed bug with more than one
+  // concurrent viewer on the same channel: this Close() has no way to know
+  // whether *another* viewer is still actively reading the same buffer, so
+  // it could (and did) kill a second viewer's playback that had only just
+  // started, moments after this one's own Open() had already killed and
+  // replaced the first viewer's original buffer the same way -- both
+  // viewers ending up broken in sequence, not just one. See
+  // docs/TIMESHIFT.md's "Concurrent viewers" section.
+  //
+  // Cleanup on a genuine Stop (nobody left watching) is now entirely the
+  // plugin's own existing heartbeat-driven idle-timeout reaper's job --
+  // every fetch this addon makes while a buffer is being read already acts
+  // as that buffer's heartbeat (see plugin.py), so a buffer with no viewers
+  // left simply stops getting heartbeats and the reaper cleans it up on its
+  // own, correctly, regardless of how many viewers there were. Trade-off:
+  // cleanup after the *last* viewer's Stop is now slower (up to
+  // idle_timeout_seconds, 120s by default) than the ~12s this addon's own
+  // proactive stop used to achieve -- accepted in exchange for not
+  // incorrectly tearing down a buffer other viewers still need. Not yet
+  // confirmed live -- needs testing that a genuine single-viewer Stop still
+  // actually clears Dispatcharr's own buffer state within that window (see
+  // docs/TIMESHIFT.md).
 
   if (m_liveTimeshiftStream.curl)
     curl_easy_cleanup(static_cast<CURL*>(m_liveTimeshiftStream.curl));
