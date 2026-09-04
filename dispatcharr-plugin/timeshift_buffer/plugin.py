@@ -1237,9 +1237,23 @@ class Plugin:
                 "message": "channel_uuid is required (pass it as a param, or paste one into the test_channel_uuid setting for manual testing)",
             }
 
+        # Registers this caller as one of the buffer's viewers (a plain
+        # list, not a set -- state is round-tripped through Redis as JSON,
+        # which has no native set type). Optional and best-effort: a caller
+        # that doesn't pass one (an older addon version, or a manual click
+        # of this plugin's own "Start Test Buffer" button, which calls
+        # run() with empty params) just doesn't participate in reference
+        # counting -- see _stop_buffer()'s own comment for exactly what
+        # that degrades to.
+        viewer_id = params.get("viewer_id")
+
         existing = _get_buffer_state(channel_uuid)
         if existing:
             existing["last_heartbeat"] = time.time()
+            if viewer_id:
+                viewers = existing.setdefault("viewers", [])
+                if viewer_id not in viewers:
+                    viewers.append(viewer_id)
             _set_buffer_state(channel_uuid, existing)
             return {
                 "status": "ok",
@@ -1263,6 +1277,7 @@ class Plugin:
             logger.exception("timeshift_buffer: failed to start buffer for %s", channel_uuid)
             return {"status": "error", "message": str(exc)}
 
+        state["viewers"] = [viewer_id] if viewer_id else []
         _set_buffer_state(channel_uuid, state)
         return {
             "status": "ok",
@@ -1279,6 +1294,34 @@ class Plugin:
         state = _get_buffer_state(channel_uuid)
         if not state:
             return {"status": "ok", "message": "no buffer was running"}
+
+        # Reference-counted stop, not unconditional -- confirmed live this
+        # matters: an earlier version of this addon called stop_buffer
+        # unconditionally on every Close(), which killed a second viewer's
+        # buffer the moment a first viewer also stopped watching (see
+        # docs/TIMESHIFT.md's "Concurrent viewers" section in the addon
+        # repo). A caller identifies itself via viewer_id (registered by
+        # start_buffer above); this only removes *that* viewer from the
+        # buffer's own tracked list; the underlying ffmpeg process is only
+        # actually stopped once the list is empty. A caller with no
+        # viewer_id (an older addon version, or this plugin's own manual
+        # "Stop Test Buffer" button) can't be tracked at all, so it always
+        # falls through to the unconditional stop below -- the same
+        # behavior this action has always had for such callers, not a
+        # regression, since there was never a way to reference-count them.
+        viewers = state.get("viewers", [])
+        viewer_id = params.get("viewer_id")
+        if viewer_id:
+            if viewer_id in viewers:
+                viewers.remove(viewer_id)
+            if viewers:
+                state["viewers"] = viewers
+                _set_buffer_state(channel_uuid, state)
+                return {
+                    "status": "ok",
+                    "message": "viewer removed; buffer still active for other viewers",
+                    "remaining_viewers": len(viewers),
+                }
 
         _stop_ffmpeg(state, logger)
         _remove_channel_files(state, logger)
@@ -1368,6 +1411,11 @@ class Plugin:
                 "idle_seconds": int(now - state.get("last_heartbeat", now)),
                 "http_port": state.get("http_port"),
                 "playlist_route": state.get("playlist_route"),
+                # Reference-counted viewers (see _start_buffer()/_stop_buffer()'s
+                # own comments) -- diagnostic only, not itself load-bearing for
+                # cleanup: a caller with no viewer_id is simply never counted
+                # here even while it's genuinely watching.
+                "viewers": len(state.get("viewers", [])),
             })
         return {"status": "ok", "buffers": buffers}
 

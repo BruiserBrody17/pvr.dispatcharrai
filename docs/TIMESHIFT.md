@@ -878,30 +878,17 @@ has; only the pre-existing history from before this particular Open() is
 no longer exposed.
 
 `OpenLiveTimeshiftStream()` also no longer calls `StopTimeshiftBuffer()`
-before `StartTimeshiftBuffer()`, and `CloseLiveTimeshiftStream()` no longer
-calls it on Stop either -- `StopTimeshiftBuffer()` (the addon-side wrapper
-around the plugin's `stop_buffer` action) has been removed entirely, since
-nothing calls it anymore. Buffer lifecycle is now entirely the plugin's own
-job: `start_buffer` is idempotent (reattach if already running, start fresh
-if not), and the plugin's existing heartbeat-driven idle-timeout reaper
-(`idle_timeout_seconds`, 120s by default) cleans up a buffer once *nothing*
-is fetching from it anymore -- correct regardless of how many viewers there
-were, since every fetch (from any viewer) refreshes the same heartbeat, and
-the reaper only cares whether *any* fetch landed recently, not a count.
-This is the design the plugin's `start_buffer` was always meant to support
-("idempotent specifically to let multiple viewers share one upstream
-connection per channel," per its own original comment) -- this addon's own
-stop-on-Open/stop-on-Close calls were what had been overriding it.
+before `StartTimeshiftBuffer()` -- `start_buffer` is idempotent (reattach
+if already running, start fresh if not), matching the design it was always
+meant to support ("idempotent specifically to let multiple viewers share
+one upstream connection per channel," per its own original comment) --
+this addon's own stop-on-Open call was what had been overriding it.
 
-**Trade-off, accepted deliberately**: a genuine single-viewer Stop no longer
-proactively tears the buffer down (previously ~12s via a detached
-`StopTimeshiftBuffer()` call) -- cleanup now waits for the plugin's own
-idle-timeout reaper instead, up to 120s. Chosen over the alternative (some
-form of viewer reference-counting so the addon could tell "am I the last
-one" before deciding to stop) since the addon has no cross-instance/
-cross-device signal of how many viewers exist at all, and the plugin's
-existing heartbeat mechanism already solves exactly this without needing
-one. Separately, and not something this fix can do anything about: joining
+**`CloseLiveTimeshiftStream()` no longer calling `StopTimeshiftBuffer()` at
+all, relying purely on the plugin's heartbeat-driven idle-timeout reaper
+for all cleanup, is itself superseded -- see "Provider concurrent-stream
+limits" further down** for a real bug that design caused and the viewer
+reference-counting fix that replaced it. Kept here for the history: joining
 an already-running buffer and rewinding into history from before that join
 is confirmed **not achievable** with Kodi's current PVR API (no `IPosTime`
 hook on `CInputStreamPVRBase`, confirmed earlier in this file) and generic
@@ -944,6 +931,167 @@ Kodi's local PVR cache database (`TV46.db`) had become unable to open
 (`SQLITE_CANTOPEN`), which blocked `PVR.GetChannels` entirely until the
 file was renamed aside and Kodi rebuilt it fresh on next launch. Neither
 is a bug in this addon; noted here only because they blocked testing.)
+
+**Not a bug, and expected: Dispatcharr's own Stats page only shows one
+active client for a channel with several concurrent Kodi viewers.**
+Confirmed real, via a genuine three-way test (ESPN 1080p played
+simultaneously on Windows, macOS, and Rocky Linux, all with clean
+playback) -- Dispatcharr's Stats page showed only the first (Windows)
+device as active; macOS and Rocky Linux never appeared. Root cause is the
+same shared-buffer design this whole section is about: a later viewer's
+`start_buffer` call finds a buffer already running and just refreshes its
+heartbeat (`plugin.py`'s `_start_buffer()`, the `existing` early-return
+branch) -- it never re-invokes `_start_ffmpeg()`, which is the only place
+`_stream_attribution_headers()` (the `username`/`client_ip` passed to
+Dispatcharr's own live proxy) is actually applied. So there is only ever
+one real upstream connection to Dispatcharr per channel no matter how many
+Kodi viewers are sharing it, permanently attributed to whichever viewer's
+Open() happened to create the buffer -- Dispatcharr's Stats page reflects
+that one real connection, not the plugin's own local HTTP server's
+separate, unrelated set of viewers reading segment files from it. Not
+something to fix: re-attributing on every reattach would need the plugin
+to track and periodically refresh a *set* of attributions per buffer
+rather than one fixed pair, adding real complexity for a page that's
+diagnostic/informational only -- nothing about playback, timeshift
+correctness, or this addon's own behavior depends on Dispatcharr's Stats
+page reflecting every concurrent viewer.
+
+## Provider concurrent-stream limits: relying on the idle-timeout reaper alone was a real bug
+
+The idle-timeout-reaper-only cleanup design a few sections up (no explicit
+stop on Close, buffer torn down only once its heartbeat goes stale) traded
+away *fast* cleanup deliberately (see its own "Trade-off" paragraph) --
+but real use surfaced that this was a genuine bug for anyone whose
+upstream provider caps concurrent streams, not just a slower version of
+the same behavior. **Confirmed real**: with a provider limited to 3
+concurrent streams, 2 already in use by in-progress recordings, and the
+3rd by a live channel being watched -- stopping that live channel, then
+immediately switching to a *different* channel, played nothing at all.
+Dispatcharr's own status page kept showing the *original* channel's
+buffer as the active 3rd stream (accurately -- it genuinely hadn't been
+torn down yet, unlike the earlier, unrelated "Stats page shows a stale
+client" question above, which really was just attribution/UI, not a
+still-running buffer), so there was no free slot left for the new
+channel to start with, and it failed outright. Waiting out the idle
+timeout would eventually have freed it, but "de facto only one live
+channel switch every 2 minutes" isn't a real fix for a provider-limited
+account.
+
+**The fix**: the plugin now reference-counts viewers per buffer instead of
+relying solely on the heartbeat idle-timeout. `StartTimeshiftBuffer()` now
+sends a `viewer_id` -- a random per-`Open()`-session token generated by
+`OpenLiveTimeshiftStream()` (`LiveTimeshiftStreamState::viewerId`), unique
+enough to not collide between concurrent viewers of the same channel, not
+meant to be anything more -- which the plugin's `start_buffer` action adds
+to a `viewers` list on the buffer's own state (a plain JSON list, not a
+set, since state round-trips through Redis as JSON). `StopTimeshiftBuffer()`
+is reintroduced (removed briefly by the previous fix once nothing called
+it) and now called from `CloseLiveTimeshiftStream()` again, on every
+Close(), passing that same `viewer_id` -- but its plugin-side `stop_buffer`
+action no longer stops anything unconditionally: it removes just that one
+`viewer_id` from the list, and only proceeds to actually stop the
+underlying ffmpeg process (and delete the buffer state) once the list is
+empty. A caller with no `viewer_id` at all (an older, un-upgraded addon
+build, or a manual click of the plugin's own "Stop Test Buffer" button,
+which calls `run()` with empty params) can't be tracked, so it always
+falls through to the unconditional stop -- the same behavior `stop_buffer`
+has always had for such callers, not a regression, since there was never
+a way to reference-count them. The heartbeat idle-timeout reaper is
+unchanged and still runs as a backstop, for a viewer that disappears
+without cleanly calling Close at all (a crash, a network drop, force-quit).
+
+This directly restores what the very first version of this addon's
+concurrent-viewer handling got right (fast, ~12s cleanup) while keeping
+what the trim-based seeking fix and the earlier reaper-only design each
+got right in turn (no viewer's buffer torn out from under it by another
+viewer's Open() or Close()) -- the three together are the complete,
+correct design, not competing alternatives.
+
+**Confirmed live**, reproducing the actual two-device scenario end to end,
+not just the mechanism in isolation: Windows opened ESPN (1080p);
+`list_buffers` showed `"viewers": 1`. Rocky Linux opened the same channel
+while Windows kept playing; `list_buffers` showed `"viewers": 2`, both
+devices still playing cleanly. Windows stopped -- Rocky's own playback
+was completely unaffected (`speed: 1`, no stall) and `list_buffers` showed
+`"viewers": 1`, buffer still running, *not* torn down. Rocky then stopped
+too -- `list_buffers` returned `"buffers": []` within about 5-13 seconds
+(two separate single-viewer stop/reap timings measured this way during
+testing), nowhere near the old 120s idle-timeout wait. A follow-up Windows
+reopen of the same channel afterward still played cleanly, confirming
+nothing about ordinary single-viewer playback regressed.
+
+## The reference-counted stop above still had a race -- switching channels could fail outright
+
+The reference-counting fix just above was itself detached (a background
+thread, matching how `CloseLiveTimeshiftStream()` had called
+`StopTimeshiftBuffer()` before reference counting ever existed) -- real use
+surfaced that this reintroduced a *different* provider-concurrent-stream-limit
+failure, not fixed by reference counting at all. **Confirmed live**: with a
+provider limited to 3 concurrent streams, 2 already used by in-progress
+recordings, and the 3rd by NHL Network being watched live -- switching
+directly to MLB Network (no explicit Stop in between, just picking a
+different channel, which is exactly what "watch a live channel, then start
+watching a different one" is from Kodi's own PVR API's perspective: a
+`CloseLiveStream()`/`ClosePVRStream()` for the old channel immediately
+followed by `OpenLiveStream()`/`OpenPVRStream()` for the new one) played
+nothing at all and Kodi returned to the main menu outright. NHL Network's
+own stream *did* visibly go down in Dispatcharr's status a few seconds
+later -- correctly torn down by the reference-counting fix -- but only
+*after* MLB Network had already failed to start, not before.
+
+Root cause: this addon's own `CloseLiveTimeshiftStream()` handed the actual
+`StopTimeshiftBuffer()` network call off to a detached background thread
+and returned immediately, so Kodi's own next call --
+`OpenLiveTimeshiftStream()` for MLB Network, made essentially back to back
+with the Close() that just returned -- reached the plugin's `start_buffer`
+and tried to open a *4th* upstream connection to the provider while NHL
+Network's connection (2 recordings + NHL Network = the provider's real
+limit of 3) hadn't actually been torn down yet. The provider naturally
+refused it, `start_buffer` failed, and `OpenLiveTimeshiftStream()` had no
+retry budget for *that* kind of failure (its existing cold-start retry
+loop only covers `RefreshLiveManifest()` after a *successful*
+`StartTimeshiftBuffer()`, for the ordinary "buffer just started, give
+ffmpeg a moment to produce a first segment" case -- a hard failure to even
+start the buffer at all was never something it retried).
+
+**The fix**: `CloseLiveTimeshiftStream()`'s `StopTimeshiftBuffer()` call is
+no longer detached -- it's a plain, synchronous call again, blocking
+Kodi's own calling thread until it returns. This is safe to do (not a
+regression to the very first, unconditional-stop design's own blocking
+call) specifically *because* of the reference-counting fix above: when
+other viewers remain, the call returns almost immediately (just a Redis
+write to deregister one viewer id, no ffmpeg process to wait on); it only
+takes real time when this genuinely was the last viewer, which is exactly
+the case where the next operation (a different channel needing a free
+provider slot) actually depends on the teardown having completed. The
+plugin's own `_stop_ffmpeg()` (`plugin.py`) already blocks until the
+ffmpeg process is confirmed dead (SIGTERM, poll every 200ms, escalate to
+SIGKILL after a 5s deadline) before its HTTP response returns, so a
+synchronous call here means Kodi's own sequential
+`ClosePVRStream()`-then-`OpenPVRStream()` calling convention is what
+actually guarantees the old channel's provider slot is free before the
+new channel's own `Open()` ever asks for one -- no additional
+synchronization needed on this addon's side beyond just not detaching the
+call. Kodi's calling thread already blocks synchronously on comparable
+network I/O elsewhere in this same class (every live-timeshift read/seek/
+manifest call already does), so this isn't a new category of blocking for
+it, just this one call site catching up to that existing pattern.
+
+**Confirmed live**: the exact failing sequence above, repeated against the
+synchronous fix -- opened NHL Network, confirmed one registered viewer via
+`list_buffers`, then switched directly to MLB Network. `kodi.log` showed
+`ClosePVRStream` for NHL Network's own stream path, then `OpenPVRStream`
+for MLB Network's **2.3 seconds later** on the same log thread -- direct
+evidence `CloseLiveTimeshiftStream()` was genuinely blocking on the
+teardown, not returning immediately. MLB Network started and played
+cleanly (`speed: 1`), and `list_buffers` immediately afterward showed
+exactly one buffer -- MLB Network's own, with one registered viewer --
+NHL Network's buffer gone entirely, no leftover state. (This particular
+run didn't have 2 real recordings competing for provider slots alongside
+it, so it directly confirms the race itself is closed -- the ordering and
+timing that caused the original failure -- rather than re-proving the
+provider-limit scenario end to end a second time; the mechanism is the
+same either way.)
 
 **Tuning note, not a bug: `segment_seconds` trades burst size for file
 count.** The plugin's buffer is built from *closed* HLS-style segments --
