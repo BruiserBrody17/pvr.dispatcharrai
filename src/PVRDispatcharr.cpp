@@ -31,7 +31,8 @@ dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
 }
 
 PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
-    : CInstancePVRClient(instance), m_client(LoadConfigFromSettings())
+    : CInstancePVRClient(instance), m_lastAppliedConfig(LoadConfigFromSettings()),
+      m_client(LoadConfigFromSettings())
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
@@ -199,7 +200,16 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
     // constructor/destructor lifecycle, real added complexity for a
     // setting that's already documented experimental. Restart picks it up
     // the same way every setting used to work before this method existed.
-    return ADDON_STATUS_NEED_RESTART;
+    //
+    // Guarded against Kodi's spurious-renotification quirk the same way
+    // as the connection settings just below -- see m_lastAppliedConfig's
+    // own comment for why this guard exists at all (confirmed live, not
+    // theoretical: without it, saving *any* setting restarted the
+    // instance every time).
+    bool value = settingValue.GetBoolean();
+    bool changed = value != m_enableRealtimeUpdates;
+    m_enableRealtimeUpdates = value;
+    return changed ? ADDON_STATUS_NEED_RESTART : ADDON_STATUS_OK;
   }
   else if (settingName == "host" || settingName == "port" || settingName == "use_https" ||
            settingName == "username" || settingName == "password" ||
@@ -209,7 +219,62 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
     // LoadConfigFromSettings()) -- changing the connection this addon
     // talks to, or re-authenticating against it, isn't something to
     // attempt on a live instance.
-    return ADDON_STATUS_NEED_RESTART;
+    //
+    // See m_lastAppliedConfig's own comment: compared against that cached
+    // snapshot rather than unconditionally restarting on every
+    // notification, since Kodi can (and, confirmed live, reliably does)
+    // deliver a same-named, same-value notification here that has nothing
+    // to do with this setting actually changing.
+    bool changed = false;
+    if (settingName == "host")
+    {
+      std::string value = settingValue.GetString();
+      changed = value != m_lastAppliedConfig.host;
+      m_lastAppliedConfig.host = std::move(value);
+    }
+    else if (settingName == "port")
+    {
+      int value = settingValue.GetInt();
+      changed = value != m_lastAppliedConfig.port;
+      m_lastAppliedConfig.port = value;
+    }
+    else if (settingName == "use_https")
+    {
+      bool value = settingValue.GetBoolean();
+      changed = value != m_lastAppliedConfig.useHttps;
+      m_lastAppliedConfig.useHttps = value;
+    }
+    else if (settingName == "username")
+    {
+      std::string value = settingValue.GetString();
+      changed = value != m_lastAppliedConfig.username;
+      m_lastAppliedConfig.username = std::move(value);
+    }
+    else if (settingName == "password")
+    {
+      std::string value = settingValue.GetString();
+      changed = value != m_lastAppliedConfig.password;
+      m_lastAppliedConfig.password = std::move(value);
+    }
+    else if (settingName == "verify_ssl")
+    {
+      bool value = settingValue.GetBoolean();
+      changed = value != m_lastAppliedConfig.verifySsl;
+      m_lastAppliedConfig.verifySsl = value;
+    }
+    else if (settingName == "timeout")
+    {
+      int value = settingValue.GetInt();
+      changed = value != m_lastAppliedConfig.timeoutSeconds;
+      m_lastAppliedConfig.timeoutSeconds = value;
+    }
+    else if (settingName == "api_key")
+    {
+      std::string value = settingValue.GetString();
+      changed = value != m_lastAppliedConfig.apiKey;
+      m_lastAppliedConfig.apiKey = std::move(value);
+    }
+    return changed ? ADDON_STATUS_NEED_RESTART : ADDON_STATUS_OK;
   }
   return ADDON_STATUS_OK;
 }
@@ -225,10 +290,68 @@ void PVRDispatcharr::StartRecordingRefreshThread()
           [this]() { return m_stopRecordingRefreshThread.load(); });
       if (stopped)
         break;
+      RenewRecurringRules();
       TriggerRecordingUpdate();
       TriggerTimerUpdate();
     }
   });
+}
+
+void PVRDispatcharr::RenewRecurringRules()
+{
+  std::vector<RecurringRule> rules;
+  std::string error;
+  if (!m_client.GetRecurringRules(rules, error))
+    return;
+
+  std::vector<Recording> recordings;
+  bool haveRecordings = m_client.GetRecordings(recordings, error);
+
+  time_t now = time(nullptr);
+  for (const auto& rule : rules)
+  {
+    if (!rule.enabled)
+      continue; // nothing materializes for a disabled rule anyway
+    time_t daysLeft = (rule.endDate - now) / 86400;
+    if (daysLeft >= kRecurringRuleWindowDays / 2)
+      continue; // still comfortably inside the window
+
+    // Skip a rule with an occurrence currently recording or about to
+    // start soon -- see kRecurringRuleRenewalSafetyMarginSeconds's own
+    // comment. If GetRecordings() itself failed, err toward skipping
+    // rather than renewing blind.
+    bool hasActiveOrImminentOccurrence = !haveRecordings;
+    if (haveRecordings)
+    {
+      for (const auto& rec : recordings)
+      {
+        if (rec.recurringRuleId != rule.id)
+          continue;
+        if (rec.isInProgress ||
+            (rec.isUpcoming &&
+             rec.startTime - now < kRecurringRuleRenewalSafetyMarginSeconds))
+        {
+          hasActiveOrImminentOccurrence = true;
+          break;
+        }
+      }
+    }
+    if (hasActiveOrImminentOccurrence)
+      continue; // try again next cycle
+
+    time_t newEndDate = now + static_cast<time_t>(kRecurringRuleWindowDays) * 86400;
+    std::string extendError;
+    if (!m_client.ExtendRecurringRuleEndDate(rule.id, newEndDate, extendError))
+    {
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to renew recurring rule %d: %s",
+               rule.id, extendError.c_str());
+    }
+    else if (m_debugLogging)
+    {
+      kodi::Log(ADDON_LOG_DEBUG,
+               "pvr.dispatcharrai: renewed recurring rule %d end_date forward", rule.id);
+    }
+  }
 }
 
 void PVRDispatcharr::StartChannelEpgRefreshThread()
@@ -1619,8 +1742,7 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     }
     else
     {
-      time_t endDate =
-          startDate + static_cast<time_t>(kRecurringRuleDefaultYears) * 365 * 86400;
+      time_t endDate = startDate + static_cast<time_t>(kRecurringRuleWindowDays) * 86400;
       ok = m_client.CreateRecurringRule(static_cast<int>(timer.GetClientChannelUid()),
                                         timer.GetTitle(), daysOfWeek, startSeconds, endSeconds,
                                         startDate, endDate, error);

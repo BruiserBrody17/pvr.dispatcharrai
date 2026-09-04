@@ -149,6 +149,7 @@ import mimetypes
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -388,6 +389,44 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class _BufferHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with SO_REUSEPORT set before bind.
+
+    _http_server/_http_server_thread/_http_server_storage_path below are
+    plain module-level globals -- fine for state genuinely local to one
+    process, but Dispatcharr runs multiple WSGI worker processes (this is
+    exactly why buffer state itself lives in Redis instead, see this
+    file's own top-of-module comment), so each worker has its own
+    separate copy of these globals. Without SO_REUSEPORT, only the first
+    worker process ever asked to run a plugin action successfully binds
+    this port; every other worker's own first attempt fails with "Address
+    already in use" -- confirmed live, not theoretical: this is the exact
+    error a real instance logged, repeatedly, during ordinary use. Worse
+    than just log spam: if the one worker that *did* bind successfully
+    later dies or gets recycled (routine for a WSGI server under normal
+    operation), port 9192 goes completely unserved until some other
+    worker happens to retry and win the now-open race -- and confirmed
+    live that this window lines up with a real pvr.dispatcharrai
+    live-timeshift stall (its HTTP reads against this server fail outright
+    for as long as nothing is listening).
+
+    SO_REUSEPORT lets every worker process bind its own socket on the same
+    port at once, with the kernel load-balancing incoming connections
+    across all of them -- safe specifically because every worker's
+    listener serves identical content (the same shared storage_path files
+    on disk), unlike the buffer state itself (needs one true, coordinated
+    value -- Redis) or the reaper thread (must not run redundantly in
+    every worker -- its own Redis leader election below). There's no
+    "wrong" worker to answer a GET here, so there's nothing to coordinate:
+    any worker's listener dying just means the others keep serving,
+    without a gap, and a freshly-spawned replacement worker binds
+    successfully on its own first attempt too."""
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        super().server_bind()
+
+
 def _ensure_http_server_running(storage_path: str, port: int, logger):
     global _http_server, _http_server_thread, _http_server_storage_path
 
@@ -398,7 +437,7 @@ def _ensure_http_server_running(storage_path: str, port: int, logger):
         _stop_http_server(logger)
 
     try:
-        server = ThreadingHTTPServer(("0.0.0.0", port), _BufferRequestHandler)  # noqa: S104 -- must be reachable from outside the container by design
+        server = _BufferHTTPServer(("0.0.0.0", port), _BufferRequestHandler)  # noqa: S104 -- must be reachable from outside the container by design
     except OSError as exc:
         logger.error("timeshift_buffer: couldn't bind http server on port %d: %s", port, exc)
         return
