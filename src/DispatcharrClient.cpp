@@ -1388,6 +1388,17 @@ bool DispatcharrClient::DeleteRecurringRule(int ruleId, std::string& error)
                  json(), response, error);
 }
 
+bool DispatcharrClient::ExtendRecurringRuleEndDate(int ruleId, time_t newEndDate,
+                                                   std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json body = {{"end_date", DateStringFromTime(newEndDate)}};
+  json response;
+  return Request("PATCH", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", body,
+                 response, error);
+}
+
 bool DispatcharrClient::FindDvrSettingsRow(int& idOut, json& valueOut, std::string& error)
 {
   if (!EnsureAuthenticated(error))
@@ -2461,17 +2472,60 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
         !sameAsLastShortGiveUp && m_liveTimeshiftStream.lastSeekTime.time_since_epoch().count() != 0 &&
         std::chrono::steady_clock::now() - m_liveTimeshiftStream.lastSeekTime < kSeekProbeWindow;
 
-    int64_t lastSegmentDurationMs =
-        m_liveTimeshiftStream.segments.empty()
-            ? 6000
-            : m_liveTimeshiftStream.totalDurationMs -
-                  m_liveTimeshiftStream.segments.back().timeOffsetMs;
-    if (lastSegmentDurationMs <= 0)
-      lastSegmentDurationMs = 6000;
+    // Averaged over the last few segments, not just the single most recent
+    // one: confirmed live that a lone segment's own duration is too noisy
+    // a sample to size a retry budget off of. ffmpeg's segment cutter
+    // targets segment_seconds but isn't exact (it cuts at the next
+    // keyframe at/after the target, so real durations vary run to run) --
+    // a real instance produced one segment just 151ms long against a 2s
+    // target. With the single-segment approach that collapsed this budget
+    // to 2 attempts / 0.5s, nowhere near enough margin: it gave up for
+    // real, repeatedly, until ffmpeg's own demuxer read that as genuine
+    // end-of-stream and closed playback outright -- confirmed live, not
+    // theoretical (VideoPlayer: eof, waiting for queues to empty,
+    // immediately followed by Kodi kicking back to the main menu).
+    // Averaging the last few segments smooths out exactly this kind of
+    // one-off outlier while still adapting to whatever segment_seconds is
+    // actually configured.
+    constexpr size_t kSegmentDurationSampleCount = 5;
+    int64_t avgSegmentDurationMs = 6000;
+    {
+      const auto& segs = m_liveTimeshiftStream.segments;
+      size_t sampleCount = std::min(kSegmentDurationSampleCount, segs.size());
+      if (sampleCount > 0)
+      {
+        int64_t sumMs = m_liveTimeshiftStream.totalDurationMs -
+                         segs[segs.size() - sampleCount].timeOffsetMs;
+        if (sumMs > 0)
+          avgSegmentDurationMs = sumMs / static_cast<int64_t>(sampleCount);
+      }
+    }
+    // Defense in depth on top of the averaging above: never let a budget
+    // this consequential (getting it wrong ends live playback outright,
+    // not just a slower catch-up) shrink below a sane floor, regardless of
+    // what the segments so far report -- covers a fresh buffer's first few,
+    // still-warming-up segments too, not just an established stream's rare
+    // outlier.
+    constexpr int64_t kMinSegmentDurationMs = 1500;
+    int64_t segmentDurationEstimateMs = std::max(avgSegmentDurationMs, kMinSegmentDurationMs);
 
-    int catchUpAttempts = likelySeekProbe
-                               ? 1
-                               : static_cast<int>((lastSegmentDurationMs * 3 / 2) / kCatchUpSleepMs) + 1;
+    // 3x, not the 1.5x this originally used: confirmed live against a real
+    // instance that 1.5x runs far thinner than intended in practice --
+    // ordinary, non-error catch-up cycles were routinely using 60-95% of
+    // that budget just to catch up under normal jitter (network latency to
+    // the plugin's server, its own manifest-refresh request time eating
+    // into the sleep-based budget, real variance in when the server
+    // actually finishes a segment), not just in a genuine outage. That
+    // left too little real margin before "gave up" -- confirmed live to
+    // fully exhaust the 1.5x budget and report a genuine stalled read to
+    // Kodi. A separate server-side bug (see the timeshift_buffer plugin's
+    // own history) was the dominant cause of the *worst*, multi-second
+    // stalls, but this margin was measurably too tight even independent of
+    // that.
+    int catchUpAttempts =
+        likelySeekProbe
+            ? 1
+            : static_cast<int>((segmentDurationEstimateMs * 3) / kCatchUpSleepMs) + 1;
 
     auto catchUpStart = std::chrono::steady_clock::now();
     int attemptsUsed = 0;
@@ -2499,10 +2553,10 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
         std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharrai: ReadLiveTimeshiftStream: catch-up-to-tail loop used %d/%d "
-              "attempts, %.3fs (budget %.1fs off last segment's %lldms), position=%lld "
+              "attempts, %.3fs (budget %.1fs off ~%lldms/segment estimate), position=%lld "
               "totalBytes=%lld -> %s",
               attemptsUsed, catchUpAttempts, elapsedSec, catchUpAttempts * kCatchUpSleepMs / 1000.0,
-              static_cast<long long>(lastSegmentDurationMs),
+              static_cast<long long>(segmentDurationEstimateMs),
               static_cast<long long>(m_liveTimeshiftStream.position),
               static_cast<long long>(m_liveTimeshiftStream.totalBytes),
               caughtUp ? "caught up" : "gave up");
@@ -2634,10 +2688,27 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
     return -1;
   }
   // Clamp forward seeks to the known tail -- there's nothing to seek ahead
-  // of yet for a genuinely live buffer.
-  bool clampedToTail = newPos > m_liveTimeshiftStream.totalBytes;
+  // of yet for a genuinely live buffer. Deliberately backed off by roughly
+  // one segment's worth of bytes rather than landing exactly on the
+  // absolute tail: confirmed live that landing precisely at totalBytes
+  // leaves zero read-ahead margin, so playback resumes, immediately
+  // re-catches-up to the (still-)tail within a couple of seconds of real
+  // playback, and has to wait through a full segment-production cycle a
+  // second time -- long enough (up to one whole segment interval, ~5-7.5s
+  // in this instance) to exceed Kodi's own stall tolerance and trigger a
+  // visible rebuffer right after what looked like a completed seek. One
+  // segment of backoff means at least that much is already available to
+  // play immediately, the same "live edge minus a little" margin real-world
+  // live players (HLS, DASH) keep for exactly this reason -- imperceptibly
+  // behind true live, but enough to absorb normal segment-to-segment
+  // timing jitter instead of stuttering on essentially every seek-to-live.
+  int64_t liveBackoffBytes = m_liveTimeshiftStream.segments.empty()
+                                 ? 0
+                                 : m_liveTimeshiftStream.segments.back().byteSize;
+  int64_t tailTarget = std::max<int64_t>(0, m_liveTimeshiftStream.totalBytes - liveBackoffBytes);
+  bool clampedToTail = newPos > tailTarget;
   if (clampedToTail)
-    newPos = m_liveTimeshiftStream.totalBytes;
+    newPos = tailTarget;
 
   kodi::Log(ADDON_LOG_DEBUG,
             "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "

@@ -433,6 +433,27 @@ public:
                            bool enabled,
                            std::string& error);
   bool DeleteRecurringRule(int ruleId, std::string& error);
+  // Extends an existing recurring rule's end_date forward -- a partial
+  // PATCH sending only that one field, the same partial-update-safe
+  // pattern UpdateRecurringRule() relies on. Called periodically by
+  // PVRDispatcharr's background renewal (see its own comment) to keep a
+  // "permanent" recurring rule's materialized-occurrence window topped up,
+  // now that CreateRecurringRule() itself sets a much shorter initial
+  // end_date than it originally did -- confirmed live that Dispatcharr
+  // eagerly materializes every occurrence between start_date and end_date
+  // synchronously on create/update, not a lazy rolling window as this
+  // addon's own docs used to (incorrectly) assume, so a single far-future
+  // end_date isn't "cheap" the way it was once thought to be; periodic
+  // small extensions here are what actually keeps that cost bounded.
+  // Confirmed live, separately: an update like this one, that changes
+  // end_date, only regenerates *future* (not yet started) occurrences --
+  // an already in-progress or completed one survives untouched, same id,
+  // same file, `started_at` unchanged -- see docs/RECURRING_RULES.md. The
+  // caller (PVRDispatcharr::RenewRecurringRules()) still skips calling
+  // this at all for a rule with an occurrence currently recording or about
+  // to start soon, as defense in depth rather than relying solely on that
+  // server-side scoping.
+  bool ExtendRecurringRuleEndDate(int ruleId, time_t newEndDate, std::string& error);
 
   // Dispatcharr's global recording pre/post padding, in minutes
   // (custom_properties has no per-recording/per-rule equivalent -- this

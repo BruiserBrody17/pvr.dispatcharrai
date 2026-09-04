@@ -56,11 +56,34 @@ No per-timer "end date" either: Kodi's own repeating-timer type
 attributes have `PVR_TIMER_TYPE_SUPPORTS_FIRST_DAY` but no equivalent
 "last day" flag (confirmed against kodi-dev-kit's full
 `PVR_TIMER_TYPE_SUPPORTS_*` list), while Dispatcharr's serializer
-requires a real `end_date` on every create regardless. A newly-created
-rule gets `start_date + 3 years` (`kRecurringRuleDefaultYears`) --
-cheap, since only the next 14 days actually materialize into real
-`Recording` rows at any given time (Dispatcharr's own rolling horizon);
-delete the timer whenever you actually want it to stop.
+requires a real `end_date` on every create regardless. Delete the timer
+whenever you actually want it to stop.
+
+**Update: a rolling `end_date` window, not a flat 3-year one.** This
+used to set `end_date` to `start_date + 3 years` on creation, on the
+theory that Dispatcharr only lazily materializes ~14 days ahead
+regardless of how far out `end_date` sits, making a far-future value
+"free". **Confirmed live that theory was wrong**: creating a real weekly
+rule with a 3-year `end_date` caused Dispatcharr to eagerly materialize
+*every* occurrence between `start_date` and `end_date` synchronously,
+right at creation -- 157 real `Recording` rows for one rule, which would
+have shown as 157 child timers in Kodi's own timer list (more for a rule
+repeating on several days a week). Now a rule's `end_date` is kept to a
+rolling `kRecurringRuleWindowDays` (30) window instead, topped back up
+periodically by `RenewRecurringRules()` (piggybacking on the existing
+recording-refresh background thread, no separate thread or setting)
+once less than half that window remains -- so a recurring rule still
+behaves like "create once, forget about it" from the user's side, just
+without the eager-materialization cost. Confirmed live, separately, that
+extending `end_date` is safe to do while an occurrence is actively
+recording: it only regenerates *future* (not yet started) occurrences
+-- a real in-progress recording, id 458, kept its id, `started_at`, and
+file path completely unchanged across a mid-recording `end_date` PATCH,
+and went on to complete normally (`status: "completed"`,
+`remux_success: true`, real bytes written). `RenewRecurringRules()`
+still skips a rule with an occurrence currently recording or starting
+within the next hour regardless, as defense in depth rather than relying
+solely on that server-side scoping.
 
 ## The timezone problem, and why it needed a user-facing setting
 
