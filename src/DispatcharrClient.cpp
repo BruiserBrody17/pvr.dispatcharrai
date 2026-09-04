@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <random>
 #include <thread>
 
 using json = nlohmann::json;
@@ -287,6 +288,20 @@ std::string UrlEncode(const std::string& value)
     curl_free(escaped);
   curl_easy_cleanup(curl);
   return result;
+}
+
+// Unique-enough per-Open()-session id for the plugin's viewer reference
+// counting (see LiveTimeshiftStreamState::viewerId's own comment) -- only
+// needs to not collide between viewers concurrently watching the same
+// channel, not to be cryptographically unguessable, so a random 64-bit
+// value hex-encoded is plenty.
+std::string GenerateViewerId()
+{
+  static thread_local std::mt19937_64 rng{std::random_device{}()};
+  std::uniform_int_distribution<uint64_t> dist;
+  char buf[17];
+  std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(dist(rng)));
+  return std::string(buf);
 }
 
 // nlohmann::json's item.value(key, default) only substitutes the default
@@ -893,7 +908,46 @@ bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
     if (!m_lastLocalIp.empty())
       extraParams["client_ip"] = m_lastLocalIp;
   }
+  // Lets the plugin reference-count viewers of a shared buffer -- see
+  // LiveTimeshiftStreamState::viewerId's own comment and
+  // StopTimeshiftBuffer()'s for the full mechanism this enables.
+  if (!m_liveTimeshiftStream.viewerId.empty())
+    extraParams["viewer_id"] = m_liveTimeshiftStream.viewerId;
   return CallTimeshiftPluginAction("start_buffer", channelUuid, playlistUrlOut, error, extraParams);
+}
+
+bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId,
+                                            std::string& error)
+{
+  // Doesn't use CallTimeshiftPluginAction(): that helper requires
+  // http_port/playlist_route in the response, which stop_buffer's own
+  // {"status": "ok"} reply doesn't carry.
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json params = {{"channel_uuid", channelUuid}};
+  if (!viewerId.empty())
+    params["viewer_id"] = viewerId;
+
+  json body = {
+      {"action", "stop_buffer"},
+      {"params", params},
+  };
+  json response;
+  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+    return false;
+  if (!FieldOr(response, "success", false))
+  {
+    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
+    return false;
+  }
+  const json& result = response.contains("result") ? response["result"] : json();
+  if (FieldOr<std::string>(result, "status", "") != "ok")
+  {
+    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
+    return false;
+  }
+  return true;
 }
 
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
@@ -2325,13 +2379,24 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // pre-join history" feature this was investigated alongside (not
   // achievable, confirmed by the same test).
   //
-  // Buffer cleanup when a viewer stops watching is now entirely the
-  // plugin's own job (its existing heartbeat-driven idle-timeout reaper --
-  // see CloseLiveTimeshiftStream()'s own comment) rather than something
-  // Open()/Close() force via an explicit stop -- that reaper already
-  // tolerates any number of concurrent viewers correctly, since it only
-  // cares whether *any* fetch has landed recently, not how many viewers
-  // there are.
+  // Buffer cleanup when a viewer stops watching is now the plugin's own
+  // job via viewer reference counting, not something Open()/Close() force
+  // by unconditionally stopping the buffer (see LiveTimeshiftStreamState::
+  // viewerId's own comment and StopTimeshiftBuffer()'s for the mechanism).
+  // A fresh viewer_id here registers this Open() as one of the buffer's
+  // viewers; CloseLiveTimeshiftStream() deregisters it, and the plugin
+  // only actually stops the buffer once no registered viewers remain --
+  // safe with any number of concurrent viewers, and fast (no need to wait
+  // out the plugin's own heartbeat idle-timeout, which stays only as a
+  // backstop for a viewer that disappears without cleanly closing, e.g. a
+  // crash). See docs/TIMESHIFT.md's "Concurrent viewers" section: an
+  // earlier version of this fix relied on that idle-timeout alone for all
+  // cleanup, which turned out to be a real problem of its own -- a
+  // provider's own concurrent-stream limit stayed exhausted by an
+  // orphaned buffer for up to that timeout's duration after its only real
+  // viewer stopped, blocking a *different* channel from opening at all in
+  // the meantime.
+  m_liveTimeshiftStream.viewerId = GenerateViewerId();
 
   std::string unusedPlaylistUrl;
   if (!StartTimeshiftBuffer(channelUuid, unusedPlaylistUrl, error))
@@ -2776,32 +2841,69 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamDurationMs()
 
 void DispatcharrClient::CloseLiveTimeshiftStream()
 {
-  // Deliberately does NOT stop the server-side buffer here anymore. It
-  // used to (a detached-thread StopTimeshiftBuffer() call, so Dispatcharr's
-  // stream/client state and the underlying ffmpeg process didn't linger
-  // until the plugin's own idle-timeout reaper noticed, 2 minutes by
-  // default) -- but that had a real, live-confirmed bug with more than one
-  // concurrent viewer on the same channel: this Close() has no way to know
-  // whether *another* viewer is still actively reading the same buffer, so
-  // it could (and did) kill a second viewer's playback that had only just
-  // started, moments after this one's own Open() had already killed and
-  // replaced the first viewer's original buffer the same way -- both
-  // viewers ending up broken in sequence, not just one. See
-  // docs/TIMESHIFT.md's "Concurrent viewers" section.
+  // Tells the plugin this viewer is done, via StopTimeshiftBuffer() --
+  // NOT the unconditional "kill the buffer" it used to be. Two earlier
+  // designs were both tried and confirmed live to be real bugs, not just
+  // theoretical concerns (see docs/TIMESHIFT.md's "Concurrent viewers"
+  // section for the full account of both):
   //
-  // Cleanup on a genuine Stop (nobody left watching) is now entirely the
-  // plugin's own existing heartbeat-driven idle-timeout reaper's job --
-  // every fetch this addon makes while a buffer is being read already acts
-  // as that buffer's heartbeat (see plugin.py), so a buffer with no viewers
-  // left simply stops getting heartbeats and the reaper cleans it up on its
-  // own, correctly, regardless of how many viewers there were. Trade-off:
-  // cleanup after the *last* viewer's Stop is now slower (up to
-  // idle_timeout_seconds, 120s by default) than the ~12s this addon's own
-  // proactive stop used to achieve -- accepted in exchange for not
-  // incorrectly tearing down a buffer other viewers still need. Not yet
-  // confirmed live -- needs testing that a genuine single-viewer Stop still
-  // actually clears Dispatcharr's own buffer state within that window (see
-  // docs/TIMESHIFT.md).
+  // 1. Unconditionally stopping the buffer here (the original design):
+  //    this Close() had no way to know whether *another* viewer was still
+  //    actively reading the same buffer, so it could (and did) kill a
+  //    second viewer's playback that had only just started.
+  // 2. Not stopping anything at all here, relying purely on the plugin's
+  //    own heartbeat-driven idle-timeout reaper to eventually notice no
+  //    one's fetching anymore (2 minutes by default): safe with multiple
+  //    viewers, but left a since-abandoned buffer occupying one of a
+  //    provider's own concurrent-stream slots for up to that timeout --
+  //    confirmed live as a real problem, not just a slow cleanup: with a
+  //    3-stream provider limit, 2 recordings in progress, and a live
+  //    channel watched then stopped and immediately switched to a
+  //    *different* channel, the new channel failed to start at all
+  //    (Dispatcharr still showed the old channel's now-abandoned buffer
+  //    as the active 3rd stream) until that timeout finally elapsed.
+  //
+  // The fix: the plugin now reference-counts viewers per buffer
+  // (registered by this viewer's own viewer_id at Open()/
+  // StartTimeshiftBuffer() time -- see LiveTimeshiftStreamState::viewerId's
+  // own comment). This call deregisters just this viewer; the plugin only
+  // actually stops the underlying ffmpeg process once no registered
+  // viewers remain, so it's safe to call unconditionally on every Close()
+  // regardless of how many other viewers exist, and fast when this really
+  // was the last one -- no need to wait out the idle-timeout reaper, which
+  // remains only as a backstop for a viewer that disappears without
+  // cleanly closing (a crash, a network drop).
+  //
+  // Deliberately SYNCHRONOUS, not a detached background thread (an earlier
+  // version of this fix used one, matching how this call worked before
+  // reference counting existed) -- confirmed live this was itself a real
+  // bug: switching channels (Kodi calls this Close() then OpenLiveStream()
+  // for the new channel, back to back, without waiting on anything of this
+  // addon's own) raced a detached call here against the new channel's own
+  // Open()/StartTimeshiftBuffer(). With a provider's own concurrent-stream
+  // limit already fully used (2 recordings + the channel being switched
+  // away from), the new channel's own upstream connection attempt reached
+  // Dispatcharr *before* this detached call had actually freed the old
+  // channel's slot -- confirmed live: the old channel's stream visibly
+  // went down in Dispatcharr's own status a few seconds *after* the new
+  // channel had already failed to start and Kodi had already given up and
+  // returned to the main menu, not before. `_stop_ffmpeg()` in plugin.py
+  // (the thing that actually happens once this call determines no viewers
+  // remain) already blocks until the ffmpeg process is confirmed dead
+  // (SIGTERM, poll, escalate to SIGKILL after 5s) before its own HTTP
+  // response returns -- so calling it synchronously here, and letting
+  // Kodi's own sequential Close()-then-Open() calling convention do the
+  // rest, is what actually guarantees the old slot is free before the new
+  // channel's own Open() ever asks the provider for one. Kodi's calling
+  // thread already blocks synchronously on comparable network I/O
+  // elsewhere in this same class (every live-timeshift read/seek/manifest
+  // call), so this isn't a new category of blocking for it, just this one
+  // call site catching up to that same pattern.
+  if (m_liveTimeshiftStream.open && !m_liveTimeshiftStream.channelUuid.empty())
+  {
+    std::string stopError;
+    StopTimeshiftBuffer(m_liveTimeshiftStream.channelUuid, m_liveTimeshiftStream.viewerId, stopError);
+  }
 
   if (m_liveTimeshiftStream.curl)
     curl_easy_cleanup(static_cast<CURL*>(m_liveTimeshiftStream.curl));
