@@ -7,27 +7,27 @@ in Kodi map directly onto Dispatcharr's own backend and settings --
 similar in spirit to how the TVHeadend PVR addon (`pvr.hts`) works against
 a TVHeadend server.
 
-Targets: Windows and macOS were confirmed working through real use as of
-0.3.0; 0.4.0's changes (see below) haven't been re-verified on either yet.
-CoreELEC (an ODROID N2+ is the reference device) is also a target --
-cross-compiling it successfully needed more than a plain build (see
-`docs/BUILDING.md`'s "CoreELEC on an ODROID N2+" section for exactly what,
-including that the real device runs a 32-bit `arm` userland, not
-`aarch64`, despite the 64-bit SoC). Genuinely confirmed on a physical N2+
-running its real current stable release (`21.3-Omega`, `Amlogic-ng`
-device), not just a successful cross-compile: channels, groups, EPG, live
-playback, catch-up, recordings (completed and in-progress), recording
-folders/padding, one-time/series/recurring timer create-edit-delete,
-settings live-apply, and comskip/EDL markers all confirmed working
-end-to-end on real hardware, alongside several real bugs found and fixed
-specifically through that testing (recurring-rule end_date eager
-materialization, a Kodi settings-save quirk that silently restarted the
-PVR client on any save, a multi-worker-process port race in the
-`timeshift_buffer` companion plugin, and two separate live-timeshift
-catch-up/seek issues -- see `docs/TIMESHIFT.md` and
-`docs/RECURRING_RULES.md`). CI also builds a generic Linux (x86_64) zip on
-every push (see `.github/workflows/build.yml`), but that build has not yet
-been run and tested on a real Linux install.
+Targets: Windows, macOS, CoreELEC (an ODROID N2+ is the reference
+device), and Linux have all been genuinely re-verified against 0.4.0 on
+real hardware/real installs, not just successful builds -- channels,
+groups, EPG, live playback (server-side timeshift pause/rewind/seek), and
+recurring-timer create/renewal all confirmed working end-to-end on every
+one of them. CoreELEC needed more than a plain cross-compile (see
+`docs/BUILDING.md`'s "CoreELEC on an ODROID N2+" section for exactly
+what, including that the real device runs a 32-bit `arm` userland, not
+`aarch64`, despite the 64-bit SoC, and tracks Kodi's `21.3-Omega`
+`Amlogic-ng` stable release). Linux was tested on Rocky Linux 10 via the
+generic build harness plus the official Kodi Flatpak, since Kodi isn't
+packaged natively for RHEL10 yet (see `docs/BUILDING.md`'s own Linux
+section for that path and a real Flatpak-launch gotcha it surfaced).
+0.4.0 itself grew out of several real bugs found and fixed via that
+hardware-testing pass (recurring-rule end_date eager materialization, a
+Kodi settings-save quirk that silently restarted the PVR client on any
+save, a multi-worker-process port race in the `timeshift_buffer`
+companion plugin, and two separate live-timeshift catch-up/seek issues --
+see `docs/TIMESHIFT.md` and `docs/RECURRING_RULES.md`). CI also builds a
+generic Linux (x86_64) zip on every push; see
+`.github/workflows/build.yml`.
 
 ## Status
 
