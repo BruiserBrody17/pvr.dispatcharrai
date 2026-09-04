@@ -262,6 +262,27 @@ public:
   bool StartTimeshiftBuffer(const std::string& channelUuid,
                             std::string& playlistUrlOut,
                             std::string& error);
+  // Tells the plugin this specific viewer (m_liveTimeshiftStream.viewerId)
+  // is done with the channel's buffer -- NOT an unconditional stop. The
+  // plugin reference-counts viewers per buffer (registered by
+  // StartTimeshiftBuffer()'s own viewer_id param) and only actually stops
+  // the underlying ffmpeg process once the *last* registered viewer leaves;
+  // if others are still registered, this just deregisters the caller and
+  // the buffer keeps running for them. Only called from
+  // CloseLiveTimeshiftStream(), synchronously -- see its own comment for
+  // why a detached background thread here (an earlier version of this
+  // fix) was itself a real bug: it let a fast channel switch (Kodi's own
+  // back-to-back Close-then-Open) race the actual teardown, so a
+  // provider's own concurrent-stream limit could still be fully consumed
+  // by the channel just switched away from at the exact moment the new
+  // channel's own Open() asked for a slot. See docs/TIMESHIFT.md's
+  // "Concurrent viewers" section for the full account, including the
+  // original bug this reference-counted design itself fixes (a buffer
+  // staying exhausted well after its only real viewer stopped, since
+  // nothing used to proactively tell the plugin so). Best-effort:
+  // "nothing was running" is success, not an error.
+  bool StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId,
+                           std::string& error);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   // Fetches comskip-detected commercial-break markers for a completed
@@ -727,6 +748,16 @@ private:
   {
     bool open = false;
     std::string channelUuid;
+    // Generated fresh by OpenLiveTimeshiftStream() and sent as start_buffer's
+    // viewer_id -- lets the plugin reference-count viewers of a shared
+    // buffer (registers on start, deregisters on the matching
+    // StopTimeshiftBuffer() at Close), so it can tell whether *this* viewer
+    // was the last one before actually tearing anything down, instead of
+    // either killing a buffer other viewers still need (the original
+    // concurrent-viewer bug) or never proactively tearing one down at all
+    // (which starves a provider's concurrent-stream limit -- see
+    // docs/TIMESHIFT.md's "Concurrent viewers" section for both).
+    std::string viewerId;
     std::string segmentBaseUrl; // "http://host:port/<uuid>/" -- filename appended per-request
     // Ordered by sequence, append-only for the life of this open stream --
     // byteOffset/timeOffsetMs are this stream's OWN fixed-origin addressing,
