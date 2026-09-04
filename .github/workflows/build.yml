@@ -3,9 +3,17 @@ name: Build
 on:
   push:
     branches: [master]
-    tags: ["v*"]
+    # No "v" prefix: matches this project's own tagging convention
+    # (0.4.0, 1.0.0-beta.1, ...), confirmed against actual tag pushes --
+    # "v*" here previously matched none of them, so the tag trigger below
+    # (and the release-asset upload it gates) had never actually fired for
+    # a real release.
+    tags: ["[0-9]*.[0-9]*.[0-9]*"]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write # needed to upload release assets on a tag push
 
 env:
   KODI_BRANCH: Omega # match whatever Kodi major version you're targeting
@@ -73,6 +81,16 @@ jobs:
         with:
           name: pvr.dispatcharrai-${{ matrix.os }}
           path: dist/*.zip
+
+      # Actions artifacts (above) aren't reachable from a Release page and
+      # expire after ~90 days -- a real user installing this addon needs an
+      # actual downloadable zip attached to the release itself. Only on a
+      # tag push (a real version, not every commit to master/a PR).
+      - name: Attach zip to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
 
   build-windows:
     runs-on: windows-latest
@@ -167,3 +185,9 @@ jobs:
         with:
           name: pvr.dispatcharrai-windows
           path: dist/*.zip
+
+      - name: Attach zip to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
