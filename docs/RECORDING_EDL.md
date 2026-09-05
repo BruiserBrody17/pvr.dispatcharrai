@@ -46,6 +46,18 @@ on a real recording once comskip has run) and `custom_properties.file_path`
 (used only to find the containing directory -- the `.edl` file lives
 alongside the recording), and returns the parsed entries.
 
+**Like every other companion-plugin action, `get_edl` needs a real
+Dispatcharr admin account** -- this isn't specific to this plugin or to
+EDL data: Dispatcharr's plugin `run/` API (`PluginRunAPIView`) is
+admin-only for every plugin's every action, a blanket restriction
+confirmed against Dispatcharr's own source and detailed in
+[docs/TIMESHIFT.md](TIMESHIFT.md)'s "permission requirement" section.
+Unlike `timeshift_buffer`, a non-admin account here fails soft rather
+than hard: `GetRecordingEdl()` treats any `get_edl` failure the same as
+"plugin not installed" (see below) -- logged at debug level, empty
+entries returned, no playback impact -- so the only visible symptom is
+recordings simply never showing commercial-break markers.
+
 **comskip's `.edl` format**, confirmed against Dispatcharr's own
 `docker/comskip.ini` (`[Output]` section) and `apps/channels/tasks.py`'s
 own parsing of the same file: plain text, one entry per line,
