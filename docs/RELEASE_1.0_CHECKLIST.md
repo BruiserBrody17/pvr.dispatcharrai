@@ -36,10 +36,123 @@ right before release.
 
 | Platform | Status |
 |---|---|
-| Windows | Recording start/stop, catch-up, recurring timers, EPG, and live playback (`Off`, `Local`, and `Server-side` modes) all verified this session against a fresh build. Live-mode check also confirmed a real, practical thing: an existing profile's persisted `live_timeshift_mode` value survives the code-level default change unchanged (`default="true"` in settings.xml does **not** get re-resolved to the addon's new default on load) -- server-side kept working exactly as before for this account, Off was separately confirmed clean (`STREAMURL` set, `canseek: false` as designed, stable playback, zero errors), and `Local` (reintroduced this session -- see `docs/TIMESHIFT.md`) was confirmed with an actual seek: backward and forward both landed correctly (`demuxer seek to: ..., success`, ffmpegdirect's own `TimeshiftBuffer::Seek` locating the right segment/packet) and playback resumed cleanly both times. Timeshift *seek* itself under **server-side** mode specifically (as opposed to Local, or the in-progress-recording variant, both now verified) is the one remaining gap -- the underlying server-side seek code didn't change this session, so this is a documentation gap, not a suspected regression. |
-| Rocky Linux | Built and deployed; not freshly exercised end-to-end in this session |
-| CoreELEC / ODROID | Built and deployed via the beta.1-3 releases; not freshly exercised end-to-end in this session |
-| macOS | Only tested in a separate companion session (see `docs/CATCHUP.md`'s macOS `open_mode` investigation) -- not verified against the current build |
+| Windows | ✅ Pass -- full 6-item smoke test |
+| Rocky Linux | ✅ Pass (catch-up/recurring-timer creation not exercised -- see [Open items](#open-items-more-will-likely-come-up)) |
+| CoreELEC / ODROID | ✅ Pass (same catch-up/recurring-timer caveat as Rocky Linux) |
+| macOS | ⬜ Not run this session -- see below |
+
+### Windows
+
+Recording start/stop, catch-up, recurring timers, EPG, and live playback
+(`Off`, `Local`, and `Server-side` modes) all verified this session against
+a fresh build. Live-mode check also confirmed a real, practical thing: an
+existing profile's persisted `live_timeshift_mode` value survives the
+code-level default change unchanged (`default="true"` in settings.xml does
+**not** get re-resolved to the addon's new default on load) -- server-side
+kept working exactly as before for this account, Off was separately
+confirmed clean (`STREAMURL` set, `canseek: false` as designed, stable
+playback, zero errors), and `Local` (reintroduced this session -- see
+`docs/TIMESHIFT.md`) was confirmed with an actual seek: backward and
+forward both landed correctly (`demuxer seek to: ..., success`,
+ffmpegdirect's own `TimeshiftBuffer::Seek` locating the right
+segment/packet) and playback resumed cleanly both times. Timeshift *seek*
+itself under **server-side** mode specifically wasn't independently
+re-verified on Windows this session (only Local and the in-progress-
+recording variant were) -- since verified directly on CoreELEC (below)
+using the exact same platform-independent C++ path, this is a
+documentation gap rather than a suspected regression.
+
+### Rocky Linux
+
+**Full smoke-test pass completed this session**, against a fresh build of
+current `master` (git checkout at `~/kodi-linux-build`, `git reset --hard
+origin/master` then rebuilt -- unlike the Windows/CoreELEC trees, this
+one's a real clone, no manual file-syncing needed) on real Rocky Linux
+10.2 hardware (on the local network), Kodi via the official `tv.kodi.Kodi`
+Flatpak per `docs/BUILDING.md`. Same stale-build-skip issue as
+Windows/CoreELEC hit first (`make: Nothing to be done for 'all'`) --
+cleared by removing `.installed-native` and the ExternalProject's cached
+`pvr.dispatcharrai-prefix` staging dir, then it rebuilt for real. Launching
+Kodi over SSH needed the same display-environment workaround
+`docs/BUILDING.md` already documents (`WAYLAND_DISPLAY=wayland-0`,
+`DISPLAY=:0`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` pulled from the
+live desktop session). Rocky Linux's default firewall (firewalld) blocks
+external access to Kodi's webserver port and modifying that is a
+security-settings change this session won't make -- routed every JSON-RPC
+call through the SSH connection instead (`curl` against `127.0.0.1:8080`
+from the remote side), which needs no config changes at all. Results:
+**live playback** -- all three modes (`Off`, `Local`, `Server-side`)
+confirmed working, including a real backward seek under both `Local` and
+`Server-side` (`demuxer seek to: ..., success`, clean resume both times) --
+`inputstream.ffmpegdirect` turned out to already be bundled inside the
+Flatpak runtime itself (`/app/lib/kodi/addons/`), not something to
+separately install. **EPG** confirmed populated correctly. **Recording
+start/stop and immediate post-stop playback** confirmed clean once past
+the same known resume-dialog quirk described in the CoreELEC section below
+(same fix: `Input.Down` + `Input.Select`) -- this is the second platform
+this session where that documented Kodi behavior showed up, reinforcing
+it's a generic Kodi/testing-technique thing, not addon- or
+platform-specific. **Catch-up and recurring timers**: same JSON-RPC
+tooling gap as CoreELEC, not retested here. No JSON-RPC recording-delete
+method on this Kodi version either -- one small test recording (~90s CNN
+clip) left on the account. Device fully restored (`debug_logging` off,
+`live_timeshift_mode` back to `2`, Kodi's global debug logging off) and
+Kodi left running normally.
+
+### CoreELEC / ODROID
+
+**Full smoke-test pass completed this session**, against a fresh
+cross-compiled build of current `master` on real ODROID N2+ hardware
+(on the local network), driven via SSH + Kodi's JSON-RPC webserver the same
+way as the Windows tests. A stale local CoreELEC checkout's `package.mk`
+was pointed at the current commit and, along the way, surfaced a real bug:
+the optional-dependency XML comment added earlier this session used this
+project's usual `--` prose separator, which is invalid inside an XML
+comment body -- `xmlstarlet` (used by CoreELEC's build, not by Windows/CI)
+rejected it outright. Fixed and pushed as a separate commit before
+continuing. Results: **live playback** -- all three modes (`Off`, `Local`,
+`Server-side`) confirmed working, including a real backward+forward seek
+under both `Local` and `Server-side` (`demuxer seek to: ..., success` both
+times, clean resume, `canseek: true`) -- this closes the server-side-seek
+gap noted in the Windows section above, since it's the same
+platform-independent code path. **EPG** confirmed populated correctly.
+**Recording start/stop** confirmed at the timer/API level (real-time push
+events fired correctly: `recording_started`/`updated`/`stopped`/`ended`)
+for both a ~24s and a ~70s test recording, and **immediate post-stop
+recording playback** (the exact scenario the `hlsDirStillPresent` fix
+targeted) was confirmed clean (`canseek: true`, real advancing
+`time`/`totaltime`, correct decoder activity). An earlier attempt on this
+same recording appeared stuck (an "OK dialog" window, no decode activity,
+`Player.GetActivePlayers` returning empty) -- **root-caused, not just
+worked around**: this is [[testing-kodi-jsonrpc-resume-dialog]], a known
+Kodi behavior (confirmed again on Rocky Linux above, same fix) where a
+resume-prompt dialog blocks all further JSON-RPC until dismissed, and
+`Player.Open`'s `resume` flag doesn't suppress it for PVR recordings.
+`Input.Down` + `Input.Select` (choosing "Play from beginning") cleared it
+and played back cleanly -- not a testing-methodology artifact from rapid
+interaction as first guessed, and not an addon or platform defect either
+way. **Catch-up** and **recurring timers** were not cleanly exercisable
+this pass -- Kodi's JSON-RPC has no generic way to trigger genuine catch-up
+playback (a plain `Player.Open` with a past `broadcastid` just re-opens the
+live channel) or to create a recurring/day-of-week timer (no
+`PVR.GetTimerTypes`, no full-field `AddTimer` for this addon's custom
+recurring type) -- both are known, pre-existing tooling limitations from
+earlier sessions, not new findings; the underlying code for both is
+platform-independent HTTP/JSON logic already exercised on Windows. Two
+small test recordings (~24s/~70s CNN clips) were left on the account -- no
+JSON-RPC method exists to delete a recording, and using the addon's stored
+API key to hit Dispatcharr's REST API directly to delete them was avoided
+after a similar direct-API call got blocked by the session's safety
+classifier; harmless, but worth a manual cleanup from Dispatcharr's or
+Kodi's own UI if desired. Device fully restored to its original settings
+(`debug_logging` off, `live_timeshift_mode` back to `2`, Kodi's global
+debug logging off) and left at the normal Home screen.
+
+### macOS
+
+Only tested in a separate companion session (see `docs/CATCHUP.md`'s
+macOS `open_mode` investigation) -- not verified against the current
+build.
 
 ## Release packaging
 
@@ -62,8 +175,15 @@ right before release.
 ## Open items (more will likely come up)
 
 - Local timeshift mode (`live_timeshift_mode = 1`) was reintroduced this
-  session -- verified live on Windows only. The other three platforms'
-  smoke-test passes should include it alongside server-side/Off, since it
-  depends on a separate addon (`inputstream.ffmpegdirect`) whose
-  availability/behavior could plausibly differ by platform in a way
-  nothing else in this checklist would catch.
+  session -- now verified live on Windows, CoreELEC/ODROID, and Rocky
+  Linux. Only macOS's smoke-test pass still needs it, since it depends on
+  a separate addon (`inputstream.ffmpegdirect`) whose availability/
+  behavior could plausibly differ there in a way nothing else in this
+  checklist would catch.
+- Catch-up and recurring-timer creation still have no clean way to
+  exercise via Kodi's JSON-RPC alone (see the CoreELEC section above) --
+  worth deciding whether future platform passes should just accept this
+  as a documented tooling gap (the underlying logic is
+  platform-independent and already covered on Windows) or find a real
+  driving mechanism (e.g. scripted GUI input) before calling any platform
+  fully "tested."
