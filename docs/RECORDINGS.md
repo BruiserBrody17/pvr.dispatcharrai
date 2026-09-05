@@ -1390,4 +1390,46 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
     -- mirrors `CreateOneTimeRecording()`'s own existing choice not to
     send `custom_properties` at all, for the same underlying reason
     (avoid stomping Dispatcharr's own auto-enrichment).
+- **Seeking to the live edge of an in-progress recording took ~10s,
+  root-caused and fixed to land at ~2-3s, which turned out to be the
+  real floor.** Reported live: recorded a channel for 2 minutes, started
+  watching it, stepped forward to the live edge, and playback took
+  ~10s to resume. `SeekInProgressRecordingStream()` had no equivalent of
+  `SeekLiveTimeshiftStream()`'s existing live-edge backoff -- it clamped
+  a forward seek straight to the current `totalBytes` (the exact tip),
+  leaving zero read-ahead margin, so the very next read landed
+  immediately back at the tail and had to wait out another whole
+  segment-production cycle right after what looked like a completed
+  seek. Ported the identical fix: back off by one segment's worth of
+  bytes so there's always something already available to play the
+  instant the seek reports success.
+
+  Confirmed live via targeted timing instrumentation added to
+  `SeekInProgressRecordingStream()`, `ReadInProgressRecordingStream()`'s
+  catch-up loop, `RefreshInProgressRecordingManifest()` (playlist fetch /
+  per-segment probe / `GetRecordings()` timing breakdown), and the
+  previously entirely unlogged per-segment body fetch inside
+  `ReadInProgressRecordingStream()` -- added because the first two
+  retest attempts showed *zero* addon-level log activity during the
+  entire multi-second delay window, which turned out to be because a
+  stale, disconnected build (a leftover local Windows dev copy the
+  addon-defs tooling was still building from, not this repository) was
+  being tested both times; the reported "10s -> 5-6s" improvement
+  between those two attempts was pure test-to-test variance on the
+  *original*, unfixed binary, not a real signal. Once the build was
+  pointed at the actual source and verified via `strings`/`grep -a` on
+  the compiled binary before redeploying, a real retest showed the seek
+  itself completing in ~116ms (three internal FFmpeg seek probes --
+  start of stream, near the end, and twice slightly past the known end
+  -- all safely clamped to the backed-off tail instead of the raw edge,
+  so none of them blocked), with the remaining ~2.2s entirely accounted
+  for by one clean catch-up-loop cycle (`9/16 attempts`) waiting on
+  Dispatcharr's own DVR recording ffmpeg to actually produce its next
+  segment (`-hls_time 4`, hardcoded in Dispatcharr's `tasks.py`, not a
+  setting this addon or either companion plugin controls). That wait is
+  the genuine floor for this operation -- you cannot play a segment the
+  recorder hasn't written yet -- so ~2-3s for a live-edge seek on an
+  in-progress recording is expected, not a bug, and there's nothing left
+  to trim on this addon's side without Dispatcharr itself segmenting DVR
+  recordings faster.
 
