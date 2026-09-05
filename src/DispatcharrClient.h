@@ -136,6 +136,28 @@ struct Recording
   int channelId = 0;
   bool isInProgress = false; // startTime <= now < endTime
   bool isUpcoming = false;   // now < startTime (scheduled, not yet started)
+  // True while custom_properties._hls_dir is still present -- Dispatcharr
+  // sets status away from "recording" (to "stopped") the instant the user
+  // stops it, synchronously in the stop endpoint, well before the HLS-to-MKV
+  // concat that happens afterward in the background recording task actually
+  // finishes (confirmed in tasks.py: the stop endpoint's own comment says so
+  // outright, and _hls_dir is only ever popped from custom_properties after
+  // the directory is actually removed, post-concat, post-viewer-wait). So
+  // isInProgress alone going false does NOT mean a stable, complete file
+  // exists yet to open for byte-range playback -- confirmed live: opening a
+  // just-stopped recording as a completed one errored outright (the file
+  // didn't exist yet) or played without seeking (the file existed but was
+  // still being actively written by the concat, an unstable Content-Length
+  // this addon's completed-recording path was never designed to handle).
+  // OpenRecordedStream() uses this, independent of isInProgress, to decide
+  // whether to keep using the growing-buffer HLS reader -- which handles a
+  // frozen (no-longer-growing) manifest correctly already, since
+  // RefreshInProgressRecordingManifest() ties "finished" to isInProgress,
+  // not to whether the underlying ffmpeg process happens to still be alive.
+  // Deliberately NOT folded into isInProgress itself: that field also drives
+  // Kodi's timer-state UI (PVR_TIMER_STATE_RECORDING), which must keep
+  // reflecting Dispatcharr's real status, not this file-readiness detail.
+  bool hlsDirStillPresent = false;
   // Non-zero when this Recording was materialized by Dispatcharr's own
   // recurring-rule scheduler (custom_properties.rule.{type:"recurring",id})
   // rather than created directly -- see RecurringRule below. Used to link
