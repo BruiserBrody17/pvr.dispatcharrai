@@ -2058,6 +2058,57 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, std::stri
   return true;
 }
 
+namespace
+{
+
+// Shared by ReadInProgressRecordingStream() and ReadLiveTimeshiftStream()'s
+// catch-up-to-tail wait, after the two diverged once already: the live path
+// got hardened against a confirmed real crash (a lone segment's own duration
+// is too noisy a sample to size a retry budget off of -- a real instance
+// produced one just 151ms long against a configured target, which collapsed
+// the old single-segment/1.5x-margin budget until ffmpeg's demuxer read the
+// resulting stall as genuine end-of-stream and closed playback outright,
+// confirmed live via VideoPlayer: eof immediately followed by Kodi kicking
+// back to the main menu -- see docs/TIMESHIFT.md's "Real hardware
+// (CoreELEC/ODROID N2+)" section), but the in-progress-recording path never
+// received the same fix since there was nothing shared to fix once. Sharing
+// the calculation here is specifically so that can't happen again.
+constexpr size_t kSegmentDurationSampleCount = 5;
+constexpr int64_t kMinSegmentDurationMs = 1500;
+
+// Averaged over the last few segments, not just the single most recent one,
+// with a floor under the average for a fresh buffer's first few
+// still-warming-up segments -- see the comment above for why both matter.
+template <typename SegmentT>
+int64_t EstimateSegmentDurationMs(int64_t totalDurationMs, const std::vector<SegmentT>& segments)
+{
+  int64_t avgSegmentDurationMs = 6000;
+  size_t sampleCount = std::min(kSegmentDurationSampleCount, segments.size());
+  if (sampleCount > 0)
+  {
+    int64_t sumMs = totalDurationMs - segments[segments.size() - sampleCount].timeOffsetMs;
+    if (sumMs > 0)
+      avgSegmentDurationMs = sumMs / static_cast<int64_t>(sampleCount);
+  }
+  return std::max(avgSegmentDurationMs, kMinSegmentDurationMs);
+}
+
+// 3x margin, not 1.5x: confirmed live against a real instance that 1.5x runs
+// far thinner than intended in practice -- ordinary, non-error catch-up
+// cycles were routinely using 60-95% of that budget just to catch up under
+// normal jitter, not just in a genuine outage. A likely seek probe (see each
+// caller's own comment on that distinction) always gets just one attempt,
+// regardless of margin, so probing stays fast rather than paying a full
+// segment-duration wait for something that doesn't need it.
+int ComputeCatchUpAttempts(bool likelySeekProbe, int64_t segmentDurationEstimateMs, int catchUpSleepMs)
+{
+  if (likelySeekProbe)
+    return 1;
+  return static_cast<int>((segmentDurationEstimateMs * 3) / catchUpSleepMs) + 1;
+}
+
+} // namespace
+
 int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size)
 {
   if (!m_inProgressRecordingStream.open || size == 0)
@@ -2083,18 +2134,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
         m_inProgressRecordingStream.lastSeekTime.time_since_epoch().count() != 0 &&
         std::chrono::steady_clock::now() - m_inProgressRecordingStream.lastSeekTime < kSeekProbeWindow;
 
-    int64_t lastSegmentDurationMs =
-        m_inProgressRecordingStream.segments.empty()
-            ? 6000
-            : m_inProgressRecordingStream.totalDurationMs -
-                  m_inProgressRecordingStream.segments.back().timeOffsetMs;
-    if (lastSegmentDurationMs <= 0)
-      lastSegmentDurationMs = 6000;
-
+    int64_t segmentDurationEstimateMs = EstimateSegmentDurationMs(
+        m_inProgressRecordingStream.totalDurationMs, m_inProgressRecordingStream.segments);
     int catchUpAttempts =
-        likelySeekProbe
-            ? 1
-            : static_cast<int>((lastSegmentDurationMs * 3 / 2) / kCatchUpSleepMs) + 1;
+        ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
 
     auto catchUpStart = std::chrono::steady_clock::now();
     int attemptsUsed = 0;
@@ -2121,10 +2164,10 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
         std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharrai: ReadInProgressRecordingStream: catch-up loop used %d/%d attempts, "
-              "%.3fs (likelySeekProbe=%d, lastSegmentDurationMs=%lld), position=%lld totalBytes=%lld "
+              "%.3fs (likelySeekProbe=%d, segmentDurationEstimateMs=%lld), position=%lld totalBytes=%lld "
               "-> %s",
               attemptsUsed, catchUpAttempts, elapsedSec, likelySeekProbe ? 1 : 0,
-              static_cast<long long>(lastSegmentDurationMs),
+              static_cast<long long>(segmentDurationEstimateMs),
               static_cast<long long>(m_inProgressRecordingStream.position),
               static_cast<long long>(m_inProgressRecordingStream.totalBytes),
               caughtUp ? "caught up" : "gave up");
@@ -2905,60 +2948,19 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
         !sameAsLastShortGiveUp && m_liveTimeshiftStream.lastSeekTime.time_since_epoch().count() != 0 &&
         std::chrono::steady_clock::now() - m_liveTimeshiftStream.lastSeekTime < kSeekProbeWindow;
 
-    // Averaged over the last few segments, not just the single most recent
-    // one: confirmed live that a lone segment's own duration is too noisy
-    // a sample to size a retry budget off of. ffmpeg's segment cutter
-    // targets segment_seconds but isn't exact (it cuts at the next
-    // keyframe at/after the target, so real durations vary run to run) --
-    // a real instance produced one segment just 151ms long against a 2s
-    // target. With the single-segment approach that collapsed this budget
-    // to 2 attempts / 0.5s, nowhere near enough margin: it gave up for
-    // real, repeatedly, until ffmpeg's own demuxer read that as genuine
-    // end-of-stream and closed playback outright -- confirmed live, not
-    // theoretical (VideoPlayer: eof, waiting for queues to empty,
-    // immediately followed by Kodi kicking back to the main menu).
-    // Averaging the last few segments smooths out exactly this kind of
-    // one-off outlier while still adapting to whatever segment_seconds is
-    // actually configured.
-    constexpr size_t kSegmentDurationSampleCount = 5;
-    int64_t avgSegmentDurationMs = 6000;
-    {
-      const auto& segs = m_liveTimeshiftStream.segments;
-      size_t sampleCount = std::min(kSegmentDurationSampleCount, segs.size());
-      if (sampleCount > 0)
-      {
-        int64_t sumMs = m_liveTimeshiftStream.totalDurationMs -
-                         segs[segs.size() - sampleCount].timeOffsetMs;
-        if (sumMs > 0)
-          avgSegmentDurationMs = sumMs / static_cast<int64_t>(sampleCount);
-      }
-    }
-    // Defense in depth on top of the averaging above: never let a budget
-    // this consequential (getting it wrong ends live playback outright,
-    // not just a slower catch-up) shrink below a sane floor, regardless of
-    // what the segments so far report -- covers a fresh buffer's first few,
-    // still-warming-up segments too, not just an established stream's rare
-    // outlier.
-    constexpr int64_t kMinSegmentDurationMs = 1500;
-    int64_t segmentDurationEstimateMs = std::max(avgSegmentDurationMs, kMinSegmentDurationMs);
-
-    // 3x, not the 1.5x this originally used: confirmed live against a real
-    // instance that 1.5x runs far thinner than intended in practice --
-    // ordinary, non-error catch-up cycles were routinely using 60-95% of
-    // that budget just to catch up under normal jitter (network latency to
-    // the plugin's server, its own manifest-refresh request time eating
-    // into the sleep-based budget, real variance in when the server
-    // actually finishes a segment), not just in a genuine outage. That
-    // left too little real margin before "gave up" -- confirmed live to
-    // fully exhaust the 1.5x budget and report a genuine stalled read to
-    // Kodi. A separate server-side bug (see the timeshift_buffer plugin's
-    // own history) was the dominant cause of the *worst*, multi-second
-    // stalls, but this margin was measurably too tight even independent of
-    // that.
+    // Segment-duration estimate (averaged + floored) and the resulting
+    // attempt budget (3x margin) are shared with
+    // ReadInProgressRecordingStream() -- see EstimateSegmentDurationMs()'s
+    // and ComputeCatchUpAttempts()'s own comments (just above that function)
+    // for the full history of why each constant is what it is, including a
+    // real crash this fixed. A separate server-side bug (see the
+    // timeshift_buffer plugin's own history) was the dominant cause of the
+    // *worst*, multi-second stalls on this particular path, but the margin
+    // was measurably too tight even independent of that.
+    int64_t segmentDurationEstimateMs = EstimateSegmentDurationMs(
+        m_liveTimeshiftStream.totalDurationMs, m_liveTimeshiftStream.segments);
     int catchUpAttempts =
-        likelySeekProbe
-            ? 1
-            : static_cast<int>((segmentDurationEstimateMs * 3) / kCatchUpSleepMs) + 1;
+        ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
 
     auto catchUpStart = std::chrono::steady_clock::now();
     int attemptsUsed = 0;

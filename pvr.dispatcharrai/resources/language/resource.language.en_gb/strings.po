@@ -110,7 +110,7 @@ msgid "Enable real-time recording/timer updates (experimental)"
 msgstr ""
 
 msgctxt "#30041"
-msgid "Connects directly to Dispatcharr's own real-time update feed (the same one its own web interface uses -- no extra setup on the Dispatcharr side needed) so a change shows up in Kodi immediately instead of waiting for the refresh interval above. That interval keeps running as a fallback even with this on, in case the connection can't be made or drops and stays down. Experimental: this is new, hand-written networking code that hasn't seen the same real-world use as the rest of this addon -- leave off if you'd rather stick with the plain refresh interval."
+msgid "Connects directly to Dispatcharr's own real-time update feed (the same one its own web interface uses -- no extra setup on the Dispatcharr side needed) so a change shows up in Kodi immediately instead of waiting for the refresh interval above. That interval keeps running as a fallback even with this on, in case the connection can't be made or drops and stays down. Experimental: this is new, hand-written networking code that hasn't seen the same real-world use as the rest of this addon -- leave off if you'd rather stick with the plain refresh interval. Needs a Kodi restart to take effect either way (starting/stopping this connection isn't something this addon can do while already running) -- Kodi will prompt you when you save."
 msgstr ""
 
 msgctxt "#30049"
@@ -138,7 +138,7 @@ msgid "Recording padding: start early (minutes)"
 msgstr ""
 
 msgctxt "#30055"
-msgid "Mirrors Dispatcharr's own global recording padding setting (Settings -> DVR in Dispatcharr's web UI) -- there is no per-timer equivalent, Dispatcharr only has one global value shared by every EPG-based recording (series rules and one-time recordings matched to a guide entry), so changing this here changes it for all of them at once, the same as changing it in Dispatcharr's own UI would. Does NOT affect recurring (day-of-week) timers -- confirmed against Dispatcharr's own source that its recurring-rule scheduler never applies this setting at all, a gap on Dispatcharr's side this addon can't work around. Kept in sync with Dispatcharr's real current value on every Kodi restart, so this display doesn't go stale if it's changed another way (Dispatcharr's own UI, a different Kodi install sharing the account)."
+msgid "Mirrors Dispatcharr's own global recording padding setting (Settings -> DVR in Dispatcharr's web UI) -- there is no per-timer equivalent, Dispatcharr only has one global value shared by every EPG-based recording (series rules and one-time recordings matched to a guide entry), so changing this here changes it for all of them at once, the same as changing it in Dispatcharr's own UI would. Does NOT affect recurring (day-of-week) timers -- confirmed against Dispatcharr's own source that its recurring-rule scheduler never applies this setting at all, a gap on Dispatcharr's side this addon can't work around. Kept in sync with Dispatcharr's real current value on every Kodi restart, so this display doesn't go stale if it's changed another way (Dispatcharr's own UI, a different Kodi install sharing the account). Reading that current value needs no special permission, but pushing a change you make here back to Dispatcharr needs a real Dispatcharr admin account -- with a lesser account this fails silently: the value stays showing as changed here, but Dispatcharr's own setting doesn't actually move, with nothing surfaced beyond an error line in kodi.log."
 msgstr ""
 
 msgctxt "#30056"
