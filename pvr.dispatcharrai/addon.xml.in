@@ -4,7 +4,27 @@
     version="1.0.0-beta.3"
     name="Dispatcharr PVR Client"
     provider-name="BruiserBrody17">
-  <requires>@ADDON_DEPENDS@</requires>
+  <requires>
+    @ADDON_DEPENDS@
+    <!--
+      Not a hard dependency -- this addon works fully without it (Off and
+      Server-side live-TV pause/rewind, plus completed/in-progress
+      recording playback, need nothing beyond Kodi's own PVR API). Listed
+      as optional so Kodi surfaces the relationship in this addon's own
+      info metadata without forcing an install: inputstream.ffmpegdirect
+      is only actually used if the user opts into "Local" live-TV
+      pause/rewind (live_timeshift_mode) or the experimental catch-up seek
+      setting, and per Kodi's own CAddonInstallJob::CheckDependencies() /
+      Install() (xbmc/addons/AddonInstaller.cpp, confirmed by reading
+      Kodi's current source), a missing optional dependency never blocks
+      or fails an install the way a missing required one would -- making
+      this required instead would mean this addon fails to install
+      outright for anyone whose enabled repositories don't have
+      inputstream.ffmpegdirect available, even if they'd never touch
+      either feature that needs it.
+    -->
+    <import addon="inputstream.ffmpegdirect" version="3.0.0" optional="true"/>
+  </requires>
   <extension
       point="kodi.pvrclient"
       library_@PLATFORM@="@LIBRARY_FILENAME@"/>
