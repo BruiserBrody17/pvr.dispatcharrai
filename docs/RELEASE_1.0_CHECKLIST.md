@@ -269,12 +269,11 @@ to its original settings and left running normally.
       format, newest first, user-facing (what changed, not why -- that
       still lives in `docs/`). Backfilled real entries for every tagged
       release from `0.2.0` through `1.0.0-beta.3` by walking actual git
-      log ranges between tags, not guessed from memory. An `[Unreleased]`
-      section at the top covers everything since `1.0.0-beta.3` (the
-      `Off` default flip, `Local` mode's return, the admin-scoping
-      clarifications, the in-progress-recording catch-up fix, etc.) --
-      **remaining step**: rename that section to `## [1.0.0] - <date>`
-      at actual tag time, same pattern as the version-bump item above.
+      log ranges between tags, not guessed from memory. The section
+      covering everything since `1.0.0-beta.3` (the `Off` default flip,
+      `Local` mode's return, the admin-scoping clarifications, the
+      in-progress-recording catch-up fix, etc.) is now `## [1.0.0] -
+      2026-09-05`, renamed from `[Unreleased]` ahead of the real tag.
       Linked from the main README's "More detail" section.
 - [x] **Final overall review pass** (gaps/optimization/redundancy/
       conciseness) before the real tag, via three parallel audit agents

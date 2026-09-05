@@ -10,9 +10,7 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased]
-
-Becomes `1.0.0` at tag time.
+## [1.0.0] - 2026-09-05
 
 ### Changed
 
