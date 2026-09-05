@@ -103,8 +103,24 @@ class Plugin:
             "type": "info",
             "description": (
                 "Called by a client (e.g. pvr.dispatcharrai's recording "
-                "playback) via the plugin run/ API, not usually by hand. "
-                "No settings needed -- nothing to configure here."
+                "playback) via the plugin run/ API, not usually by hand -- "
+                "the field below is only for manually testing the action "
+                "button."
+            ),
+        },
+        {
+            "id": "test_recording_id", "label": "Test recording ID", "type": "string",
+            "default": "",
+            "help_text": (
+                "Only used for the manual-test button below, as a fallback "
+                "when no recording_id param is supplied (plugin action "
+                "buttons can't take click-time input) -- paste a "
+                "recording's numeric id here, save, then use Get Recording "
+                "EDL. Without this, the button has no way to ever succeed, "
+                "since a click always calls this action with no params at "
+                "all. The real integration (a client calling run/ over the "
+                "REST API) passes recording_id directly and ignores this "
+                "field entirely."
             ),
         },
     ]
@@ -113,19 +129,27 @@ class Plugin:
         {
             "id": "get_edl",
             "label": "Get Recording EDL",
-            "description": "Returns the comskip EDL entries for a recording. Params: recording_id (required).",
+            "description": (
+                "Returns the comskip EDL entries for a recording. Params: "
+                "recording_id (required, pass it as a param, or paste one "
+                "into the test_recording_id setting for manual testing)."
+            ),
         },
     ]
 
     def run(self, action: str, params: dict, context: dict):
         logger = context.get("logger")
+        settings_dict = context.get("settings", {})
 
         if action != "get_edl":
             return {"status": "error", "message": f"Unknown action: {action}"}
 
-        recording_id = params.get("recording_id")
+        recording_id = params.get("recording_id") or settings_dict.get("test_recording_id")
         if not recording_id:
-            return {"status": "error", "message": "recording_id is required"}
+            return {
+                "status": "error",
+                "message": "recording_id is required (pass it as a param, or paste one into the test_recording_id setting for manual testing)",
+            }
 
         from apps.channels.models import Recording
 
@@ -145,7 +169,7 @@ class Plugin:
             # Nothing to fetch -- comskip hasn't run, found nothing, or ran
             # in "cut" mode and already deleted the .edl file (see module
             # docstring). Not an error: just no markers for this recording.
-            return {"status": "ok", "entries": []}
+            return {"status": "ok", "message": "No EDL file for this recording (comskip hasn't run, or ran in \"cut\" mode)", "entries": []}
 
         edl_path = Path(file_path).parent / edl_filename
         try:
@@ -153,6 +177,13 @@ class Plugin:
         except OSError as exc:
             if logger:
                 logger.warning("recording_edl: could not read %s: %s", edl_path, exc)
-            return {"status": "ok", "entries": []}
+            return {"status": "ok", "message": f"Could not read {edl_path.name} (see plugin log)", "entries": []}
 
-        return {"status": "ok", "entries": _parse_edl(text)}
+        # "message" is what actually shows up in Dispatcharr's own result
+        # toast -- confirmed against its frontend (PluginCard.jsx's
+        # handlePluginRun()) that nothing else in an action's response is
+        # ever rendered anywhere in that UI, same finding that led to
+        # timeshift_buffer's own diagnostic actions all getting one too.
+        entries = _parse_edl(text)
+        message = "No EDL entries found" if not entries else f"{len(entries)} EDL entr{'y' if len(entries) == 1 else 'ies'} found"
+        return {"status": "ok", "message": message, "entries": entries}
