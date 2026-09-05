@@ -855,11 +855,11 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
   // handle the 200 case below: PluginRunAPIView always wraps whatever the
   // plugin's own run() returned inside a top-level "result" key (alongside
   // its own "success": true), and the plugin can still report its own
-  // *logical* failure (e.g. hitting max_concurrent_buffers, or -- for
-  // snapshot_buffer specifically -- no buffer running yet for this
-  // channel) as a normal 200 response with "result": {"status": "error",
-  // ...} rather than an exception -- that's the case the "result" parsing
-  // below actually exists to catch.
+  // *logical* failure (e.g. hitting max_concurrent_buffers, or a buffer
+  // that's genuinely gone -- see docs/TIMESHIFT.md's "concurrent-stream
+  // limit" section) as a normal 200 response with "result": {"status":
+  // "error", ...} rather than an exception -- that's the case the
+  // "result" parsing below actually exists to catch.
   if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
     return false;
 
