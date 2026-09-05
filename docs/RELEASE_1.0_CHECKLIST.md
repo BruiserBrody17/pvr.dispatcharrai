@@ -241,18 +241,25 @@ to its original settings and left running normally.
   logic is platform-independent and already has real live-verification
   from earlier sessions; the gap is in this testing technique
   (JSON-RPC-driven, not GUI-driven), not in the feature.
-- **Version bump for the real 1.0 tag.** `addon.xml.in` is still
-  `1.0.0-beta.3`; needs bumping to `1.0.0`. Per the existing pattern in
-  git history, `packaging/coreelec/pvr.dispatcharrai/package.mk`'s
-  `PKG_VERSION`/`PKG_SHA256` can only be filled in *after* the tag exists
-  and the real release tarball's checksum is known -- a follow-up commit,
-  not something to do in the same commit as the version bump.
-- **Both companion plugins' `plugin.json` are still at version `0.1.0`**,
-  despite `recording_edl` gaining orphan-cleanup and `.dvr_*_hls`
-  diagnostics this session and both getting real production mileage.
-  Decide whether these get bumped for 1.0 and by what scheme -- this
-  version is what Dispatcharr's own Plugins page shows users, independent
-  of the addon's own version.
+- [x] **Version bump for the real 1.0 tag.** `addon.xml.in` bumped from
+      `1.0.0-beta.3` to `1.0.0`; confirmed live (Windows rebuild,
+      `Addons.GetAddonDetails` reports `version: "1.0.0"`, `broken: false`).
+      `packaging/coreelec/pvr.dispatcharrai/package.mk`'s `PKG_VERSION` is
+      also `1.0.0` now, with `PKG_SHA256` reset to the same all-zeros
+      placeholder used before every prior tag existed -- per the existing
+      pattern in git history, the real checksum can only be filled in
+      *after* the tag is pushed and the release tarball exists, as its own
+      follow-up commit.
+- [x] **Both companion plugins' `plugin.json` bumped from `0.1.0` to
+      `1.0.0`**, matching the addon's own milestone -- both had
+      meaningful fixes/features since `0.1.0` (`recording_edl`'s
+      orphan-cleanup and `.dvr_*_hls` diagnostics; `timeshift_buffer`'s
+      concurrent-viewer and provider-concurrent-stream-limit fixes,
+      among others per `CHANGELOG.md`), and versioning them together with
+      the addon signals "these are the 1.0-era companion plugins" more
+      clearly than an independent per-plugin scheme would. This version
+      is what Dispatcharr's own Plugins page shows users, independent of
+      the addon's own version number.
 - [x] **`CHANGELOG.md` created** at the repo root, "Keep a Changelog"-ish
       format, newest first, user-facing (what changed, not why -- that
       still lives in `docs/`). Backfilled real entries for every tagged
