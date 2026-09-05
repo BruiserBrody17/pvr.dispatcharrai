@@ -90,7 +90,7 @@ msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Off (default): a plain live stream straight from Dispatcharr's own proxy, no pause/rewind, no companion plugin, no admin account needed -- works out of the box. Server-side: real pause/rewind/fast-forward, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi) -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs), and requires the account this addon is configured with to be a Dispatcharr admin -- the plugin run/ API rejects anything less, and every live channel will fail to play until that's set up. Switch to Server-side once you've installed the plugin and have an admin account to use."
+msgid "Off (default): a plain live stream straight from Dispatcharr's own proxy, no pause/rewind, no extra addon, no admin account needed -- works out of the box. Local: real pause/rewind, buffered on this device via the separate inputstream.ffmpegdirect addon (Kodi's official repository, must be installed or live channel playback fails outright) -- no Dispatcharr admin account needed either, but the buffer doesn't persist across a Kodi restart or follow you to another device. Server-side: real pause/rewind/fast-forward too, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi) -- press Play as normal, no extra step, and the buffer is shared across every device using this Dispatcharr account. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs), and requires the account this addon is configured with to be a Dispatcharr admin -- the plugin run/ API rejects anything less, and every live channel will fail to play until that's set up. Pick Local instead of Server-side if you want real pause/rewind without granting admin access or installing a Dispatcharr-side plugin."
 msgstr ""
 
 msgctxt "#30035"
@@ -123,6 +123,10 @@ msgstr ""
 
 msgctxt "#30051"
 msgid "Off"
+msgstr ""
+
+msgctxt "#30052"
+msgid "Local (this device)"
 msgstr ""
 
 msgctxt "#30053"

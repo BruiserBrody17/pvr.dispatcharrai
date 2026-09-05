@@ -30,14 +30,13 @@
 
 Four platforms: Windows, Rocky Linux, CoreELEC/ODROID, macOS.
 
-- **Open question**: what does "tested" mean for 1.0 -- a defined smoke-test
-  pass (live playback, recording start/stop, catch-up, timeshift seek, EPG,
-  recurring timers) run once per platform right before release, or something
-  lighter/heavier?
+**Smoke-test pass, defined**: live playback, recording start/stop,
+catch-up, timeshift seek, EPG, recurring timers -- run once per platform
+right before release.
 
 | Platform | Status |
 |---|---|
-| Windows | Extensively exercised this session (recordings, catch-up, timeshift, DVR settings, recurring timers) |
+| Windows | Recording start/stop, catch-up, recurring timers, EPG, and live playback (`Off`, `Local`, and `Server-side` modes) all verified this session against a fresh build. Live-mode check also confirmed a real, practical thing: an existing profile's persisted `live_timeshift_mode` value survives the code-level default change unchanged (`default="true"` in settings.xml does **not** get re-resolved to the addon's new default on load) -- server-side kept working exactly as before for this account, Off was separately confirmed clean (`STREAMURL` set, `canseek: false` as designed, stable playback, zero errors), and `Local` (reintroduced this session -- see `docs/TIMESHIFT.md`) was confirmed with an actual seek: backward and forward both landed correctly (`demuxer seek to: ..., success`, ffmpegdirect's own `TimeshiftBuffer::Seek` locating the right segment/packet) and playback resumed cleanly both times. Timeshift *seek* itself under **server-side** mode specifically (as opposed to Local, or the in-progress-recording variant, both now verified) is the one remaining gap -- the underlying server-side seek code didn't change this session, so this is a documentation gap, not a suspected regression. |
 | Rocky Linux | Built and deployed; not freshly exercised end-to-end in this session |
 | CoreELEC / ODROID | Built and deployed via the beta.1-3 releases; not freshly exercised end-to-end in this session |
 | macOS | Only tested in a separate companion session (see `docs/CATCHUP.md`'s macOS `open_mode` investigation) -- not verified against the current build |
@@ -62,4 +61,9 @@ Four platforms: Windows, Rocky Linux, CoreELEC/ODROID, macOS.
 
 ## Open items (more will likely come up)
 
--
+- Local timeshift mode (`live_timeshift_mode = 1`) was reintroduced this
+  session -- verified live on Windows only. The other three platforms'
+  smoke-test passes should include it alongside server-side/Off, since it
+  depends on a separate addon (`inputstream.ffmpegdirect`) whose
+  availability/behavior could plausibly differ by platform in a way
+  nothing else in this checklist would catch.

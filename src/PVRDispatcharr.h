@@ -129,13 +129,20 @@ private:
   static constexpr int kTimerTypeOneTimeEpgBased = 3;
   static constexpr int kTimerTypeRecurring = 4;
   static constexpr int kLiveTimeshiftOff = 0;
-  // 1 used to be "local" (inputstream.ffmpegdirect's own on-device buffer),
-  // removed once server-side timeshift proved stable -- deliberately left
-  // unreused rather than renumbering kLiveTimeshiftServer down to 1, so an
-  // existing install with 2 already saved keeps meaning server-side rather
-  // than silently losing it (see m_liveTimeshiftMode's own comment on why
-  // this addon treats a persisted setting value as something to never
-  // repurpose).
+  // Removed once server-side timeshift proved stable (one less choice, one
+  // less separate-addon dependency for live playback), then reintroduced:
+  // server-side turned out to have a hard requirement -- a real Dispatcharr
+  // admin account -- that's a blanket restriction in Dispatcharr's own
+  // plugin run/ API (see docs/TIMESHIFT.md's "permission requirement"
+  // section), not something this addon or its companion plugin can loosen.
+  // Local fills that gap for anyone who doesn't want to grant admin access:
+  // real pause/rewind, entirely client-side via inputstream.ffmpegdirect's
+  // own on-device buffer, no Dispatcharr-side cooperation at all. Value 1
+  // was deliberately left unreused during the removal rather than
+  // renumbering kLiveTimeshiftServer down to 1, specifically so it could be
+  // safely reused here without an existing install's persisted `2` ever
+  // meaning something different.
+  static constexpr int kLiveTimeshiftLocal = 1;
   static constexpr int kLiveTimeshiftServer = 2;
   // ClientIndex namespace bits: series rules already use 0x40000000 (see
   // GetTimers()); recurring rules use a separate bit so a real Dispatcharr
@@ -258,21 +265,20 @@ private:
   // invariant that needs a single consistent snapshot.
   std::atomic<int> m_channelRefreshHours{12};
   std::atomic<int> m_epgRefreshHours{4};
-  // 0 = off, 2 = server-side (this addon's companion Dispatcharr plugin --
-  // see dispatcharr-plugin/timeshift_buffer/ in this repo); 1 (local,
-  // inputstream.ffmpegdirect's own on-device buffer) was removed once
-  // server-side proved stable -- see kLiveTimeshiftServer's own comment on
-  // why 1 stays unreused rather than the two remaining values getting
-  // renumbered down. Off exists for the account this addon is configured
-  // with NOT being (or the owner not wanting it to be) a Dispatcharr admin
-  // -- the timeshift_buffer plugin's run/ API requires that role; a plain
-  // stream needs nothing beyond ordinary channel-browsing/streaming
+  // 0 = off, 1 = local (inputstream.ffmpegdirect's own on-device buffer,
+  // no Dispatcharr-side cooperation needed), 2 = server-side (this addon's
+  // companion Dispatcharr plugin -- see dispatcharr-plugin/timeshift_buffer/
+  // in this repo, see kLiveTimeshiftLocal's own comment for the history of
+  // 1 being removed and then reintroduced). Off and Local both exist for
+  // the account this addon is configured with NOT being (or the owner not
+  // wanting it to be) a Dispatcharr admin -- the timeshift_buffer plugin's
+  // run/ API requires that role; a plain stream or an on-device ffmpegdirect
+  // buffer both need nothing beyond ordinary channel-browsing/streaming
   // permission. Defaults to Off, not server-side: OpenLiveStream() hard-fails
   // every live channel (see its own comment) when the account isn't admin or
   // the plugin isn't installed, which is exactly the state of a fresh
   // install before anyone's done that extra setup -- Off "just works" out
-  // of the box, server-side is an explicit opt-in once the extra plugin/
-  // admin-account setup is done.
+  // of the box, Local and server-side are both explicit opt-ins.
   std::atomic<int> m_liveTimeshiftMode{kLiveTimeshiftOff};
   std::atomic<bool> m_enableCatchupFfmpegdirectSeek{false};
   std::atomic<bool> m_debugLogging{false};

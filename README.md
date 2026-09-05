@@ -11,8 +11,9 @@ directly onto Dispatcharr's own backend and settings.
 
 - Channel and channel-group listing, with EPG (posters, New/Premiere/Live
   badges, genre, cast, episode names where the EPG source provides them)
-- Live TV playback, with optional server-side pause/rewind/seek via a
-  companion Dispatcharr plugin (see below)
+- Live TV playback, with optional pause/rewind/seek -- either server-side
+  via a companion Dispatcharr plugin, or entirely on-device with no
+  Dispatcharr admin account needed (see below)
 - Recording playback, including watching a recording while it's still
   being written
 - Recording pre/post padding, synced both ways with Dispatcharr's own
@@ -34,10 +35,16 @@ Two optional server-side plugins live in `dispatcharr-plugin/` in this
 repo and install separately on your Dispatcharr instance (not through
 Kodi):
 
-- **`timeshift_buffer`** -- enables live TV pause/rewind/seek. Requires an
-  admin-level Dispatcharr account. Without it, live channels still play
-  fine (the default), just without pause/rewind -- set `live_timeshift_mode`
-  to `Server-side` once you've installed it.
+- **`timeshift_buffer`** -- enables server-side live TV pause/rewind/seek
+  (`live_timeshift_mode` set to `Server-side`), shared across every device
+  using this Dispatcharr account. Requires an admin-level Dispatcharr
+  account. If you'd rather not grant that, set `live_timeshift_mode` to
+  `Local` instead: real pause/rewind buffered on the Kodi device itself via
+  the separate `inputstream.ffmpegdirect` addon, no Dispatcharr admin
+  account and no server-side plugin needed at all -- just doesn't persist
+  across a Kodi restart or follow you to another device. `Off` (the
+  default) plays live channels with no pause/rewind and no extra
+  dependency of any kind.
 - **`recording_edl`** -- exposes comskip commercial-break markers to Kodi.
   Also requires an admin-level Dispatcharr account. Optional; without it
   (or with a non-admin account), recordings just show no markers --
@@ -67,13 +74,16 @@ set to `manage` -- still short of full admin.
 Both companion plugins are the exception: Dispatcharr's plugin API is
 admin-only regardless of what a plugin actually does, so **either one
 requires a real Dispatcharr admin account** for the configured account to
-use it at all -- live-TV pause/rewind (`timeshift_buffer`) and comskip
-markers (`recording_edl`) alike. By default (`live_timeshift_mode` set to
-`Off`), live channels play with no extra setup; set it to `Server-side`
-once you've installed `timeshift_buffer` and have an admin account,
-otherwise every live channel will fail to play in that mode.
-`recording_edl` fails softer -- without admin, recordings just show no
-markers rather than a playback failure.
+use it at all -- server-side live-TV pause/rewind (`timeshift_buffer`) and
+comskip markers (`recording_edl`) alike. By default (`live_timeshift_mode`
+set to `Off`), live channels play with no extra setup; set it to
+`Server-side` once you've installed `timeshift_buffer` and have an admin
+account, otherwise every live channel will fail to play in that mode. If
+you want real pause/rewind without either the plugin or an admin account,
+set it to `Local` instead (needs `inputstream.ffmpegdirect` installed, or
+live channels fail to play the same way). `recording_edl` fails softer --
+without admin, recordings just show no markers rather than a playback
+failure.
 
 Most settings take effect immediately after saving. Connection settings
 (host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell

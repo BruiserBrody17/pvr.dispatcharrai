@@ -32,10 +32,10 @@ just pause/rewind, playback itself. `live_timeshift_mode` was
 what every install already had with no setting present, so existing
 users see no change) with `0` (Off) as an explicit opt-out -- a plain
 live stream via `STREAMURL`, no companion plugin, no admin account, no
-pause/rewind. Value `1` (local) stays retired, not reintroduced alongside
-it -- the description below is kept for history, not as a currently
-available choice; Off covers the same "no extra dependency" motivation
-without inputstream.ffmpegdirect's own separate install/failure mode.
+pause/rewind. Value `1` (local) stayed retired at the time, not
+reintroduced alongside it -- **superseded below**: it was brought back
+ahead of 1.0 once the admin requirement above turned out to be
+unloosenable.
 
 **Default flipped from server-side (`2`) to Off (`0`) ahead of 1.0.** The
 `2` default above was deliberately chosen at the time to match every
@@ -52,6 +52,58 @@ account and plugin are in place. Purely a shipped-default change --
 `settings.xml`'s `<default>` only applies to a fresh profile, so anyone
 who already has this addon installed keeps whatever value they already
 have on disk regardless.
+
+**Local (`live_timeshift_mode = 1`) reintroduced.** Investigating whether
+the server-side admin requirement above could be loosened (it can't --
+confirmed against Dispatcharr's current source, see the "permission
+requirement" section below: it's a blanket restriction on every plugin's
+`run/` API, not something this addon or its companion plugin can work
+around) surfaced that Local fills the exact gap that leaves: real
+pause/rewind for an account that isn't (or can't be) a Dispatcharr admin,
+with zero Dispatcharr-side cooperation at all. It was only ever removed
+for complexity reduction once server-side proved stable, not because it
+was broken -- the code below (restored essentially unchanged from before
+its removal, see git history) sets `inputstream.ffmpegdirect`'s
+`stream_mode: timeshift`, landing on ffmpegdirect's own dedicated
+`TimeshiftStream` class rather than the generic one that the snapshot
+workaround further below hit a confirmed, unfixable seek bug in.
+
+**Confirmed live, not just by inference from the code path being
+different**: opened a real channel (CNN) under Local, `TimeshiftStream::
+Start`/`DoReadWrite` in `kodi.log` confirmed ffmpegdirect actually
+instantiated the dedicated class, `canseek: true`. A backward seek (30s)
+logged `demuxer seek to: 5755.827300` / `..., success` with
+ffmpegdirect's own `TimeshiftBuffer::Seek`/`TimeshiftSegment::Seek`
+locating the exact segment and packet index, then a forward seek (30s)
+back toward live succeeded the same way -- playback resumed cleanly both
+times (`speed: 1`, no stuck `speed: 0`, no repeated identical failure the
+way the snapshot path's `av_seek_frame` bug produced 4/4). Real pause/
+rewind, working, no admin account, no server-side plugin.
+
+**`inputstream.ffmpegdirect` declared as an optional addon.xml dependency,
+not a required one.** Before this, a user could pick Local without
+realizing the separate addon isn't installed, and only find out when
+every live channel silently fails. Considered making it a *required*
+`<import>` instead (Kodi would then auto-install it alongside this addon)
+but traced Kodi's actual install path first
+(`CAddonInstallJob::CheckDependencies()`/`Install()` in
+`xbmc/addons/AddonInstaller.cpp`, confirmed against Kodi's current
+source, not assumed): a required dependency that isn't available from any
+of the user's enabled repositories fails the *entire* addon install, not
+just the one feature that needs it -- confirmed this applies to a
+zip-sideloaded install (`InstallFromZip()`) exactly the same as a
+repository install, since both funnel through the same
+`CAddonInstallJob`. That's a real risk for every installer, not just
+Local-mode users, for a payoff that only helps Local-mode users, so
+`optional="true"` instead: per the same source, Kodi's installer
+completely ignores a missing optional dependency (doesn't install it,
+doesn't block anything), so this is purely a documentation/discoverability
+improvement -- Kodi now lists the relationship in this addon's own
+metadata (confirmed live via `Addons.GetAddonDetails`: `"dependencies"`
+includes `{"addonid": "inputstream.ffmpegdirect", ..., "optional": true}`,
+`"broken": false`) -- not a behavior change. The help text's existing
+warning ("must be installed or live channel playback fails outright")
+remains the actual mechanism protecting a user from this mistake.
 
 **Off** (`live_timeshift_mode = 0`): `GetChannelStreamProperties()` sets
 `STREAMURL` directly to Dispatcharr's own live proxy URL
@@ -157,9 +209,10 @@ re-notification carrying an unchanged value becomes a no-op instead.
 Confirmed live afterward: the identical isolated `debug_logging` toggle,
 repeated, produced no restart at all.
 
-**Local** (`live_timeshift_mode = 1`, retired -- not currently
-selectable): `GetChannelStreamProperties()` routed live channel playback
-through `inputstream.ffmpegdirect`'s `stream_mode: timeshift`. Confirmed
+**Local** (`live_timeshift_mode = 1`; removed once server-side proved
+stable, then reintroduced -- see above): `GetChannelStreamProperties()`
+routes live channel playback through `inputstream.ffmpegdirect`'s
+`stream_mode: timeshift`. Confirmed
 via ffmpegdirect's own README this is exactly what that mode is for:
 adding pause/rewind to a plain, continuously-arriving live stream with no
 backend cooperation required at all, by recording it to a local on-disk
