@@ -24,6 +24,20 @@ file server answers HTTP Range requests against them, which is what lets
 stream. A background reaper (leader-elected across worker processes)
 stops and cleans up any buffer that's gone idle past `idle_timeout_seconds`.
 
+Multiple devices watching the same channel share this one buffer
+process -- Dispatcharr opens a single upstream connection to your
+provider per channel regardless of how many devices are watching, not
+one per viewer. That sharing doesn't extend to rewind depth, though:
+`pvr.dispatcharrai` deliberately trims what it exposes locally to a
+small near-live-edge window on every fresh channel open, so a device
+can only rewind into what it's personally been watching since it opened
+the channel, never another device's earlier viewing or time from before
+it joined. See [docs/TIMESHIFT.md](../../docs/TIMESHIFT.md)'s
+"Concurrent viewers" section for why -- Kodi's own demuxer can't
+reliably seek backward into buffer content it hasn't personally read
+through this session, confirmed live via a seek landing on the MPEG-TS
+PTS wraparound point instead of anywhere near its target.
+
 ## Installing
 
 1. Download `timeshift_buffer.zip` from the
