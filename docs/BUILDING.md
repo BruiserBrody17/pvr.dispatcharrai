@@ -347,6 +347,13 @@ called out inline so a future rebuild doesn't have to rediscover them.
 5. Install the resulting zip on the N2+ via Kodi's "install from zip file"
    option, or copy it over SSH and extract into
    `/storage/.kodi/addons/pvr.dispatcharrai/` directly, then restart Kodi.
+6. This build isn't automated in CI (see the "GitHub Actions job ...
+   rejected" note above) -- if this is a real tagged release, also attach
+   the zip to the GitHub Release by hand so CoreELEC users have something
+   to download instead of having to build it themselves:
+   ```bash
+   gh release upload <tag> target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharrai/pvr.dispatcharrai-<version>.zip
+   ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
 repeating -- the CoreELEC checkout itself can be reused, and with the
