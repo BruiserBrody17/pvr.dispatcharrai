@@ -48,7 +48,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
-  m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftServer);
+  m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
   m_enableCatchupFfmpegdirectSeek =
       kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
