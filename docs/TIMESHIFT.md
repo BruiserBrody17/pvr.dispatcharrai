@@ -1124,3 +1124,63 @@ collapse from a single short segment, described above) is already fixed
 independently by that same section's segment-duration-averaging change,
 which is what made flipping the default safe to consider at all.
 
+## A provider's own concurrent-stream limit took ~15s to fail instead of failing fast
+
+The 4-channel smoke test above surfaced a real, separate gap while
+diagnosing why its 4th buffer never produced a segment: `start_buffer`
+reports success as soon as it manages to *spawn* ffmpeg, not once ffmpeg
+has actually confirmed a working upstream connection -- so a buffer that
+will never succeed (most commonly because an upstream provider's own
+concurrent-stream limit is already fully used, and Dispatcharr's live
+proxy refuses the connection ffmpeg is reading from) looked identical, to
+every caller, to a buffer that's simply still cold-starting. Two real
+consequences followed from that, both now fixed:
+
+1. **`OpenLiveTimeshiftStream()`'s cold-start retry loop had no way to
+   tell the two apart**, so opening a channel that was genuinely (not
+   racing against something about to free up -- that's the already-fixed
+   synchronous-close race further up) pinned at a provider's limit still
+   burned its full ~15s retry budget before failing, with a generic "not
+   ready yet" message giving no indication why.
+2. **A dead buffer could zombie forever.** `start_buffer`'s reattach path
+   (`existing = _get_buffer_state(...)`) never checked whether the buffer
+   it was reattaching to was actually still alive -- every subsequent
+   `start_buffer` call against that same dead channel kept refreshing its
+   `last_heartbeat`, which both kept reporting false success to callers
+   *and* kept the idle-timeout reaper from ever reaping it (it never went
+   idle), since nothing was actually fetching from it to notice. A channel
+   that hit this once would silently fail the same way for every future
+   viewer, indefinitely, until someone noticed and called `stop_buffer` by
+   hand.
+
+**The fix**: `_get_live_manifest()` now checks whether the buffer's tracked
+ffmpeg process is still alive (`os.killpg(pid, 0)`, the same cross-worker
+-process-safe existence check `_stop_ffmpeg()` already used) before
+assuming "just cold-starting." If it's already exited, it raises a new
+`BufferFailedError` (a `RuntimeError` subclass) carrying the tail of that
+buffer's own `ffmpeg.log` for real diagnosis, `_get_live_manifest_action()`
+catches it specifically and returns `"fatal": true` alongside the message
+(and self-heals -- stops/removes/deletes the dead buffer's state right
+there, rather than waiting for anything else to notice), and
+`start_buffer`'s own reattach path runs the same liveness check up front,
+treating a dead "existing" buffer exactly like no buffer at all instead of
+reattaching to it. On the addon side, `RefreshLiveManifest()` gained an
+optional `fatalOut` parameter that surfaces that flag, and
+`OpenLiveTimeshiftStream()`'s cold-start loop breaks immediately when it's
+set instead of continuing to retry.
+
+**Confirmed live in two stages.** First, deterministically, against a
+channel_uuid that doesn't exist in Dispatcharr at all (guaranteeing
+ffmpeg fails immediately, independent of the real provider limit's
+own -- confirmed separately -- inconsistent reproducibility): `start_buffer`
+reported success (ffmpeg spawned), the first `get_live_manifest` call
+returned `"fatal": true` with the exact real cause (`HTTP error 404 Not
+Found`, `Error opening input file http://127.0.0.1:9191/proxy/ts/stream/
+<uuid>`), a second call immediately afterward found the buffer already
+gone (self-heal confirmed), and a fresh `start_buffer` against the same
+channel started genuinely new rather than reattaching to a zombie. Second,
+against the real, originally-reported condition: 3 real in-progress
+recordings plus an attempt to play a live channel, with the provider's own
+concurrent-stream limit already fully used by those 3 -- failed in about
+5 seconds, down from the ~15s this fix was written to address.
+

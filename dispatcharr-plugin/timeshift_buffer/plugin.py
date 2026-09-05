@@ -677,6 +677,32 @@ def _stop_ffmpeg(state: dict, logger):
         pass
 
 
+def _is_process_alive(pid) -> bool:
+    """Signal 0 checks a pid's existence without actually signaling it --
+    works cross-worker-process (unlike Popen.poll()/os.waitpid(), which only
+    work for the process's own parent), same reasoning as _stop_ffmpeg()'s
+    own liveness poll above. Only tells you the process is gone, not its
+    exit code -- getting that needs being the parent, which this plugin's
+    Redis-tracked pid generally isn't (it's whichever WSGI worker process
+    happened to handle the original start_buffer call, not necessarily this
+    one)."""
+    if not pid:
+        return False
+    try:
+        os.killpg(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return True  # e.g. PermissionError against a recycled, unrelated pid -- assume alive rather than reap something still running
+
+
+class BufferFailedError(RuntimeError):
+    """Distinguishes "ffmpeg already exited, this buffer will never produce
+    a segment" from a plain RuntimeError's "not ready yet, keep waiting" --
+    see _get_live_manifest()'s own comment on why the distinction matters."""
+
+
 def _remove_channel_files(state: dict, logger):
     # shutil.rmtree rather than a flat glob+unlink+rmdir: a channel
     # directory can contain the snapshot/ subdirectory created by
@@ -782,6 +808,35 @@ def _get_live_manifest(state: dict, logger) -> dict:
     channel_dir = Path(state["storage_path"]) / state["channel_uuid"]
     live_playlist_path = channel_dir / "live.m3u8"
     if not live_playlist_path.is_file():
+        # Two very different situations produce the identical symptom here
+        # -- no playlist yet -- and a caller retrying blindly on either one
+        # can't tell them apart: a buffer that's still cold-starting (ffmpeg
+        # running, just hasn't finished its first segment_time interval
+        # yet) versus one that will *never* produce a playlist because
+        # ffmpeg already exited (confirmed live: an upstream provider's own
+        # concurrent-stream limit, already fully used by other channels,
+        # makes Dispatcharr's live proxy refuse the connection ffmpeg is
+        # reading from -- ffmpeg has no -reconnect flag set here, so it
+        # just exits rather than retrying forever). Checking whether the
+        # tracked pid is still alive distinguishes them cheaply, so a
+        # caller (pvr.dispatcharrai's own OpenLiveTimeshiftStream() cold
+        # -start retry loop) can fail fast on the second case instead of
+        # retrying for its full ~15s budget against something that will
+        # never succeed.
+        if not _is_process_alive(state.get("pid")):
+            log_tail = ""
+            try:
+                log_path = channel_dir / "ffmpeg.log"
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                log_tail = " | ".join(lines[-5:])
+            except OSError:
+                pass
+            raise BufferFailedError(
+                "ffmpeg exited before producing any segments -- it will not "
+                "recover on its own (a provider-side concurrent-stream limit "
+                "is the most common cause)"
+                + (f"; last ffmpeg.log lines: {log_tail}" if log_tail else "")
+            )
         raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
 
     lines = live_playlist_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -1258,6 +1313,29 @@ class Plugin:
 
         existing = _get_buffer_state(channel_uuid)
         if existing:
+            # Confirmed live this check matters, not just theoretical: a
+            # buffer whose ffmpeg already died (see _get_live_manifest()'s
+            # own comment -- e.g. a provider-side concurrent-stream limit
+            # refusing the connection) otherwise stayed "existing" forever.
+            # Every future start_buffer for the same channel would keep
+            # reattaching to it (refreshing last_heartbeat below), which
+            # both kept reporting false success to callers and kept the
+            # idle-timeout reaper from ever reaping a buffer that will
+            # never produce anything -- a permanently zombied channel until
+            # someone noticed and called stop_buffer by hand. Treat a dead
+            # process exactly like "no buffer exists" instead: clean up its
+            # stale state and fall through to a genuinely fresh start.
+            if not _is_process_alive(existing.get("pid")):
+                logger.warning(
+                    "timeshift_buffer: start_buffer found a dead buffer for %s (pid %s no longer running) -- "
+                    "cleaning up and starting fresh instead of reattaching",
+                    channel_uuid, existing.get("pid"),
+                )
+                _remove_channel_files(existing, logger)
+                _delete_buffer_state(channel_uuid)
+                existing = None
+
+        if existing:
             existing["last_heartbeat"] = time.time()
             if viewer_id:
                 viewers = existing.setdefault("viewers", [])
@@ -1387,6 +1465,20 @@ class Plugin:
 
         try:
             manifest = _get_live_manifest(state, logger)
+        except BufferFailedError as exc:
+            # Caught ahead of the plain RuntimeError branch below (it's a
+            # subclass) -- `fatal: true` is what lets a caller (this
+            # addon's own OpenLiveTimeshiftStream() cold-start retry loop)
+            # stop retrying immediately instead of waiting out its full
+            # budget against a buffer that will never produce a segment.
+            # Also self-heals here rather than waiting for the next
+            # start_buffer call to notice (see that method's own comment):
+            # nothing else will proactively clean this up otherwise, since
+            # a dead buffer with no further fetches never goes idle either.
+            _stop_ffmpeg(state, logger)
+            _remove_channel_files(state, logger)
+            _delete_buffer_state(channel_uuid)
+            return {"status": "error", "fatal": True, "message": str(exc)}
         except RuntimeError as exc:
             return {"status": "error", "message": str(exc)}
         except Exception as exc:

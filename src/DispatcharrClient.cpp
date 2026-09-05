@@ -2248,8 +2248,11 @@ void DispatcharrClient::CloseRecordingStream()
   m_recordingStream = RecordingStreamState();
 }
 
-bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error)
+bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool* fatalOut)
 {
+  if (fatalOut)
+    *fatalOut = false;
+
   if (!m_liveTimeshiftStream.open)
   {
     error = "no live timeshift stream is open";
@@ -2287,6 +2290,8 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error)
   if (FieldOr<std::string>(result, "status", "") != "ok")
   {
     error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
+    if (fatalOut)
+      *fatalOut = FieldOr(result, "fatal", false);
     return false;
   }
 
@@ -2421,16 +2426,33 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // worse by repeatedly killing the previous attempt moments before it
   // would have finished) -- retry for a real cold start's worth of time
   // instead of failing on the first check.
+  // fatal (as opposed to a plain retry-worthy failure) means the plugin
+  // has confirmed ffmpeg already exited and this buffer will never
+  // produce a segment on its own -- most commonly an upstream provider's
+  // own concurrent-stream limit refusing the connection, confirmed live
+  // via a genuine 4-buffers-at-a-provider's-3-stream-cap test. Breaking
+  // out immediately here, instead of burning the full retry budget below
+  // (~15s) against something that can't recover, is what actually fixes
+  // the slow, unclear failure that test surfaced: without this, a
+  // brand-new channel open that happens to be genuinely at the provider's
+  // limit (not a race with something about to free up, which
+  // CloseLiveTimeshiftStream()'s own synchronous stop already handles --
+  // this is the "nothing is closing, the limit is just standing" case)
+  // still took the full ~15s to fail instead of a couple hundred
+  // milliseconds, with no indication in the error of why.
   constexpr int kColdStartMaxAttempts = 30;
   constexpr int kColdStartSleepMs = 500;
   bool manifestReady = false;
   for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
   {
-    if (RefreshLiveManifest(/*force=*/true, error))
+    bool fatal = false;
+    if (RefreshLiveManifest(/*force=*/true, error, &fatal))
     {
       manifestReady = true;
       break;
     }
+    if (fatal)
+      break;
     std::this_thread::sleep_for(std::chrono::milliseconds(kColdStartSleepMs));
   }
   if (!manifestReady)
