@@ -1,5 +1,11 @@
 # Dispatcharr API notes
 
+*This file and the ones it indexes below are engineering/development
+notes -- root causes, real API behavior confirmed live, decisions tried
+and reverted -- kept as project history, not user documentation. If
+you're looking to install or configure the addon, see the main
+[README.md](../README.md) instead.*
+
 `src/DispatcharrClient.cpp` talks to Dispatcharr's own REST API. Dispatcharr
 ships a live OpenAPI document at `http://<your-server>:9191/api/schema/`
 (and a Swagger UI at `/swagger/`) -- **check that first** against anything
