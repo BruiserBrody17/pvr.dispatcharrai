@@ -114,3 +114,73 @@ and in-progress-recording features once were before they were also made
 unconditional (see `docs/TIMESHIFT.md`/`docs/RECORDINGS.md`) -- this one
 never needed the "still experimental, might not be ready" caveat those
 did in the first place.
+
+## Orphaned `.edl`/`.logo.txt` sidecar cleanup
+
+A user pasted a real `/data/recordings` listing showing leftover `.edl`
+and `.logo.txt` (comskip-generated) files with no recording left to own
+them. Root cause, confirmed against Dispatcharr's own source: deleting a
+recording (`RecordingViewSet.destroy()`) only removes
+`custom_properties["file_path"]` and, if present, an in-progress HLS
+staging directory -- it never removes either comskip sidecar file. Since
+`destroy()`'s own empty-folder pruning runs once at delete time, before
+removing these sidecars would even be possible, the show/season folder is
+left behind too.
+
+Added `scrub_orphaned_sidecars`: finds and removes `.edl`/`.logo.txt`
+files with no other file in the same directory sharing their base name
+(the only safe, unambiguous signal that the recording they belonged to is
+actually gone), then sweeps for any directory left empty -- including
+ones that were already empty going in, not just ones this removal
+happened to empty out. Confirmed safe against `tasks.py`'s own
+`comskip_process_recording`: comskip never runs before `file_path`
+exists, and "cut" mode's own replacement of `file_path` is an atomic
+`os.replace`, so there's no window where a sidecar could exist while its
+recording is merely still being written.
+
+**A real incident during development, not a hypothetical, drove the final
+scan-root design.** An early version always included the bare
+`/data/recordings` root in its scan on the reasoning that it was
+harmless, matching Dispatcharr's own hardcoded `library_root`. Live on a
+real install, the empty-directory sweep instead walked into and removed
+Dispatcharr's own unrelated top-level entries there -- a `.dvr_*_hls`
+staging directory and a `.timeshift` directory, the latter requiring a
+Dispatcharr restart to recreate. Fixed with two independent guards, not
+one: scan roots are now derived strictly from DVR Settings' four path
+templates (never the bare `/data/recordings` root, even for a degenerate
+template with no subdirectory of its own), and the directory walk
+separately refuses to touch anything dot-prefixed at any depth regardless
+of which root it started from -- confirmed live afterward against the
+exact same layout that caused the original incident: the genuine orphan
+was removed, `.dvr_*_hls` and `.timeshift` both survived.
+
+## `.dvr_*_hls` staging directories: diagnose first, delete only what's provably safe
+
+Deliberately kept out of `scrub_orphaned_sidecars` -- much higher stakes
+than a stray sidecar file. `.dvr_<recording_id>_hls` is the per-recording
+HLS segment staging directory `tasks.py` creates alongside a recording
+while it's being written and converted. Dispatcharr manages its own
+lifecycle correctly in the common cases (removes it after a successful
+concat, once any active viewer's heartbeat window has passed; deliberately
+*keeps* it, logging "Keeping HLS segments for recovery," when a concat
+fails and its own MP4-intermediate fallback also fails, since it's then
+the only surviving copy of that recording). But `RecordingViewSet.destroy()`'s
+own cleanup of a deleted recording's `_hls_dir` runs on a bare
+`daemon=True` thread with no persistence or retry -- if Dispatcharr
+restarts or crashes in the gap between the DB row being deleted and that
+thread finishing, the directory is orphaned permanently with nothing left
+to ever reference it again.
+
+Added `list_dvr_hls_staging_dirs` first, as a read-only diagnostic:
+classifies every such directory it finds as `active` (a Recording row with
+`status: recording` still points here), `preserved_failure` (a Recording
+row with `remux_success: false` still points here -- the only surviving
+copy), `referenced` (a Recording row exists but neither signal above is
+confirmed -- needs manual review), or `orphaned` (no Recording row with
+that id exists at all). Only once that was live and reviewed against real
+data did `delete_orphaned_dvr_hls_dirs` get added, scoped strictly to the
+`orphaned` classification -- deliberately not gated on whether a directory
+is empty, since a brand-new recording's own staging directory is created
+before ffmpeg writes its first segment, so a genuinely active recording
+can legitimately look empty for its first few seconds. Emptiness was
+never the safety signal; a real, current Recording row is.
