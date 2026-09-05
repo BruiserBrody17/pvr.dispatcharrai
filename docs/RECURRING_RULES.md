@@ -168,3 +168,92 @@ rule existed server-side:
    works for real, not just at the metadata level.
 
 Cleaned up all test rules/recordings afterward.
+
+## Auto-computing the offset for common zones, instead of asking for it
+
+The manual `recurring_rule_utc_offset_minutes` setting above works, but has
+an obvious flaw a user pointed out directly: if it's correctly set, it
+should always equal whatever Dispatcharr's own configured timezone
+currently is -- there's no legitimate reason for it to differ, and if it
+drifts (most commonly: a DST-observing zone that needs flipping twice a
+year, and nobody remembers to), recurring timers silently fire at the
+wrong wall-clock time with no error surfaced anywhere.
+
+**Step one, surfacing the zone name.** Dispatcharr's configured system
+timezone is readable as a plain IANA zone name via
+`GET /api/core/settings/`'s `system_settings.time_zone` field (confirmed
+live: `"America/Chicago"`) -- this was already true, just not read by this
+addon. Added `DispatcharrClient::GetSystemTimeZone()` (generalizing the
+existing single-purpose `FindDvrSettingsRow()` into
+`FindCoreSettingsRow(key, ...)` so both the DVR-padding row and this new
+`system_settings` row share the same lookup) and a new read-only
+`dispatcharr_timezone_info` setting, synced on every restart the same
+"only rewrite if actually different" way the DVR padding settings already
+work. Doesn't solve the drift problem by itself -- just gives a concrete
+reference instead of making the user separately check Dispatcharr's own
+admin panel -- but is a genuine, if small, improvement on its own.
+
+**Step two, actually computing the offset.** A zone *name* alone doesn't
+give a numeric offset without real DST transition rules, which is exactly
+why a full IANA timezone database was ruled out for this addon to bundle.
+But DST rules for a handful of common zones are simple, stable, and
+well-documented enough to hardcode directly:
+
+- **US/Canada** (Energy Policy Act of 2005, in effect since 2007): starts
+  2:00am local *standard* time on the 2nd Sunday of March, ends 2:00am
+  local *daylight* time on the 1st Sunday of November.
+- **UK/EU**: starts 01:00 UTC on the last Sunday of March, ends 01:00 UTC
+  on the last Sunday of October -- defined directly in UTC, no per-zone
+  offset needed for the transition moments themselves, unlike the
+  US/Canada rule.
+
+Implemented as `DispatcharrClient::ComputeKnownZoneOffsetMinutes()` --
+pure UTC `time_t` arithmetic (nth-weekday-of-month / last-weekday-of-month
+helpers, reusing the existing `PortableTimeGm()` cross-platform helper, no
+platform timezone API or bundled database involved at all), covering 25
+zones (US Eastern/Central/Mountain/Pacific/Alaska + Arizona/Hawaii's
+no-DST cases, five Canadian zones, UK/Ireland, six Central European zones,
+three Eastern European zones, plus UTC itself). Deliberately excludes
+Southern Hemisphere zones (Australia's DST runs the opposite direction,
+October-April, with its own date rules) and anywhere else not on this
+list -- out of scope for this pass, falls back to the existing manual
+entry.
+
+**Verified independently before trusting it against real timers**: the
+exact same nth-weekday/last-weekday/UTC-conversion algorithm was
+reimplemented in Python (using its trusted stdlib `datetime`, not this
+addon's own logic, as the independent check) and run against published,
+verifiable US and EU DST transition dates for 2025-2027 -- every single
+computed date matched exactly. Also cross-checked live: computing
+`America/Chicago`'s offset for "right now" returned `-300` (CDT), matching
+the real, already-known-correct value already configured on a live
+instance.
+
+**A real correctness bug found and fixed before it ever shipped as
+final**: the first version of this computed the offset once at addon
+*startup* and wrote it into `recurring_rule_utc_offset_minutes` as a plain
+number -- self-healing on every restart, but stale for anyone who leaves
+Kodi running continuously across an actual DST transition (rare, but a
+real gap, not hypothetical: Kodi is exactly the kind of app people leave
+running for weeks). Fixed by not caching a *computed offset* at all --
+instead a new `recurring_rule_timezone` setting stores the *zone name*
+(auto-selected to match Dispatcharr's own reported zone when it's one of
+the 25 known ones, "manual" otherwise), and
+`PVRDispatcharr::EffectiveRecurringRuleUtcOffsetMinutes()` calls
+`ComputeKnownZoneOffsetMinutes()` fresh at the two actual points the
+offset is used (`GetTimers()`'s read-back, and
+`ComputeRecurringRuleFields()`'s create/update path) rather than once at
+construction. Deliberately not cached in a member either, unlike most
+other settings this class caches in an `std::atomic` -- both call sites
+are synchronous PVR callbacks on Kodi's own thread, not a background
+polling loop, so there's no thread-safety reason to cache it the way
+`m_recordingRefreshMinutes` needs to for its own thread.
+
+Confirmed live end-to-end after the fix: deliberately set the manual
+offset to a wrong value (`0`) with `recurring_rule_timezone` still on
+`America/Chicago`, restarted, and confirmed via `kodi.log` it corrected
+back to reading through the zone-based computation rather than trusting
+the stale manual value -- the log line
+(`setting recurring_rule_timezone=America/Chicago (known zone)`) confirms
+the sync fired and the dropdown, not the manual number, is what's actually
+authoritative for a known zone.

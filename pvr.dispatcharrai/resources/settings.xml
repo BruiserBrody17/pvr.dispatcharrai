@@ -119,6 +119,50 @@
           <default>false</default>
           <control type="toggle" />
         </setting>
+        <setting id="dispatcharr_timezone_info" type="string" label="30058" help="30059">
+          <level>1</level>
+          <default></default>
+          <constraints>
+            <allowempty>true</allowempty>
+          </constraints>
+          <control type="edit" format="string" />
+          <enable>false</enable>
+        </setting>
+        <setting id="recurring_rule_timezone" type="string" label="30060" help="30061">
+          <level>1</level>
+          <default>manual</default>
+          <constraints>
+            <options>
+              <option label="30062">manual</option>
+              <option label="30063">America/New_York</option>
+              <option label="30064">America/Chicago</option>
+              <option label="30065">America/Denver</option>
+              <option label="30066">America/Los_Angeles</option>
+              <option label="30067">America/Anchorage</option>
+              <option label="30068">America/Phoenix</option>
+              <option label="30069">Pacific/Honolulu</option>
+              <option label="30070">America/Toronto</option>
+              <option label="30071">America/Winnipeg</option>
+              <option label="30072">America/Edmonton</option>
+              <option label="30073">America/Vancouver</option>
+              <option label="30074">America/Halifax</option>
+              <option label="30075">Europe/London</option>
+              <option label="30076">Europe/Dublin</option>
+              <option label="30077">Europe/Paris</option>
+              <option label="30078">Europe/Berlin</option>
+              <option label="30079">Europe/Madrid</option>
+              <option label="30080">Europe/Rome</option>
+              <option label="30081">Europe/Amsterdam</option>
+              <option label="30082">Europe/Brussels</option>
+              <option label="30083">Europe/Helsinki</option>
+              <option label="30084">Europe/Athens</option>
+              <option label="30085">Europe/Bucharest</option>
+              <option label="30086">UTC</option>
+              <option label="30087">Etc/UTC</option>
+            </options>
+          </constraints>
+          <control type="list" format="string" />
+        </setting>
         <setting id="recurring_rule_utc_offset_minutes" type="integer" label="30049" help="30050">
           <level>1</level>
           <default>0</default>

@@ -507,6 +507,30 @@ public:
   // silently wipe out the unrelated settings sharing that same row.
   bool SetDvrOffsetMinutes(int preMinutes, int postMinutes, std::string& error);
 
+  // Dispatcharr's own configured system timezone (CoreSettings key
+  // "system_settings", field "time_zone"), as a raw IANA zone name (e.g.
+  // "America/Chicago") -- confirmed live against a real instance. Surfaced
+  // as read-only info next to recurring_rule_utc_offset_minutes so the
+  // user has a concrete reference for what numeric offset to enter there,
+  // without this addon needing to bundle a real timezone database just to
+  // compute that offset itself (see docs/RECURRING_RULES.md for why that
+  // was deliberately ruled out).
+  bool GetSystemTimeZone(std::string& timeZoneOut, std::string& error);
+
+  // Auto-computes the current UTC offset (minutes) for the small set of
+  // well-known IANA zones (US/Canada, UK/EU) hardcoded in
+  // DispatcharrClient.cpp, using their real, stable DST transition rules
+  // -- see docs/RECURRING_RULES.md for why a full timezone database isn't
+  // bundled to do this for every possible zone instead. Returns false
+  // (offsetMinutesOut untouched) for any zone not in that short list, in
+  // which case recurring_rule_utc_offset_minutes still needs to be set
+  // manually. Pure computation, no network/instance state needed --
+  // static so PVRDispatcharr's constructor can call it directly.
+  // `nowUtc` is a parameter purely for testability; real callers should
+  // always pass the actual current time.
+  static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc,
+                                             int& offsetMinutesOut);
+
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
   // LengthRecordedStream. Kodi's kodi-dev-kit docs describe
@@ -606,11 +630,13 @@ private:
   bool Login(std::string& error);
   bool RefreshAccessToken(std::string& error);
 
-  // Finds the one CoreSettings row with key kDvrSettingsKey and returns
-  // its id and full value blob (unmodified) -- both GetDvrOffsetMinutes()
-  // and SetDvrOffsetMinutes() need this same lookup, the latter as the
-  // read half of its read-modify-write.
-  bool FindDvrSettingsRow(int& idOut, nlohmann::json& valueOut, std::string& error);
+  // Finds the one CoreSettings row with the given key and returns its id
+  // and full value blob (unmodified) -- GetDvrOffsetMinutes()/
+  // SetDvrOffsetMinutes() (key kDvrSettingsKey) and GetSystemTimeZone()
+  // (key kSystemSettingsKey) all need this same lookup, just against
+  // different rows of the same /api/core/settings/ list.
+  bool FindCoreSettingsRow(const std::string& key, int& idOut, nlohmann::json& valueOut,
+                            std::string& error);
 
   // Fetches the raw HLS playlist text for an in-progress recording, with a
   // self-healing retry on a 401. Returns false (with `error` set) on a

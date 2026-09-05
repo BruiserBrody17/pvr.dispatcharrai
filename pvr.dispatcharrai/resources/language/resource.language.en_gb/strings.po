@@ -114,11 +114,11 @@ msgid "Connects directly to Dispatcharr's own real-time update feed (the same on
 msgstr ""
 
 msgctxt "#30049"
-msgid "Recurring timer: Dispatcharr's system timezone offset from UTC (minutes)"
+msgid "Recurring timer: manual timezone offset from UTC (minutes)"
 msgstr ""
 
 msgctxt "#30050"
-msgid "Only affects recurring (day-of-week) timers. Dispatcharr stores a recurring rule's start/end time-of-day as a plain wall-clock value with no timezone attached, and interprets it using its own configured system timezone (Settings -> System in Dispatcharr's web UI), not UTC -- this addon has no way to read that automatically and convert for you, since it doesn't bundle a full IANA timezone database. Set this to match Dispatcharr's configured system timezone's CURRENT offset from UTC, e.g. -360 for US Central Standard Time (UTC-6) or -300 for Central Daylight Time (UTC-5) -- if that zone observes daylight saving, you'll need to update this by 60 minutes twice a year yourself, or a recurring timer will fire an hour off until you do. Leave at 0 if Dispatcharr's system timezone is UTC. One-time and series timers are unaffected -- this only matters for the recurring timer type."
+msgid "Only used when the timezone setting above is left on \"Manual\" -- either because Dispatcharr's configured zone isn't one of the common ones this addon knows real DST rules for, or you've deliberately chosen manual control. Only affects recurring (day-of-week) timers. Dispatcharr stores a recurring rule's start/end time-of-day as a plain wall-clock value with no timezone attached, and interprets it using its own configured system timezone (Settings -> System in Dispatcharr's web UI), not UTC -- this addon has no way to derive an arbitrary zone's current offset itself (that needs a full IANA timezone database it doesn't bundle), so when the dropdown above can't handle it, it falls back to you entering it directly: set this to match Dispatcharr's configured system timezone's CURRENT offset from UTC, e.g. -360 for US Central Standard Time (UTC-6) or -300 for Central Daylight Time (UTC-5) -- if that zone observes daylight saving, you'll need to update this by 60 minutes twice a year yourself, or a recurring timer will fire an hour off until you do. Leave at 0 if Dispatcharr's system timezone is UTC. One-time and series timers are unaffected -- this only matters for the recurring timer type."
 msgstr ""
 
 msgctxt "#30051"
@@ -145,12 +145,132 @@ msgctxt "#30057"
 msgid "The end-of-recording counterpart to the start-padding setting above -- see its help text for the full explanation (global-only, EPG-based recordings only, kept in sync with Dispatcharr's real value on restart)."
 msgstr ""
 
+msgctxt "#30058"
+msgid "Dispatcharr's configured timezone (for reference)"
+msgstr ""
+
+msgctxt "#30059"
+msgid "Read-only: Dispatcharr's own configured system timezone, as its raw IANA zone name (e.g. \"America/Chicago\") -- kept in sync on every restart. When this is one of the zones the timezone dropdown below recognizes, that dropdown is auto-selected to match it, so this field mostly exists for the case where it isn't -- a concrete reference for what zone you're converting from when you have to fall back to manual offset entry, instead of having to separately check Dispatcharr's own admin panel."
+msgstr ""
+
+msgctxt "#30060"
+msgid "Recurring timer: timezone"
+msgstr ""
+
+msgctxt "#30061"
+msgid "Only affects recurring (day-of-week) timers -- see the manual-offset setting below for the full explanation of why this exists at all. Pick the zone that matches Dispatcharr's own configured system timezone (shown just above) and this addon computes the correct current UTC offset for it automatically, including flipping for daylight saving on its own -- no more manually updating a number twice a year. Auto-selected to match Dispatcharr's own zone on every restart when it's one of the zones listed here, so you shouldn't normally need to touch this yourself. If your zone isn't in this list, leave this on \"Manual (enter offset below)\" and use the plain numeric offset setting instead -- this addon only knows real DST transition rules for a limited set of common zones (US/Canada, UK/EU), not a full worldwide timezone database."
+msgstr ""
+
+msgctxt "#30062"
+msgid "Manual (enter offset below)"
+msgstr ""
+
+msgctxt "#30063"
+msgid "America/New_York"
+msgstr ""
+
+msgctxt "#30064"
+msgid "America/Chicago"
+msgstr ""
+
+msgctxt "#30065"
+msgid "America/Denver"
+msgstr ""
+
+msgctxt "#30066"
+msgid "America/Los_Angeles"
+msgstr ""
+
+msgctxt "#30067"
+msgid "America/Anchorage"
+msgstr ""
+
+msgctxt "#30068"
+msgid "America/Phoenix"
+msgstr ""
+
+msgctxt "#30069"
+msgid "Pacific/Honolulu"
+msgstr ""
+
+msgctxt "#30070"
+msgid "America/Toronto"
+msgstr ""
+
+msgctxt "#30071"
+msgid "America/Winnipeg"
+msgstr ""
+
+msgctxt "#30072"
+msgid "America/Edmonton"
+msgstr ""
+
+msgctxt "#30073"
+msgid "America/Vancouver"
+msgstr ""
+
+msgctxt "#30074"
+msgid "America/Halifax"
+msgstr ""
+
+msgctxt "#30075"
+msgid "Europe/London"
+msgstr ""
+
+msgctxt "#30076"
+msgid "Europe/Dublin"
+msgstr ""
+
+msgctxt "#30077"
+msgid "Europe/Paris"
+msgstr ""
+
+msgctxt "#30078"
+msgid "Europe/Berlin"
+msgstr ""
+
+msgctxt "#30079"
+msgid "Europe/Madrid"
+msgstr ""
+
+msgctxt "#30080"
+msgid "Europe/Rome"
+msgstr ""
+
+msgctxt "#30081"
+msgid "Europe/Amsterdam"
+msgstr ""
+
+msgctxt "#30082"
+msgid "Europe/Brussels"
+msgstr ""
+
+msgctxt "#30083"
+msgid "Europe/Helsinki"
+msgstr ""
+
+msgctxt "#30084"
+msgid "Europe/Athens"
+msgstr ""
+
+msgctxt "#30085"
+msgid "Europe/Bucharest"
+msgstr ""
+
+msgctxt "#30086"
+msgid "UTC"
+msgstr ""
+
+msgctxt "#30087"
+msgid "Etc/UTC"
+msgstr ""
+
 msgctxt "#30047"
 msgid "Improve catch-up seek reliability (experimental)"
 msgstr ""
 
 msgctxt "#30048"
-msgid "Routes catch-up/archive playback (play from guide) through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of Kodi's own built-in seeking, which can be imprecise for raw MPEG-TS over HTTP. Experimental -- requires inputstream.ffmpegdirect to be installed, or catch-up playback will fail outright with this on. Leave off to use Kodi's default catch-up playback."
+msgid "Routes catch-up/archive playback (play from guide) through the separate inputstream.ffmpegdirect addon (Kodi's official repository) instead of Kodi's own built-in seeking, which can be imprecise for raw MPEG-TS over HTTP. Experimental -- requires inputstream.ffmpegdirect to be installed, or catch-up playback will fail outright with this on. Results have been inconsistent in testing: one round found precise seeks, just slow (tens of seconds to a few minutes to land) on a several-hour recording; a later side-by-side comparison against the default, same content, found this setting 2-3x slower on every seek with no clear precision advantage over just leaving it off. Worth trying against your own content, but don't assume it's an upgrade -- leave off to use Kodi's default catch-up playback if unsure."
 msgstr ""
 
 msgctxt "#30030"

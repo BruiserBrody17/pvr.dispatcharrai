@@ -53,6 +53,7 @@ constexpr const char* kCoreSettingsPath = "/api/core/settings/";
 // fixed id (that id is a plain auto-increment DB primary key and isn't
 // guaranteed the same across different Dispatcharr installs).
 constexpr const char* kDvrSettingsKey = "dvr_settings";
+constexpr const char* kSystemSettingsKey = "system_settings";
 constexpr const char* kLogosPath = "/api/channels/logos/";
 // Confirmed against a live instance: creates a session-bound catch-up
 // (archived programme) playback URL that stays valid via a sliding idle
@@ -273,6 +274,176 @@ time_t TimeFromDateString(const std::string& dateStr)
   }
   return PortableTimeGm(&tmVal);
 }
+
+// --- Known-timezone DST auto-detection (see ComputeKnownZoneOffsetMinutes's
+// own doc comment in DispatcharrClient.h for why this exists and its
+// deliberately narrow scope) ---
+
+// Day-of-month (1-31) of the nth (1-based) occurrence of `weekday`
+// (0=Sunday) in the given UTC calendar month.
+int NthWeekdayOfMonth(int year, int month0, int weekday, int n)
+{
+  struct tm first{};
+  first.tm_year = year - 1900;
+  first.tm_mon = month0;
+  first.tm_mday = 1;
+  time_t firstT = PortableTimeGm(&first);
+  struct tm resolved{};
+#if defined(_WIN32)
+  gmtime_s(&resolved, &firstT);
+#else
+  gmtime_r(&firstT, &resolved);
+#endif
+  int offset = (weekday - resolved.tm_wday + 7) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
+
+// Day-of-month of the LAST occurrence of `weekday` in the given UTC
+// calendar month -- the EU DST rule below is defined this way, not by a
+// fixed nth-occurrence count.
+int LastWeekdayOfMonth(int year, int month0, int weekday)
+{
+  static constexpr int kDaysInMonth[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  int days = kDaysInMonth[month0];
+  if (month0 == 1) // February leap-year check
+  {
+    bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    if (leap)
+      days = 29;
+  }
+  struct tm last{};
+  last.tm_year = year - 1900;
+  last.tm_mon = month0;
+  last.tm_mday = days;
+  time_t lastT = PortableTimeGm(&last);
+  struct tm resolved{};
+#if defined(_WIN32)
+  gmtime_s(&resolved, &lastT);
+#else
+  gmtime_r(&lastT, &resolved);
+#endif
+  int diff = (resolved.tm_wday - weekday + 7) % 7;
+  return days - diff;
+}
+
+// US/Canada DST rule, stable since the Energy Policy Act of 2005 (in
+// effect from 2007 onward): starts 2:00am LOCAL STANDARD time on the 2nd
+// Sunday of March, ends 2:00am LOCAL DAYLIGHT time on the 1st Sunday of
+// November. Using the calendar year of `nowUtc` for both transition dates
+// works correctly year-round with no special-casing: for a "now" before
+// this year's March transition, that transition is still in the future
+// (not yet DST, correct), and for a "now" after this year's November
+// transition, that's also correctly in the past (standard time again).
+bool IsUsCanadaDstInEffect(time_t nowUtc, int standardOffsetMinutes)
+{
+  struct tm nowTm{};
+#if defined(_WIN32)
+  gmtime_s(&nowTm, &nowUtc);
+#else
+  gmtime_r(&nowUtc, &nowTm);
+#endif
+  int year = nowTm.tm_year + 1900;
+
+  struct tm springLocal{};
+  springLocal.tm_year = year - 1900;
+  springLocal.tm_mon = 2; // March
+  springLocal.tm_mday = NthWeekdayOfMonth(year, 2, 0, 2);
+  springLocal.tm_hour = 2;
+  time_t springUtc = PortableTimeGm(&springLocal) - standardOffsetMinutes * 60;
+
+  struct tm fallLocal{};
+  fallLocal.tm_year = year - 1900;
+  fallLocal.tm_mon = 10; // November
+  fallLocal.tm_mday = NthWeekdayOfMonth(year, 10, 0, 1);
+  fallLocal.tm_hour = 2;
+  int daylightOffsetMinutes = standardOffsetMinutes + 60;
+  time_t fallUtc = PortableTimeGm(&fallLocal) - daylightOffsetMinutes * 60;
+
+  return nowUtc >= springUtc && nowUtc < fallUtc;
+}
+
+// UK/EU DST rule: starts 01:00 UTC on the last Sunday of March, ends
+// 01:00 UTC on the last Sunday of October -- defined directly in UTC
+// (unlike the US/Canada rule above), so no per-zone offset is needed for
+// the transition moments themselves.
+bool IsEuDstInEffect(time_t nowUtc)
+{
+  struct tm nowTm{};
+#if defined(_WIN32)
+  gmtime_s(&nowTm, &nowUtc);
+#else
+  gmtime_r(&nowUtc, &nowTm);
+#endif
+  int year = nowTm.tm_year + 1900;
+
+  struct tm springUtcTm{};
+  springUtcTm.tm_year = year - 1900;
+  springUtcTm.tm_mon = 2; // March
+  springUtcTm.tm_mday = LastWeekdayOfMonth(year, 2, 0);
+  springUtcTm.tm_hour = 1;
+  time_t springUtc = PortableTimeGm(&springUtcTm);
+
+  struct tm fallUtcTm{};
+  fallUtcTm.tm_year = year - 1900;
+  fallUtcTm.tm_mon = 9; // October
+  fallUtcTm.tm_mday = LastWeekdayOfMonth(year, 9, 0);
+  fallUtcTm.tm_hour = 1;
+  time_t fallUtc = PortableTimeGm(&fallUtcTm);
+
+  return nowUtc >= springUtc && nowUtc < fallUtc;
+}
+
+enum class DstFamily
+{
+  kNone,     // fixed offset year-round, no DST
+  kUsCanada,
+  kEu,
+};
+
+struct KnownTimeZone
+{
+  const char* ianaName;
+  int standardOffsetMinutes;
+  DstFamily family;
+};
+
+// Deliberately narrow: only zones with simple, stable, well-documented DST
+// rules (or none at all). Anything not listed here falls back to the
+// existing manual recurring_rule_utc_offset_minutes entry -- see
+// ComputeKnownZoneOffsetMinutes's own doc comment in DispatcharrClient.h.
+constexpr KnownTimeZone kKnownTimeZones[] = {
+    // United States
+    {"America/New_York", -300, DstFamily::kUsCanada},
+    {"America/Chicago", -360, DstFamily::kUsCanada},
+    {"America/Denver", -420, DstFamily::kUsCanada},
+    {"America/Los_Angeles", -480, DstFamily::kUsCanada},
+    {"America/Anchorage", -540, DstFamily::kUsCanada},
+    {"America/Phoenix", -420, DstFamily::kNone},  // Arizona: no DST
+    {"Pacific/Honolulu", -600, DstFamily::kNone}, // Hawaii: no DST
+    // Canada
+    {"America/Toronto", -300, DstFamily::kUsCanada},
+    {"America/Winnipeg", -360, DstFamily::kUsCanada},
+    {"America/Edmonton", -420, DstFamily::kUsCanada},
+    {"America/Vancouver", -480, DstFamily::kUsCanada},
+    {"America/Halifax", -240, DstFamily::kUsCanada},
+    // UK/Ireland
+    {"Europe/London", 0, DstFamily::kEu},
+    {"Europe/Dublin", 0, DstFamily::kEu},
+    // Central Europe
+    {"Europe/Paris", 60, DstFamily::kEu},
+    {"Europe/Berlin", 60, DstFamily::kEu},
+    {"Europe/Madrid", 60, DstFamily::kEu},
+    {"Europe/Rome", 60, DstFamily::kEu},
+    {"Europe/Amsterdam", 60, DstFamily::kEu},
+    {"Europe/Brussels", 60, DstFamily::kEu},
+    // Eastern Europe
+    {"Europe/Helsinki", 120, DstFamily::kEu},
+    {"Europe/Athens", 120, DstFamily::kEu},
+    {"Europe/Bucharest", 120, DstFamily::kEu},
+    // No-DST reference
+    {"UTC", 0, DstFamily::kNone},
+    {"Etc/UTC", 0, DstFamily::kNone},
+};
 
 // URL-encodes a query parameter value (titles/tvg_ids can contain spaces,
 // '&', etc.). curl_easy_escape needs a handle but doesn't use it for
@@ -1430,7 +1601,8 @@ bool DispatcharrClient::ExtendRecurringRuleEndDate(int ruleId, time_t newEndDate
                  response, error);
 }
 
-bool DispatcharrClient::FindDvrSettingsRow(int& idOut, json& valueOut, std::string& error)
+bool DispatcharrClient::FindCoreSettingsRow(const std::string& key, int& idOut, json& valueOut,
+                                             std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1451,14 +1623,14 @@ bool DispatcharrClient::FindDvrSettingsRow(int& idOut, json& valueOut, std::stri
 
   for (const auto& row : list)
   {
-    if (FieldOr<std::string>(row, "key", "") == kDvrSettingsKey)
+    if (FieldOr<std::string>(row, "key", "") == key)
     {
       idOut = FieldOr(row, "id", 0);
       valueOut = row.contains("value") && row["value"].is_object() ? row["value"] : json::object();
       return idOut != 0;
     }
   }
-  error = "Dispatcharr has no dvr_settings row in /api/core/settings/";
+  error = "Dispatcharr has no " + key + " row in /api/core/settings/";
   return false;
 }
 
@@ -1466,7 +1638,7 @@ bool DispatcharrClient::GetDvrOffsetMinutes(int& preMinutesOut, int& postMinutes
 {
   int id = 0;
   json value;
-  if (!FindDvrSettingsRow(id, value, error))
+  if (!FindCoreSettingsRow(kDvrSettingsKey, id, value, error))
     return false;
   preMinutesOut = FieldOr(value, "pre_offset_minutes", 0);
   postMinutesOut = FieldOr(value, "post_offset_minutes", 0);
@@ -1477,7 +1649,7 @@ bool DispatcharrClient::SetDvrOffsetMinutes(int preMinutes, int postMinutes, std
 {
   int id = 0;
   json value;
-  if (!FindDvrSettingsRow(id, value, error))
+  if (!FindCoreSettingsRow(kDvrSettingsKey, id, value, error))
     return false;
 
   // Modify only the two offset keys -- everything else already in this
@@ -1491,6 +1663,48 @@ bool DispatcharrClient::SetDvrOffsetMinutes(int preMinutes, int postMinutes, std
   json response;
   return Request("PATCH", std::string(kCoreSettingsPath) + std::to_string(id) + "/", body, response,
                  error);
+}
+
+bool DispatcharrClient::GetSystemTimeZone(std::string& timeZoneOut, std::string& error)
+{
+  int id = 0;
+  json value;
+  if (!FindCoreSettingsRow(kSystemSettingsKey, id, value, error))
+    return false;
+  timeZoneOut = FieldOr<std::string>(value, "time_zone", "");
+  if (timeZoneOut.empty())
+  {
+    error = "system_settings row has no time_zone value";
+    return false;
+  }
+  return true;
+}
+
+bool DispatcharrClient::ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc,
+                                                        int& offsetMinutesOut)
+{
+  for (const auto& zone : kKnownTimeZones)
+  {
+    if (ianaZoneName != zone.ianaName)
+      continue;
+    switch (zone.family)
+    {
+      case DstFamily::kNone:
+        offsetMinutesOut = zone.standardOffsetMinutes;
+        break;
+      case DstFamily::kUsCanada:
+        offsetMinutesOut = IsUsCanadaDstInEffect(nowUtc, zone.standardOffsetMinutes)
+                                ? zone.standardOffsetMinutes + 60
+                                : zone.standardOffsetMinutes;
+        break;
+      case DstFamily::kEu:
+        offsetMinutesOut =
+            IsEuDstInEffect(nowUtc) ? zone.standardOffsetMinutes + 60 : zone.standardOffsetMinutes;
+        break;
+    }
+    return true;
+  }
+  return false;
 }
 
 bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const

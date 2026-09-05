@@ -177,6 +177,21 @@ private:
   static constexpr int kRecurringRuleRenewalSafetyMarginSeconds = 3600;
 
   dispatcharr::Config LoadConfigFromSettings() const;
+
+  // Returns the offset (minutes) to actually use for recurring-rule
+  // timezone conversion right now. When recurring_rule_timezone is set to
+  // one of the zones DispatcharrClient::ComputeKnownZoneOffsetMinutes()
+  // recognizes, this is computed fresh on every call (not cached), so it
+  // can never go stale across a DST transition the way a value computed
+  // once at startup would -- the whole reason this exists instead of just
+  // reading m_recurringRuleUtcOffsetMinutes directly. Falls back to that
+  // plain manual setting when the zone is "manual" (the default) or
+  // unrecognized. Deliberately not cached in a member: both call sites
+  // (GetTimers(), AddTimer()/UpdateTimer()'s recurring-rule paths) are
+  // synchronous PVR callbacks on Kodi's own thread, not a background loop,
+  // so there's no thread-safety reason to cache this the way
+  // m_recordingRefreshMinutes needs to for its own polling thread.
+  int EffectiveRecurringRuleUtcOffsetMinutes() const;
   // Snapshot of LoadConfigFromSettings()'s result, taken once at
   // construction and updated only by OnAddonSettingChanged() itself below
   // -- exists purely so that method can tell a *genuine* change to a
@@ -260,7 +275,9 @@ private:
   // bridges Kodi's UTC-based timer times against Dispatcharr's own
   // recurring-rule scheduler, which interprets a rule's start/end
   // time-of-day using its configured (non-UTC-by-default) system
-  // timezone with no server-side conversion available.
+  // timezone with no server-side conversion available. Only actually used
+  // as a fallback now, when recurring_rule_timezone is "manual" or an
+  // unrecognized zone -- see EffectiveRecurringRuleUtcOffsetMinutes().
   std::atomic<int> m_recurringRuleUtcOffsetMinutes{0};
 
   // Recordings/timers only ever get re-fetched by Kodi when this addon

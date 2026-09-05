@@ -30,6 +30,18 @@ dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
   return config;
 }
 
+int PVRDispatcharr::EffectiveRecurringRuleUtcOffsetMinutes() const
+{
+  std::string zone = kodi::addon::GetSettingString("recurring_rule_timezone", "manual");
+  if (zone != "manual")
+  {
+    int computed = 0;
+    if (DispatcharrClient::ComputeKnownZoneOffsetMinutes(zone, time(nullptr), computed))
+      return computed;
+  }
+  return m_recurringRuleUtcOffsetMinutes;
+}
+
 PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     : CInstancePVRClient(instance), m_lastAppliedConfig(LoadConfigFromSettings()),
       m_client(LoadConfigFromSettings())
@@ -91,6 +103,51 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       kodi::Log(ADDON_LOG_DEBUG,
                 "pvr.dispatcharrai: could not read Dispatcharr's DVR padding settings: %s",
                 offsetError.c_str());
+    }
+  }
+
+  // Same self-heal-on-every-startup reasoning as the padding sync above.
+  // Dispatcharr's own configured IANA timezone name (e.g.
+  // "America/Chicago") is always surfaced as a read-only reference. When
+  // that zone is one of the short list
+  // DispatcharrClient::ComputeKnownZoneOffsetMinutes() knows the DST rules
+  // for, recurring_rule_timezone is auto-selected to match it, the same
+  // authoritative "Dispatcharr's real value wins" way the padding settings
+  // above already work -- not just a suggestion, since a stale manual
+  // offset silently makes recurring timers fire at the wrong time. Note
+  // this only picks the *zone*, not a numeric offset: the actual offset is
+  // computed live wherever it's actually needed (see
+  // EffectiveRecurringRuleUtcOffsetMinutes()), so it can never go stale
+  // across a DST transition the way pre-computing it once here would --
+  // that was a real gap in an earlier version of this sync. Any zone
+  // outside the known list leaves recurring_rule_timezone at "manual" (the
+  // default), falling back to the existing plain manual offset entry --
+  // this addon still can't derive an arbitrary zone's current offset
+  // without bundling a real timezone database (see docs/RECURRING_RULES.md
+  // for why that was deliberately ruled out).
+  {
+    std::string timeZone, tzError;
+    if (m_client.GetSystemTimeZone(timeZone, tzError))
+    {
+      if (kodi::addon::GetSettingString("dispatcharr_timezone_info", "") != timeZone)
+        kodi::addon::SetSettingString("dispatcharr_timezone_info", timeZone);
+
+      int probeOffset = 0;
+      bool known = DispatcharrClient::ComputeKnownZoneOffsetMinutes(timeZone, time(nullptr), probeOffset);
+      std::string desiredZoneSetting = known ? timeZone : "manual";
+      if (kodi::addon::GetSettingString("recurring_rule_timezone", "manual") != desiredZoneSetting)
+      {
+        kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: setting recurring_rule_timezone=%s (%s)",
+                  desiredZoneSetting.c_str(),
+                  known ? "known zone" : "unrecognized zone, falling back to manual offset entry");
+        kodi::addon::SetSettingString("recurring_rule_timezone", desiredZoneSetting);
+      }
+    }
+    else if (m_debugLogging)
+    {
+      kodi::Log(ADDON_LOG_DEBUG,
+                "pvr.dispatcharrai: could not read Dispatcharr's system timezone: %s",
+                tzError.c_str());
     }
   }
 
@@ -1651,7 +1708,7 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   std::vector<RecurringRule> recurringRules;
   if (m_client.GetRecurringRules(recurringRules, error))
   {
-    int offsetSeconds = m_recurringRuleUtcOffsetMinutes * 60;
+    int offsetSeconds = EffectiveRecurringRuleUtcOffsetMinutes() * 60;
     for (const auto& rule : recurringRules)
     {
       kodi::addon::PVRTimer timer;
@@ -1705,17 +1762,20 @@ bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& tim
   // a UTC time_t's own modulo-86400 gives an exact, DST-free
   // calendar-day/time-of-day split with no gmtime/timegm round-trip
   // needed. The *only* place a real timezone enters is the explicit
-  // recurring_rule_utc_offset_minutes shift below, bridging to
-  // Dispatcharr's own (non-UTC-by-default) system timezone -- see that
-  // setting's own help text and RecurringRule's comment in
-  // DispatcharrClient.h for why this can't be done automatically.
+  // EffectiveRecurringRuleUtcOffsetMinutes() shift below, bridging to
+  // Dispatcharr's own (non-UTC-by-default) system timezone -- computed
+  // live for a known zone (see recurring_rule_timezone), or falling back
+  // to the plain manual recurring_rule_utc_offset_minutes setting
+  // otherwise; see that method's own comment and RecurringRule's comment
+  // in DispatcharrClient.h for why an arbitrary zone can't be handled
+  // automatically.
   constexpr time_t kSecondsPerDay = 86400;
   auto floorMod = [](time_t a, time_t m) { return ((a % m) + m) % m; };
   auto utcMidnight = [&](time_t t) { return t - floorMod(t, kSecondsPerDay); };
   auto secondsSinceUtcMidnight = [&](time_t t)
   { return static_cast<int>(floorMod(t, kSecondsPerDay)); };
 
-  int offsetSeconds = m_recurringRuleUtcOffsetMinutes * 60;
+  int offsetSeconds = EffectiveRecurringRuleUtcOffsetMinutes() * 60;
   startSecondsOut = secondsSinceUtcMidnight(timer.GetStartTime()) + offsetSeconds;
   endSecondsOut = secondsSinceUtcMidnight(timer.GetEndTime()) + offsetSeconds;
 
