@@ -796,8 +796,14 @@ private:
   // merely a cache refresh: an unconditional replace would shift byte 0 out
   // from under a position already handed to Kodi's demuxer. `force` bypasses
   // the small throttle (see the .cpp) that keeps a tight demux-read loop
-  // from re-fetching the manifest on every single call.
-  bool RefreshLiveManifest(bool force, std::string& error);
+  // from re-fetching the manifest on every single call. `fatalOut`, if
+  // non-null, is set true when the plugin reports the buffer will never
+  // succeed (ffmpeg already exited -- see plugin.py's own
+  // BufferFailedError) rather than just "not ready yet" -- only
+  // OpenLiveTimeshiftStream()'s cold-start retry loop passes one, to stop
+  // retrying immediately instead of waiting out its full budget against
+  // something that can't recover on its own.
+  bool RefreshLiveManifest(bool force, std::string& error, bool* fatalOut = nullptr);
 
   struct InProgressRecordingSegmentInfo
   {
