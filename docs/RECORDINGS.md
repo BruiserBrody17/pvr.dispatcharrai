@@ -1331,6 +1331,25 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   this is the first one requiring a real network round-trip rather than
   an in-memory write, and there's no reason to block whatever thread
   Kodi delivers the settings-changed callback on for it.
+
+  **The two directions turn out to need different permissions, confirmed
+  against Dispatcharr's current source, not assumed.** `CoreSettingsViewSet`
+  (`core/api_views.py`) falls back to the same global
+  `permission_classes_by_action` table used elsewhere in Dispatcharr
+  (`apps/accounts/permissions.py`): `"retrieve"`/`"list"` map to
+  `IsStandardUser`, so the GET this addon does at every startup works for
+  any standard account. `"partial_update"` (what a PATCH resolves to,
+  which is what `SetDvrOffsetMinutes()` sends) maps to `IsAdmin` --
+  `user_level >= 10`, the same full-admin bar as the companion plugins'
+  `run/` API, not the lighter `dvr_access` tier that gates recording
+  management elsewhere in this addon. A non-admin account can freely read
+  Dispatcharr's padding into Kodi's settings, but a push back fails with a
+  403 -- and right now that failure is silent to the user: the error is
+  logged at `ADDON_LOG_ERROR` in `OnAddonSettingChanged()`'s detached
+  thread, with nothing surfaced through Kodi's UI, so the value stays
+  showing as "changed" in Kodi's settings screen while Dispatcharr's real
+  global setting silently didn't move. Not yet fixed -- flagged here so a
+  future pass doesn't have to re-derive it from scratch.
 - **`UpdateTimer()` is now implemented, closing a long-standing gap --
   every timer type edits without a delete+recreate, dispatched by the
   same `ClientIndex` namespace-bit scheme `DeleteTimer()` already uses.**
