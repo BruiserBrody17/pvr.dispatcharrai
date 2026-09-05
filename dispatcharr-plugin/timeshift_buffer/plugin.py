@@ -661,12 +661,28 @@ def _stop_ffmpeg(state: dict, logger):
 
     # Give it a moment to exit cleanly (flush the segment list/moov, etc.)
     # before escalating -- mirrors this project's own Plugins.md-documented
-    # stop() pattern (track a pid, SIGTERM it, log the outcome).
-    deadline = time.time() + 5
+    # stop() pattern (track a pid, SIGTERM it, log the outcome). 2s, not the
+    # 5s this used to be: confirmed live (pvr.dispatcharrai's own
+    # CloseLiveTimeshiftStream() now waits on this call synchronously, so
+    # its own duration is directly what a user feels as "how long does
+    # Stop take") that ffmpeg here can take close to the full deadline to
+    # exit on SIGTERM alone -- no crash, no error, SIGKILL was never
+    # needed, it just isn't prompt about it. Escalating to SIGKILL sooner
+    # is safe for this specific pipeline regardless of why: a plain stream
+    # copy (-c copy) writing segment files has nothing meaningful to lose
+    # from an abrupt kill -- this plugin's own manifest only ever exposes
+    # segments ffmpeg has already fully closed (see _get_live_manifest()),
+    # so a segment truncated mid-write by SIGKILL was already invisible to
+    # every client and gets cleaned up/overwritten normally either way.
+    start = time.time()
+    deadline = start + 2
     while time.time() < deadline:
         try:
             os.killpg(pid, 0)  # signal 0: check it's still alive, don't actually signal
         except ProcessLookupError:
+            logger.debug(
+                "timeshift_buffer: ffmpeg pid %s exited %.1fs after SIGTERM", pid, time.time() - start,
+            )
             return
         time.sleep(0.2)
 
