@@ -253,10 +253,14 @@ to its original settings and left running normally.
   Decide whether these get bumped for 1.0 and by what scheme -- this
   version is what Dispatcharr's own Plugins page shows users, independent
   of the addon's own version.
-- **No CHANGELOG/HISTORY file exists.** The `docs/*.md` engineering-history
-  family plus the concise READMEs cover *why* things are the way they are,
-  but not "what changed between beta.3 and 1.0.0" for someone tracking
-  releases -- and a fair amount actually changed (default flip to `Off`,
-  Local mode reintroduced, the admin-scoping clarifications). Worth at
-  least one release-notes-style entry for the 1.0.0 tag, even without
-  committing to a full CHANGELOG going forward.
+- [x] **`CHANGELOG.md` created** at the repo root, "Keep a Changelog"-ish
+      format, newest first, user-facing (what changed, not why -- that
+      still lives in `docs/`). Backfilled real entries for every tagged
+      release from `0.2.0` through `1.0.0-beta.3` by walking actual git
+      log ranges between tags, not guessed from memory. An `[Unreleased]`
+      section at the top covers everything since `1.0.0-beta.3` (the
+      `Off` default flip, `Local` mode's return, the admin-scoping
+      clarifications, the in-progress-recording catch-up fix, etc.) --
+      **remaining step**: rename that section to `## [1.0.0] - <date>`
+      at actual tag time, same pattern as the version-bump item above.
+      Linked from the main README's "More detail" section.
