@@ -1,6 +1,6 @@
 {
   "name": "Timeshift Buffer",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Server-side rolling live-TV buffer per channel, so clients can pause/rewind live playback without a local on-device buffer.",
   "author": "BruiserBrody17",
   "help_url": "https://github.com/BruiserBrody17/pvr.dispatcharrai/tree/master/dispatcharr-plugin/timeshift_buffer"
