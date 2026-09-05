@@ -37,15 +37,21 @@ repo and install separately on your Dispatcharr instance (not through
 Kodi):
 
 - **`timeshift_buffer`** -- enables server-side live TV pause/rewind/seek
-  (`live_timeshift_mode` set to `Server-side`), shared across every device
-  using this Dispatcharr account. Requires an admin-level Dispatcharr
-  account. If you'd rather not grant that, set `live_timeshift_mode` to
-  `Local` instead: real pause/rewind buffered on the Kodi device itself via
-  the separate `inputstream.ffmpegdirect` addon, no Dispatcharr admin
-  account and no server-side plugin needed at all -- just doesn't persist
-  across a Kodi restart or follow you to another device. `Off` (the
-  default) plays live channels with no pause/rewind and no extra
-  dependency of any kind.
+  (`live_timeshift_mode` set to `Server-side`). The underlying buffer
+  process is shared per-channel, so two devices watching the same channel
+  don't each need their own upstream connection to your provider -- but
+  each device's own rewind window is still capped to what *it* has
+  personally been watching since it opened the channel (plus a few
+  seconds' margin), the same as if the buffer weren't shared: a device
+  can't rewind into another device's earlier viewing, or into time before
+  it personally joined. Requires an admin-level Dispatcharr account. If
+  you'd rather not grant that, set `live_timeshift_mode` to `Local`
+  instead: real pause/rewind buffered on the Kodi device itself via the
+  separate `inputstream.ffmpegdirect` addon, no Dispatcharr admin account
+  and no server-side plugin needed at all -- rewind depth works the same
+  way (only as far back as you've personally been watching), and the
+  buffer is gone on a Kodi restart. `Off` (the default) plays live
+  channels with no pause/rewind and no extra dependency of any kind.
 - **`recording_edl`** -- exposes comskip commercial-break markers to Kodi.
   Also requires an admin-level Dispatcharr account. Optional; without it
   (or with a non-admin account), recordings just show no markers --
