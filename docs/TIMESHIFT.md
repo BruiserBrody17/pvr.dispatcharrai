@@ -1184,3 +1184,84 @@ recordings plus an attempt to play a live channel, with the provider's own
 concurrent-stream limit already fully used by those 3 -- failed in about
 5 seconds, down from the ~15s this fix was written to address.
 
+## A plain Stop took ~5s, traced to ffmpeg's own slow SIGTERM response
+
+Real use surfaced one more real delay, this time on the ordinary Stop
+path rather than a failure path: pressing Stop on a single, ordinary live
+channel (no concurrency, no provider limit involved at all) took about 5
+seconds -- expected to be near-instant, since `CloseLiveTimeshiftStream()`
+being synchronous (see "The reference-counted stop above still had a
+race" further up) means its own duration is now directly what a user
+feels pressing Stop.
+
+Root-caused using Dispatcharr's own server-side log, not guessed:
+timestamps for `live_proxy`'s own teardown (client disconnect ->
+stream manager stop -> provider connection closed -> Redis keys cleaned
+up) spanned under 40ms once it noticed ffmpeg's connection had dropped --
+Dispatcharr's own side was never the bottleneck. What actually took the
+time was the gap *before* that: `uwsgi_response_write_body_do(): Broken
+pipe ... during GET /proxy/ts/stream/<uuid> (127.0.0.1)` -- Dispatcharr
+mid-write to ffmpeg's own socket, discovering ffmpeg had already closed
+its end -- landed almost exactly 5 seconds after Stop was pressed, the
+same 5s deadline `_stop_ffmpeg()`'s own SIGTERM-then-SIGKILL escalation
+used at the time. Confirmed via the plugin's own logging (its only log
+line in that function is the SIGKILL warning, and the user confirmed no
+such line appeared anywhere in what they could see of the log) that
+ffmpeg exited cleanly on `SIGTERM` alone, well within the deadline --
+just not *promptly*. No crash, no error, SIGKILL was never needed;
+ffmpeg (reading a live HTTP MPEG-TS stream and writing plain copied
+segment files, `-c copy`) simply isn't quick to act on a `SIGTERM` here,
+for a reason not chased further (would need shell access to the
+Dispatcharr container itself to actually trace ffmpeg's own signal
+handling, e.g. strace or comparing SIGINT vs SIGTERM behavior -- not
+available in this investigation).
+
+**The fix, deliberately a mitigation rather than a root-cause fix**:
+shortened `_stop_ffmpeg()`'s SIGTERM-to-SIGKILL escalation deadline from
+5s to 2s. Safe regardless of why ffmpeg is slow to respond, specific to
+this pipeline: a plain stream copy with no re-encoding has nothing
+meaningful to lose from a more abrupt kill -- this plugin's own manifest
+(`_get_live_manifest()`) only ever exposes segments ffmpeg has already
+fully closed, so a segment truncated mid-write by SIGKILL was already
+invisible to every client and gets cleaned up/overwritten normally
+either way. Also added a debug-level log line on the clean-exit path
+(previously silent -- only the SIGKILL warning branch logged anything at
+all), specifically so a future investigation like this one has the
+actual elapsed time on hand directly instead of needing to cross
+-reference Dispatcharr's own live_proxy log timestamps by hand.
+
+**Confirmed live, in two rounds** -- the first showed the fix hadn't
+actually taken effect (~6.8s, barely different from before): this
+plugin's own README already documents that a plain restart doesn't
+reliably make already-running workers pick up new code (the background
+HTTP file-server thread survives it), and this was a real instance of
+exactly that gotcha, not a flaw in the fix itself. After a full
+Dispatcharr restart (which does reliably reload everything), the same
+Stop measured at ~2.2s (`ClosePVRStream` timing in `kodi.log`, cross
+-checked against Dispatcharr's own `04:36:29,197 WARNING ... didn't exit
+after SIGTERM, sending SIGKILL` line) -- confirming the shorter deadline
+is what actually fired, and that this pipeline tends to need the full
+escalation rather than exiting cleanly on `SIGTERM` alone.
+
+**A further, real gap found via that same log line, deliberately left
+open.** Dispatcharr's own upstream provider connection wasn't actually
+closed until `04:36:35,322` -- almost 6 seconds *after* the SIGKILL that
+let this addon's own `Close()` call return at `04:36:29.216`. Root cause:
+`_stop_ffmpeg()` only confirms the *local* ffmpeg process is dead; it has
+no visibility into whether Dispatcharr's own `live_proxy` has separately
+noticed and released the upstream connection. Traced (not guessed) to a
+structural property of Dispatcharr's own response generator: it only
+discovers a broken pipe on its *next* write attempt, paced by the live
+stream's own data arrival, not by anything this addon or plugin controls
+or could poll faster than. Deliberately not fixed further: actually
+closing this gap (waiting for Dispatcharr to confirm the connection is
+released before `stop_buffer` returns) would mean blocking for exactly
+that same Dispatcharr-side write-cadence delay -- undoing the
+responsiveness fix above, not improving it. Accepted instead: the residual
+window is narrow (a channel switch has to land inside those few seconds,
+*and* the provider has to be at its hard limit already), and when it is
+hit, the fatal-detection fix from the section above already makes it fail
+fast and clearly rather than hanging or silently misbehaving -- a
+reasonable place to stop, not a gap this addon can close without either
+reintroducing the delay or reaching into Dispatcharr's own internals.
+

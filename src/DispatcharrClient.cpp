@@ -2912,7 +2912,7 @@ void DispatcharrClient::CloseLiveTimeshiftStream()
   // returned to the main menu, not before. `_stop_ffmpeg()` in plugin.py
   // (the thing that actually happens once this call determines no viewers
   // remain) already blocks until the ffmpeg process is confirmed dead
-  // (SIGTERM, poll, escalate to SIGKILL after 5s) before its own HTTP
+  // (SIGTERM, poll, escalate to SIGKILL after 2s) before its own HTTP
   // response returns -- so calling it synchronously here, and letting
   // Kodi's own sequential Close()-then-Open() calling convention do the
   // rest, is what actually guarantees the old slot is free before the new
