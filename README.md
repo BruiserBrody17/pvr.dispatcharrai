@@ -35,10 +35,13 @@ repo and install separately on your Dispatcharr instance (not through
 Kodi):
 
 - **`timeshift_buffer`** -- enables live TV pause/rewind/seek. Requires an
-  admin-level Dispatcharr account. Without it, live channels still play,
-  just without pause/rewind (set `live_timeshift_mode` to `Off`).
+  admin-level Dispatcharr account. Without it, live channels still play
+  fine (the default), just without pause/rewind -- set `live_timeshift_mode`
+  to `Server-side` once you've installed it.
 - **`recording_edl`** -- exposes comskip commercial-break markers to Kodi.
-  Optional; recordings without markers are unaffected either way.
+  Also requires an admin-level Dispatcharr account. Optional; without it
+  (or with a non-admin account), recordings just show no markers --
+  playback itself is unaffected.
 
 Each has its own README with install steps.
 
@@ -55,15 +58,22 @@ Each has its own README with install steps.
 ## Configuration
 
 Set in Kodi's addon settings: Dispatcharr host, port, HTTPS toggle,
-username, and password. The account needs permission to read
-channels/EPG and manage recordings.
+username, and password. A standard (non-admin) account works for
+everything native to Dispatcharr itself: channel/EPG browsing and
+recording playback need no special permission, and recording management
+(adding/editing/deleting timers) just needs that account's `dvr_access`
+set to `manage` -- still short of full admin.
 
-For the default live-TV mode (server-side pause/rewind), the account must
-also be a Dispatcharr **admin** account, with the `timeshift_buffer`
-plugin installed and enabled on your Dispatcharr instance. Set
-`live_timeshift_mode` to `Off` if you'd rather not grant admin access or
-install that plugin -- live channels still play, just without
-pause/rewind.
+Both companion plugins are the exception: Dispatcharr's plugin API is
+admin-only regardless of what a plugin actually does, so **either one
+requires a real Dispatcharr admin account** for the configured account to
+use it at all -- live-TV pause/rewind (`timeshift_buffer`) and comskip
+markers (`recording_edl`) alike. By default (`live_timeshift_mode` set to
+`Off`), live channels play with no extra setup; set it to `Server-side`
+once you've installed `timeshift_buffer` and have an admin account,
+otherwise every live channel will fail to play in that mode.
+`recording_edl` fails softer -- without admin, recordings just show no
+markers rather than a playback failure.
 
 Most settings take effect immediately after saving. Connection settings
 (host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell

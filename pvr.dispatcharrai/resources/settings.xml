@@ -86,7 +86,7 @@
         </setting>
         <setting id="live_timeshift_mode" type="integer" label="30027" help="30028">
           <level>0</level>
-          <default>2</default>
+          <default>0</default>
           <constraints>
             <options>
               <option label="30051">0</option>
