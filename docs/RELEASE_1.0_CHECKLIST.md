@@ -39,7 +39,7 @@ right before release.
 | Windows | ✅ Pass -- full 6-item smoke test |
 | Rocky Linux | ✅ Pass (catch-up/recurring-timer creation not exercised -- see [Open items](#open-items-more-will-likely-come-up)) |
 | CoreELEC / ODROID | ✅ Pass (same catch-up/recurring-timer caveat as Rocky Linux) |
-| macOS | ⬜ Not run this session -- see below |
+| macOS | ✅ Pass (same catch-up/recurring-timer caveat; one unexplained anomaly noted below) |
 
 ### Windows
 
@@ -150,9 +150,58 @@ debug logging off) and left at the normal Home screen.
 
 ### macOS
 
-Only tested in a separate companion session (see `docs/CATCHUP.md`'s
-macOS `open_mode` investigation) -- not verified against the current
-build.
+**Full smoke-test pass completed this session**, run by a separate Claude
+Code instance on the user's own Mac (relayed back rather than driven
+directly from here) against a fresh build of current `master` via Kodi's
+`binary-addons` harness per `docs/BUILDING.md` -- succeeded cleanly on a
+fresh clone, no stale-cache issue this time. Independently reconfirmed
+`docs/BUILDING.md`'s `-DPACKAGE_DIR` caveat -- the zip landed deep inside
+the ExternalProject tree regardless, `find` was needed to locate it.
+Results: **live playback**, all three `live_timeshift_mode` values
+confirmed with a real seek each -- **Off** (`streamurl` set directly,
+`canseek: false`), **Local** (`inputstream.ffmpegdirect` already
+installed, `canseek: true`, `demuxer seek to: ..., success`),
+**Server-side** (just `isrealtimestream`, `canseek: true`,
+`SeekLiveTimeshiftStream(...) -> (clamped to tail)` then `demuxer seek
+to: ..., success`). **The in-progress-recording catch-up-to-tail fix
+from this session's audit (see the top-level commit history) was
+deliberately exercised, not just recording start/stop in general** --
+`segmentDurationEstimateMs` landed at 3934/3817/4074ms across three
+trials (right around Dispatcharr's real ~4000ms HLS segment size), and
+real catch-up cycles used a sensible chunk of their budget before
+succeeding (17/48, 9/46, 10/49 attempts) rather than collapsing to a tiny
+attempt count and giving up, which is the exact crash this fix addressed.
+**EPG** confirmed (95 real broadcasts, correct titles/times).
+**Recording stop + immediate post-stop playback** confirmed the
+`hlsDirStillPresent` scenario directly: `inProgress=0 hlsDirStillPresent=1`,
+`opened=1`, playback healthy. The known resume-prompt dialog
+([[testing-kodi-jsonrpc-resume-dialog]]) showed up here too -- third
+platform this session, same `Input.Down` + `Input.Select` fix, not
+addon- or platform-specific. **Catch-up (archive) playback and
+recurring-timer creation**: same JSON-RPC tooling gap as CoreELEC/Rocky
+Linux, not exercised here either.
+
+**Two macOS-specific findings:**
+1. Enabling `services.webserver` without a password triggers a
+   security-warning dialog that blocks all JSON-RPC until dismissed via
+   real input -- same class of issue as the resume-dialog quirk above
+   (a modal dialog stalling the JSON-RPC queue), general Kodi behavior,
+   not an addon bug. Worked around by driving the whole test over the
+   raw JSON-RPC TCP socket (port 9090) instead of the HTTP webserver.
+2. **A genuine, unexplained anomaly, flagged rather than explained
+   away**: right as the first resume-prompt dialog was dismissed,
+   `kodi.log` showed a full `UpdateClients: Recreating PVR client` --
+   a clean DLL unload/reload, no crash, the recording played fine
+   immediately after -- but with no settings change involved, which
+   rules out the already-fixed beta.2 spurious-restart bug (that one
+   was triggered by a settings write). Did not reproduce on a second
+   open of the same recording. Worth watching for on a future pass
+   rather than assuming it's this same class of "modal dialog" noise --
+   noted in Open items below.
+
+One ~5-minute test recording left on the account (no JSON-RPC delete
+method exists, same gap as every other platform). Device fully restored
+to its original settings and left running normally.
 
 ## Release packaging
 
@@ -174,16 +223,23 @@ build.
 
 ## Open items (more will likely come up)
 
-- Local timeshift mode (`live_timeshift_mode = 1`) was reintroduced this
-  session -- now verified live on Windows, CoreELEC/ODROID, and Rocky
-  Linux. Only macOS's smoke-test pass still needs it, since it depends on
-  a separate addon (`inputstream.ffmpegdirect`) whose availability/
-  behavior could plausibly differ there in a way nothing else in this
-  checklist would catch.
+- **All four platforms now have a completed smoke-test pass** (Windows,
+  Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
+  confirmed live on all four, closing out what was the last real gap in
+  platform coverage.
+- **A genuine, unexplained anomaly from the macOS pass, not yet
+  root-caused**: `kodi.log` showed a full `UpdateClients: Recreating PVR
+  client` (clean DLL unload/reload, no crash, playback fine right after)
+  immediately after dismissing a resume-prompt dialog, with no settings
+  change involved -- ruling out the known beta.2 spurious-restart bug
+  (settings-write-triggered). Did not reproduce on a second attempt.
+  Worth a dedicated look (does dismissing a modal PVR-recording dialog
+  itself ever trigger a client reload? on which platforms?) before
+  1.0, or at minimum before assuming it's noise.
 - Catch-up and recurring-timer creation still have no clean way to
-  exercise via Kodi's JSON-RPC alone (see the CoreELEC section above) --
-  worth deciding whether future platform passes should just accept this
-  as a documented tooling gap (the underlying logic is
+  exercise via Kodi's JSON-RPC alone (see any platform's section above)
+  -- worth deciding whether future platform passes should just accept
+  this as a documented tooling gap (the underlying logic is
   platform-independent and already covered on Windows) or find a real
   driving mechanism (e.g. scripted GUI input) before calling any platform
   fully "tested."
