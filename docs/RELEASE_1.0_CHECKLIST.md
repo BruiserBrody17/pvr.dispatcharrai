@@ -4,8 +4,11 @@
 
 ## Documentation
 
-- [x] README cleaned up and made concise -- rewritten from 211 to ~90
-      lines: install/config/features only, narrative moved out. Decided
+- [x] README cleaned up and made concise -- rewritten from 211 lines down
+      to install/config/features only, narrative moved out (line count
+      has moved some since, as later fixes added a sentence here and
+      there -- the point was the rewrite, not a specific number to hold
+      it to). Decided
       **not** to physically relocate the existing `docs/*.md` files --
       ~40+ source-code comments (C++ and the Dispatcharr plugins' own
       Python) point at their exact current paths, so moving them would be
@@ -13,9 +16,11 @@
       one-line disclaimer at the top of `docs/API_NOTES.md` marking that
       whole family as engineering history, not user docs, with a pointer
       back to the main README.
-- [x] `dispatcharr-plugin/timeshift_buffer/README.md` (186 -> 70 lines)
-      and `dispatcharr-plugin/recording_edl/README.md` (226 -> 61 lines)
-      rewritten. Their narrative wasn't already covered elsewhere the way
+- [x] `dispatcharr-plugin/timeshift_buffer/README.md` (from 186 lines) and
+      `dispatcharr-plugin/recording_edl/README.md` (from 226 lines)
+      rewritten concise (both have grown back a bit since, as later fixes
+      added real content -- see `CHANGELOG.md`/git history for what).
+      Their narrative wasn't already covered elsewhere the way
       the main addon's was, so first backfilled the missing history into
       `docs/TIMESHIFT.md` (already had it -- just pointed there) and
       `docs/RECORDING_EDL.md` (didn't yet cover the orphan-sidecar-cleanup
@@ -68,7 +73,7 @@ documentation gap rather than a suspected regression.
 current `master` (git checkout at `~/kodi-linux-build`, `git reset --hard
 origin/master` then rebuilt -- unlike the Windows/CoreELEC trees, this
 one's a real clone, no manual file-syncing needed) on real Rocky Linux
-10.2 hardware (on the local network), Kodi via the official `tv.kodi.Kodi`
+10.2 hardware on the local network, Kodi via the official `tv.kodi.Kodi`
 Flatpak per `docs/BUILDING.md`. Same stale-build-skip issue as
 Windows/CoreELEC hit first (`make: Nothing to be done for 'all'`) --
 cleared by removing `.installed-native` and the ExternalProject's cached
@@ -102,8 +107,8 @@ Kodi left running normally.
 ### CoreELEC / ODROID
 
 **Full smoke-test pass completed this session**, against a fresh
-cross-compiled build of current `master` on real ODROID N2+ hardware
-(on the local network), driven via SSH + Kodi's JSON-RPC webserver the same
+cross-compiled build of current `master` on real ODROID N2+ hardware on
+the local network, driven via SSH + Kodi's JSON-RPC webserver the same
 way as the Windows tests. A stale local CoreELEC checkout's `package.mk`
 was pointed at the current commit and, along the way, surfaced a real bug:
 the optional-dependency XML comment added earlier this session used this
@@ -271,3 +276,25 @@ to its original settings and left running normally.
       **remaining step**: rename that section to `## [1.0.0] - <date>`
       at actual tag time, same pattern as the version-bump item above.
       Linked from the main README's "More detail" section.
+- [x] **Final overall review pass** (gaps/optimization/redundancy/
+      conciseness) before the real tag, via three parallel audit agents
+      covering C++ source, docs/CHANGELOG consistency, and release
+      readiness/packaging. Real findings, all fixed: both plugins'
+      actually-authoritative `plugin.py` `Plugin.version` attributes were
+      still `0.1.0` even after the `plugin.json` bump (`plugin.json` is
+      only used for Dispatcharr's not-yet-trusted import preview --
+      `plugin.py`'s own class attribute is what runs); a `LICENSE` file
+      was missing at the repo root despite every doc claiming
+      `GPL-2.0-or-later`; `CHANGELOG.md`'s `[Unreleased]` section was
+      missing several real, git-log-verified entries (`timeshift_buffer`
+      tuning, `recording_edl`'s diagnostic-toast fix, the removed
+      `snapshot_buffer` action, the shared-buffer README correction);
+      this file had real internal SSH IPs/usernames from dev testing
+      (scrubbed to "on the local network") and stale line-count claims
+      (softened -- later fixes had already grown those numbers back);
+      `docs/API_NOTES.md` still claimed the addon "only implements the
+      username/password JWT flow" when `X-API-Key` fallback has been
+      fully implemented for a while; `docs/RECORDING_EDL.md` had a
+      mismatched Markdown link label; `SeekInProgressRecordingStream()`
+      was missing the negative-position debug log its sibling
+      `SeekLiveTimeshiftStream()` already had.

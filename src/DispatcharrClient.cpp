@@ -2326,7 +2326,15 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
       return -1;
   }
   if (newPos < 0)
+  {
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharrai: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
+              "current=%lld -> computed newPos=%lld < 0, failing",
+              static_cast<long long>(position), whence,
+              static_cast<long long>(m_inProgressRecordingStream.position),
+              static_cast<long long>(newPos));
     return -1;
+  }
 
   // Same live-backoff SeekLiveTimeshiftStream() already applies, and for
   // the identical reason: clamping a forward seek to exactly totalBytes
