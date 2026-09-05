@@ -551,7 +551,7 @@ def _stream_attribution_headers(params: dict, logger):
 
 def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) -> dict:
     storage_path = settings_dict.get("storage_path", "/data/timeshift")
-    segment_seconds = int(settings_dict.get("segment_seconds", 6))
+    segment_seconds = int(settings_dict.get("segment_seconds", 2))
     buffer_minutes = int(settings_dict.get("buffer_minutes", 60))
     base_url = settings_dict.get("internal_base_url", "http://127.0.0.1:9191")
     http_port = int(settings_dict.get("http_port", 9192))
@@ -1046,8 +1046,17 @@ class Plugin:
         },
         {
             "id": "segment_seconds", "label": "Segment length (seconds)", "type": "number",
-            "default": 6,
-            "help_text": "ffmpeg -segment_time. Shorter segments seek more precisely but multiply the number of files on disk.",
+            "default": 2,
+            "help_text": (
+                "ffmpeg -segment_time. A client only sees new content once a "
+                "segment closes, so shorter segments mean less stalling/"
+                "rebuffering during ordinary playback, at the cost of more, "
+                "smaller files on disk and more requests to this plugin's own "
+                "file server. Confirmed live at the default (2s) with 4 "
+                "channels buffering concurrently -- steady, error-free segment "
+                "production throughout, see the addon's own docs/TIMESHIFT.md "
+                "for the full account."
+            ),
         },
         {
             "id": "idle_timeout_seconds", "label": "Idle timeout (seconds)", "type": "number",
