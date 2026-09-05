@@ -1265,3 +1265,31 @@ fast and clearly rather than hanging or silently misbehaving -- a
 reasonable place to stop, not a gap this addon can close without either
 reintroducing the delay or reaching into Dispatcharr's own internals.
 
+## `idle_timeout_seconds` default lowered from 120s to 30s
+
+Made sense as 120s back when the idle-timeout reaper was the *only*
+cleanup mechanism a buffer ever had (before viewer reference counting
+existed, above) -- worth being generous about, since going idle
+prematurely meant actually losing a still-wanted buffer. It no longer
+carries that weight: a clean Stop now tears the buffer down directly and
+fast (~2s, see the SIGTERM/SIGKILL section above), regardless of this
+setting. What's left for the idle timeout to actually do is purely a
+backstop for a viewer that disappears *without* cleanly closing (a
+crash, a force-quit, a network drop) -- and for that job, 120s means an
+abandoned buffer can sit occupying one of a provider's own
+concurrent-stream slots for up to two minutes, the exact failure mode
+already fixed for the clean-Stop path.
+
+Lowered to 30s. Not expected to risk killing a real, actively-watched
+session, including a paused one: `GetStreamTimes()` is polled by Kodi's
+own player-state machine on a regular interval regardless of play/pause
+state (this addon's own growing-duration live-timeshift design already
+depends on that being true), and that call refreshes the heartbeat on
+this addon's own side via its throttled `RefreshLiveManifest()` -- so a
+genuinely open session keeps its own heartbeat fresh without needing
+active playback specifically. Not yet confirmed live (would need an
+actual crashed/killed client left running long enough to watch the
+reaper reclaim it, and a genuinely long pause to confirm the heartbeat
+really does stay fresh throughout) -- both worth doing before trusting
+this fully, consistent with this project's own standard.
+
