@@ -1096,15 +1096,31 @@ same either way.)
 **Tuning note, not a bug: `segment_seconds` trades burst size for file
 count.** The plugin's buffer is built from *closed* HLS-style segments --
 ffmpeg only exposes a segment once fully written, so content arrives in
-bursts sized by `segment_seconds` (default 6s), not a smooth trickle, no
-matter how generous the client's own retry margin is. Reducing it (2s
-tested live) shrinks both the burst size and the worst-case wait per
-cycle, measurably reducing stall frequency/severity in the same live test
--- at the cost of more, smaller segment files on disk and more frequent
-requests, exactly the trade-off the setting's own help text already
-documents. A deeper fix -- serving the *currently-being-written* segment
-for partial reads instead of waiting for it to close, eliminating the
-burstiness at the root -- would need a real redesign of the plugin's
-manifest/addressing model (which currently assumes a segment is stable
-once listed) and hasn't been attempted.
+bursts sized by `segment_seconds`, not a smooth trickle, no matter how
+generous the client's own retry margin is. Reducing it shrinks both the
+burst size and the worst-case wait per cycle, measurably reducing stall
+frequency/severity in live testing -- at the cost of more, smaller
+segment files on disk and more frequent requests, exactly the trade-off
+the setting's own help text documents. A deeper fix -- serving the
+*currently-being-written* segment for partial reads instead of waiting
+for it to close, eliminating the burstiness at the root -- would need a
+real redesign of the plugin's manifest/addressing model (which currently
+assumes a segment is stable once listed) and hasn't been attempted.
+
+**Default changed from 6s to 2s**, after the value had already been
+running live at 2s on a real instance for some time (left over from the
+CoreELEC/ODROID testing pass above) with no issues surfacing, and after a
+dedicated multi-buffer smoke test at the new default: 4 channels started
+buffering concurrently via direct plugin API calls (`max_concurrent_buffers`'
+own default), polled repeatedly over ~35s. 3 of the 4 produced steady,
+error-free segment growth throughout (~3 new segments every 5s, matching
+`segment_seconds=2` exactly) -- the 4th failed, but for an unrelated
+reason confirmed via Dispatcharr's own `/proxy/ts/status/<uuid>`
+(`Channel ... not found`, meaning that specific alternate-source channel
+never even registered an upstream client at all -- a real provider-side
+connection failure, not something segment length affects). The crash risk
+that made 2s dangerous in the first place (the catch-up-retry-budget
+collapse from a single short segment, described above) is already fixed
+independently by that same section's segment-duration-averaging change,
+which is what made flipping the default safe to consider at all.
 
