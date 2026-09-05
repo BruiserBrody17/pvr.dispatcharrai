@@ -1014,7 +1014,7 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
 
             if got_leadership:
                 settings_dict = settings_getter()
-                idle_timeout = int(settings_dict.get("idle_timeout_seconds", 120))
+                idle_timeout = int(settings_dict.get("idle_timeout_seconds", 30))
                 now = time.time()
                 for key in _list_buffer_keys():
                     raw = client.get(key)
@@ -1131,8 +1131,20 @@ class Plugin:
         },
         {
             "id": "idle_timeout_seconds", "label": "Idle timeout (seconds)", "type": "number",
-            "default": 120,
-            "help_text": "Stop a channel's buffer automatically if no heartbeat action arrives for this long.",
+            "default": 30,
+            "help_text": (
+                "Stop a channel's buffer automatically if no heartbeat action "
+                "arrives for this long. Only a backstop for a viewer that "
+                "disappears without cleanly closing (a crash, a force-quit, a "
+                "network drop) -- a normal Stop tears the buffer down directly "
+                "and immediately regardless of this setting (see "
+                "pvr.dispatcharrai's own docs/TIMESHIFT.md), and an actively "
+                "watching client (even paused) keeps its heartbeat fresh on "
+                "its own, so this doesn't need to be generous to avoid killing "
+                "a real session. Kept short instead so an abandoned buffer "
+                "doesn't sit occupying one of a provider's own "
+                "concurrent-stream slots for long."
+            ),
         },
         {
             "id": "max_concurrent_buffers", "label": "Max concurrent channel buffers", "type": "number",
@@ -1551,7 +1563,7 @@ class Plugin:
 
     def _scrub_orphaned_buffers(self, settings_dict, logger):
         storage_path = settings_dict.get("storage_path", "/data/timeshift")
-        idle_timeout = int(settings_dict.get("idle_timeout_seconds", 120))
+        idle_timeout = int(settings_dict.get("idle_timeout_seconds", 30))
         # Same floor as the reaper's own automatic pass -- see
         # _find_orphaned_channel_dirs' comment on why an orphan (no
         # tracked state to double-check against) gets more margin than
