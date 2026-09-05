@@ -845,16 +845,44 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   }
   else
   {
-    // Off: a plain live stream, no pause/rewind, no admin account or
-    // companion plugin required -- Kodi's generic CCurlFile opens
-    // streamUrl directly, no inputstream addon or addon-side stream
-    // callback involved at all.
+    // Off/Local share the same base: a plain live stream URL, no admin
+    // account or companion plugin required -- Kodi's generic CCurlFile
+    // opens streamUrl directly (Off), or inputstream.ffmpegdirect wraps it
+    // for its own on-device buffer (Local, appended below).
     properties.emplace_back(PVR_STREAM_PROPERTY_STREAMURL, streamUrl);
     properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true");
     // Dispatcharr's default proxy output is MPEG-TS; if you've configured
     // an HLS stream profile in Dispatcharr, override this in settings and
     // adapt GetLiveStreamUrl() accordingly.
     properties.emplace_back(PVR_STREAM_PROPERTY_MIMETYPE, "video/mp2t");
+
+    // Local: delegated entirely to the separate inputstream.ffmpegdirect
+    // addon rather than implemented here. Unlike the catch-up case (see
+    // GetEPGTagStreamProperties(), which deliberately leaves stream_mode
+    // unset entirely to land on a *different* ffmpegdirect stream class)
+    // and unlike the now-removed snapshot-seek workaround that server-side
+    // timeshift briefly went through (see docs/TIMESHIFT.md -- that one
+    // hit a confirmed, unfixable av_seek_frame bug in ffmpegdirect's
+    // generic seek path), this is exactly what stream_mode: timeshift is
+    // built for: a genuinely live, continuously arriving source with no
+    // native pause/rewind of its own, seeking through ffmpegdirect's own
+    // dedicated TimeshiftStream class rather than the generic one that
+    // broke. Works independent of any Dispatcharr-side support at all --
+    // the buffer lives as a local
+    // recording on-disk on the Kodi device itself (managed entirely by
+    // ffmpegdirect's own settings: buffer path, length limit, etc.), not
+    // on the Dispatcharr server, so it doesn't persist across a Kodi
+    // restart and isn't shared between devices.
+    //
+    // Requires inputstream.ffmpegdirect to actually be installed, and
+    // unlike the catch-up case, getting this wrong here breaks live
+    // channel playback entirely, not just catch-up.
+    if (m_liveTimeshiftMode == kLiveTimeshiftLocal)
+    {
+      properties.emplace_back(PVR_STREAM_PROPERTY_INPUTSTREAM, "inputstream.ffmpegdirect");
+      properties.emplace_back("inputstream.ffmpegdirect.stream_mode", "timeshift");
+      properties.emplace_back("inputstream.ffmpegdirect.is_realtime_stream", "true");
+    }
   }
   if (m_debugLogging)
   {
