@@ -13,10 +13,12 @@ in the main repo.
 
 ## Installing
 
-1. Copy this directory to `data/plugins/recording_edl/` on the host (or
-   `/app/data/plugins/recording_edl/` inside the container) -- same
-   mechanism as `timeshift_buffer`, see that plugin's own README for the
-   zip-import alternative and the folder-name-must-match-exactly gotcha.
+1. Download `recording_edl.zip` from the
+   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases)'s
+   Assets, and upload it via Dispatcharr's Plugins page **Import** button
+   -- same mechanism as `timeshift_buffer`, see that plugin's own README
+   for the folder-name-must-match-exactly gotcha and the manual-copy
+   alternative.
 2. In Dispatcharr's UI, open the Plugins page, click refresh, enable
    "Recording EDL" (accept the trust-warning modal).
 3. The account calling these actions must be a Dispatcharr **admin**

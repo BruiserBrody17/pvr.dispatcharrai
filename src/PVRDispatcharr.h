@@ -267,8 +267,13 @@ private:
   // with NOT being (or the owner not wanting it to be) a Dispatcharr admin
   // -- the timeshift_buffer plugin's run/ API requires that role; a plain
   // stream needs nothing beyond ordinary channel-browsing/streaming
-  // permission.
-  std::atomic<int> m_liveTimeshiftMode{kLiveTimeshiftServer};
+  // permission. Defaults to Off, not server-side: OpenLiveStream() hard-fails
+  // every live channel (see its own comment) when the account isn't admin or
+  // the plugin isn't installed, which is exactly the state of a fresh
+  // install before anyone's done that extra setup -- Off "just works" out
+  // of the box, server-side is an explicit opt-in once the extra plugin/
+  // admin-account setup is done.
+  std::atomic<int> m_liveTimeshiftMode{kLiveTimeshiftOff};
   std::atomic<bool> m_enableCatchupFfmpegdirectSeek{false};
   std::atomic<bool> m_debugLogging{false};
   // See recurring_rule_utc_offset_minutes in settings.xml/strings.po --

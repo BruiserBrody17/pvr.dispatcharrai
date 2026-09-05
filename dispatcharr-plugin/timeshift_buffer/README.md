@@ -26,13 +26,18 @@ stops and cleans up any buffer that's gone idle past `idle_timeout_seconds`.
 
 ## Installing
 
-1. Copy this directory to `data/plugins/timeshift_buffer/` on the host
-   (or `/app/data/plugins/timeshift_buffer/` inside the container),
-   matching however you already reach the `data/` directory Dispatcharr's
-   compose file bind-mounts. A `.zip` of just `plugin.json`/`plugin.py`/
-   `README.md` uploaded via the Plugins page's Import button also works
-   -- **the folder name inside the zip must be exactly `timeshift_buffer`**,
-   or every call 404s with "Plugin not found."
+1. Download `timeshift_buffer.zip` from the
+   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases)'s
+   Assets, and upload it via Dispatcharr's Plugins page **Import** button
+   -- its top-level folder is already named exactly `timeshift_buffer`,
+   which Dispatcharr requires for it to load (**the folder name inside
+   the zip must match exactly**, or every call 404s with "Plugin not
+   found"). Alternatively, copy this directory directly to
+   `data/plugins/timeshift_buffer/` on the host (or
+   `/app/data/plugins/timeshift_buffer/` inside the container), matching
+   however you already reach the `data/` directory Dispatcharr's compose
+   file bind-mounts -- useful if you're working from a repo checkout
+   rather than a release.
 2. In Dispatcharr's UI, open the Plugins page, click refresh, enable
    "Timeshift Buffer" (accept the trust-warning modal -- this plugin runs
    arbitrary server-side code, same as any other).

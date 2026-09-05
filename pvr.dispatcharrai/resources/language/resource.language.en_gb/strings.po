@@ -90,7 +90,7 @@ msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Server-side (default): real pause/rewind/fast-forward, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi) -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs), and requires the account this addon is configured with to be a Dispatcharr admin -- the plugin run/ API rejects anything less. Off: a plain live stream straight from Dispatcharr's own proxy, no pause/rewind, no plugin, no admin account needed -- pick this if you'd rather not grant this addon an admin account, or don't want to install the companion plugin at all."
+msgid "Off (default): a plain live stream straight from Dispatcharr's own proxy, no pause/rewind, no companion plugin, no admin account needed -- works out of the box. Server-side: real pause/rewind/fast-forward, buffered by Dispatcharr itself via this addon's companion \"Timeshift Buffer\" plugin (installed separately on your Dispatcharr instance, not through Kodi) -- press Play as normal, no extra step. Requires the plugin's own HTTP port to be reachable from this device (see the plugin's own README for the container port-mapping it needs), and requires the account this addon is configured with to be a Dispatcharr admin -- the plugin run/ API rejects anything less, and every live channel will fail to play until that's set up. Switch to Server-side once you've installed the plugin and have an admin account to use."
 msgstr ""
 
 msgctxt "#30035"

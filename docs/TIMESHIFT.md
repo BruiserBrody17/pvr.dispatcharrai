@@ -37,6 +37,22 @@ it -- the description below is kept for history, not as a currently
 available choice; Off covers the same "no extra dependency" motivation
 without inputstream.ffmpegdirect's own separate install/failure mode.
 
+**Default flipped from server-side (`2`) to Off (`0`) ahead of 1.0.** The
+`2` default above was deliberately chosen at the time to match every
+existing install's behavior from the unconditional-server-side era, so
+reintroducing the setting wouldn't itself change anything for users who
+already had it working. But `OpenLiveStream()` hard-fails every live
+channel (returns `false`, no fallback) when the account isn't admin or
+the plugin isn't installed -- exactly the state of a brand-new install
+before anyone's done that extra setup, which is the common case now that
+this project has no installed base yet to preserve continuity for. Off
+now ships as the default: live TV works immediately with zero extra
+setup, and server-side pause/rewind is an explicit opt-in once the admin
+account and plugin are in place. Purely a shipped-default change --
+`settings.xml`'s `<default>` only applies to a fresh profile, so anyone
+who already has this addon installed keeps whatever value they already
+have on disk regardless.
+
 **Off** (`live_timeshift_mode = 0`): `GetChannelStreamProperties()` sets
 `STREAMURL` directly to Dispatcharr's own live proxy URL
 (`GetLiveStreamUrl()`), the same URL the plugin's own buffer reads from.
@@ -197,6 +213,24 @@ the addon-side call, not assumed from `Plugins.md` alone:
   `GetChannelStreamProperties()` surfaces as `PVR_ERROR_SERVER_ERROR` with
   a log line naming both possible causes (plugin not installed/enabled, or
   non-admin account) rather than a bare, unexplained failure.
+
+  **Confirmed this is a blanket restriction, not specific to this
+  plugin.** `apps/plugins/api_views.py`'s `PluginRunAPIView` resolves
+  permissions via a `PluginAuthMixin` reading a hardcoded
+  `permission_classes_by_method` table in `apps/accounts/permissions.py`
+  -- `POST` (i.e. every `run/` action, for every plugin) maps to
+  `[IsAdmin]` unconditionally, checked before the request ever reaches a
+  plugin's own `run()`, so no plugin can loosen this for its own actions.
+  This is a real gap compared to how Dispatcharr gates its own native
+  recording playback (`RecordingViewSet`'s `file`/`hls` actions): those
+  only require `dvr_access` of `view` or `manage` (`apps/channels/
+  dvr_access.py`) -- and `view` is the *default* for any standard,
+  non-admin account. Dispatcharr's permission model clearly already
+  supports this finer-grained tier (`IsAdminOrDVRManager`/`IsDVRViewer`
+  exist and gate the recording endpoints), it's just never been wired up
+  to the plugin `run/` endpoint. Loosening this would need an upstream
+  Dispatcharr change (e.g. letting a plugin declare a permission class per
+  action); nothing on this addon's or plugin's side can work around it.
 
 `StartTimeshiftBuffer()` builds the final playlist URL from this addon's
 own configured Dispatcharr host plus the port/path the plugin reports back
