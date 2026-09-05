@@ -92,6 +92,42 @@ jobs:
         with:
           files: dist/*.zip
 
+  # The two companion Dispatcharr plugins (dispatcharr-plugin/*) are plain
+  # Python, installed directly on a Dispatcharr instance, not through Kodi
+  # -- no compilation, no Kodi source checkout, no platform matrix needed,
+  # unlike the addon itself above. Each plugin's own README documents that
+  # Dispatcharr identifies a plugin by the folder name inside its zip, not
+  # the zip's own filename, so each zip's top-level entry is the plugin's
+  # own directory name (timeshift_buffer/, recording_edl/) -- confirmed
+  # against a real Dispatcharr instance that a mismatch here 404s every
+  # call with "Plugin not found" (see each plugin's own README).
+  package-dispatcharr-plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Zip each plugin
+        run: |
+          mkdir -p dist
+          cd dispatcharr-plugin
+          for plugin in timeshift_buffer recording_edl; do
+            zip -r "../dist/${plugin}.zip" "$plugin"
+          done
+          ls -la ../dist
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dispatcharr-plugins
+          path: dist/*.zip
+
+      - name: Attach zips to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+
   build-windows:
     runs-on: windows-latest
     steps:
