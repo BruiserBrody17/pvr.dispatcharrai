@@ -1062,10 +1062,6 @@ class Plugin:
                 "this field entirely."
             ),
         },
-        {
-            "id": "active_buffers", "label": "Active buffers", "type": "info",
-            "description": 'Run "List Active Buffers" to see current state.',
-        },
     ]
 
     actions = [
@@ -1098,7 +1094,12 @@ class Plugin:
         },
         {
             "id": "list_buffers", "label": "List Active Buffers",
-            "description": "Shows every currently-running buffer and its age.",
+            "description": (
+                "Shows every currently-running buffer and its age, as a "
+                "one-line summary in the result notification (Dispatcharr's "
+                "own Plugins page has no other way to display an action's "
+                "result data)."
+            ),
             "button_label": "Refresh List",
         },
         {
@@ -1231,6 +1232,7 @@ class Plugin:
             _set_buffer_state(channel_uuid, existing)
             return {
                 "status": "ok",
+                "message": f"Reattached to already-running buffer ({len(existing.get('viewers', []))} viewer(s))",
                 "http_port": existing["http_port"],
                 "playlist_route": existing["playlist_route"],
                 "already_running": True,
@@ -1255,6 +1257,7 @@ class Plugin:
         _set_buffer_state(channel_uuid, state)
         return {
             "status": "ok",
+            "message": f"Started a new buffer for channel {channel_uuid}",
             "http_port": state["http_port"],
             "playlist_route": state["playlist_route"],
             "already_running": False,
@@ -1300,7 +1303,7 @@ class Plugin:
         _stop_ffmpeg(state, logger)
         _remove_channel_files(state, logger)
         _delete_buffer_state(channel_uuid)
-        return {"status": "ok"}
+        return {"status": "ok", "message": "Buffer stopped"}
 
     def _heartbeat(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
@@ -1313,7 +1316,7 @@ class Plugin:
 
         state["last_heartbeat"] = time.time()
         _set_buffer_state(channel_uuid, state)
-        return {"status": "ok"}
+        return {"status": "ok", "message": f"Heartbeat refreshed for channel {channel_uuid}"}
 
     def _get_live_manifest_action(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
@@ -1353,6 +1356,10 @@ class Plugin:
 
         return {
             "status": "ok",
+            "message": (
+                f"{len(manifest['segments'])} segment(s), {manifest['total_bytes']} bytes, "
+                f"{manifest['total_duration_ms'] / 1000:.1f}s buffered"
+            ),
             "http_port": state["http_port"],
             "channel_uuid": channel_uuid,
             "segment_route_prefix": f"/{channel_uuid}/",
@@ -1379,7 +1386,25 @@ class Plugin:
                 # here even while it's genuinely watching.
                 "viewers": len(state.get("viewers", [])),
             })
-        return {"status": "ok", "buffers": buffers}
+
+        # A human-readable summary, not just the raw buffers list above --
+        # Dispatcharr's own Plugins page shows an action's "message" field
+        # directly in its result toast (confirmed by reading its frontend,
+        # PluginCard.jsx's handlePluginRun()), which is the *only* place any
+        # of this action's result is ever actually visible in that UI. The
+        # raw "buffers" array above is still returned for a caller that
+        # wants the real data (this addon's own diagnostics, or a direct
+        # API call), just not something that UI can render on its own.
+        if not buffers:
+            message = "No active buffers"
+        else:
+            parts = [
+                f"{b['channel_uuid'][:8]} ({b['viewers']} viewer(s), {b['age_seconds']}s old)"
+                for b in buffers
+            ]
+            message = f"{len(buffers)} active buffer(s): " + ", ".join(parts)
+
+        return {"status": "ok", "message": message, "buffers": buffers}
 
     def _stop_all(self, logger):
         stopped = []
@@ -1392,7 +1417,8 @@ class Plugin:
             _remove_channel_files(state, logger)
             _delete_buffer_state(state["channel_uuid"])
             stopped.append(state["channel_uuid"])
-        return {"status": "ok", "stopped": stopped}
+        message = "No buffers were running" if not stopped else f"Stopped {len(stopped)} buffer(s)"
+        return {"status": "ok", "message": message, "stopped": stopped}
 
     def _scrub_orphaned_buffers(self, settings_dict, logger):
         storage_path = settings_dict.get("storage_path", "/data/timeshift")
@@ -1402,4 +1428,5 @@ class Plugin:
         # tracked state to double-check against) gets more margin than
         # ordinary heartbeat-based reaping.
         removed = _scrub_orphaned_dirs(storage_path, max(idle_timeout, 300), logger)
-        return {"status": "ok", "removed": removed}
+        message = "No orphaned directories found" if not removed else f"Removed {len(removed)} orphaned director{'y' if len(removed) == 1 else 'ies'}"
+        return {"status": "ok", "message": message, "removed": removed}
