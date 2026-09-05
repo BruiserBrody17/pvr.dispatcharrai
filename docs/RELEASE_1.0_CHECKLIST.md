@@ -49,12 +49,16 @@ Four platforms: Windows, Rocky Linux, CoreELEC/ODROID, macOS.
       version tag. Confirmed live: `1.0.0-beta.3` has all four
       (`*-linux.zip`, `*-osx-arm64.zip`, `*-windows-x86_64.zip`,
       `*-coreelec-arm.zip`) as real downloadable assets.
-- [ ] Zip packaging for `dispatcharr-plugin/timeshift_buffer` -- confirmed
-      **not** currently packaged at all; its own README tells users to
-      manually copy the directory
-- [ ] Zip packaging for `dispatcharr-plugin/recording_edl` -- same gap
-- [ ] Decide: attach plugin zips to the same GitHub Release as the addon
-      itself, or track them separately?
+- [x] Zip packaging for `dispatcharr-plugin/timeshift_buffer` and
+      `dispatcharr-plugin/recording_edl` -- new `package-dispatcharr-plugins`
+      job in `.github/workflows/build.yml`, attached to the same GitHub
+      Release as the addon zips on the same version tag. Confirmed live via
+      `gh run watch` (all steps green) and by downloading the actual CI
+      artifact and inspecting it with `unzip -l`: each zip's top-level entry
+      is exactly the plugin's own directory name
+      (`timeshift_buffer/`/`recording_edl/`) containing only
+      `plugin.py`/`plugin.json`/`README.md` -- no stray `__pycache__`, no
+      extra nesting.
 
 ## Open items (more will likely come up)
 
