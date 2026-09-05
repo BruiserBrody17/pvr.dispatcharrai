@@ -153,9 +153,19 @@ and reports, per directory, a best-effort classification:
 
 It never deletes anything. Results show up in the result toast (a short
 summary plus a per-directory breakdown) and in the full `directories`
-list for a caller using the REST API directly. There is currently no
-delete action for these -- review the output yourself before deciding
-whether, and how, to reclaim any of them.
+list for a caller using the REST API directly.
+
+Once you've reviewed the output, `delete_orphaned_dvr_hls_dirs` removes
+only the directories classified `orphaned` -- nothing else, empty or not.
+An empty directory isn't, on its own, evidence of being safe to delete:
+a brand-new recording's `.dvr_*_hls` directory is created before ffmpeg
+writes its first segment, so a genuinely active recording can look empty
+for its first few seconds -- which is exactly why this only ever acts on
+the `orphaned` classification (no Recording row referencing it at all),
+never on directory size. Uses the same `confirm` dialog convention as
+`scrub_orphaned_sidecars`. Does not prune parent directories left empty
+by a deletion -- run `scrub_orphaned_sidecars` for that, which already
+covers any parent within a DVR path template's own scope.
 
 ## Installing
 
@@ -203,4 +213,14 @@ curl -X POST http://<host>:9191/api/plugins/plugins/recording_edl/run/ \
   -H "Authorization: Bearer <admin JWT>" \
   -H "Content-Type: application/json" \
   -d '{"action": "list_dvr_hls_staging_dirs", "params": {}}'
+```
+
+Use "Delete Orphaned DVR HLS Directories" on the Plugins page (prompts
+for confirmation first), or:
+
+```bash
+curl -X POST http://<host>:9191/api/plugins/plugins/recording_edl/run/ \
+  -H "Authorization: Bearer <admin JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "delete_orphaned_dvr_hls_dirs", "params": {}}'
 ```

@@ -80,6 +80,7 @@ reasoning about. See _dvr_sidecar_scan_roots and _is_under_dotted_dir.
 """
 
 import re
+import shutil
 from pathlib import Path
 
 # Matches Dispatcharr's own hardcoded library_root/recordings_root
@@ -419,6 +420,40 @@ def _list_dvr_hls_staging_dirs():
     return results
 
 
+def _delete_orphaned_dvr_hls_dirs(logger):
+    """Deletes every .dvr_*_hls directory _classify_dvr_hls_dir calls
+    "orphaned" -- no Recording row with that id exists at all -- and
+    nothing else. Never touches "active" (a recording in progress),
+    "preserved_failure" (concat failed, kept as the only surviving copy),
+    or "referenced" (a Recording row exists but the signal isn't clean --
+    needs manual review) directories, empty or not; see
+    _classify_dvr_hls_dir's own docstring for the full reasoning behind
+    each category. Classification is freshly recomputed here (via
+    _list_dvr_hls_staging_dirs(), not a stale list from an earlier click),
+    so this always acts on current state at the moment it actually runs.
+
+    Deliberately does not prune parent directories left empty by a
+    deletion -- scrub_orphaned_sidecars's own empty-directory sweep
+    already covers that for any parent within a DVR path template's own
+    scope, and reaching further than that here would repeat exactly the
+    scope mistake _dvr_sidecar_scan_roots's own docstring documents."""
+    removed = []
+    errors = []
+    for info in _list_dvr_hls_staging_dirs():
+        if info["classification"] != "orphaned":
+            continue
+        path = Path(info["path"])
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            errors.append(f"{path}: {exc}")
+            continue
+        removed.append(str(path))
+        if logger:
+            logger.info("recording_edl: removed orphaned .dvr_*_hls directory %s", path)
+    return removed, errors
+
+
 class Plugin:
     name = "Recording EDL"
     version = "0.1.0"
@@ -517,6 +552,29 @@ class Plugin:
                 "actually safe to clean up."
             ),
         },
+        {
+            "id": "delete_orphaned_dvr_hls_dirs",
+            "label": "Delete Orphaned DVR HLS Directories",
+            "description": (
+                "Deletes only the .dvr_*_hls directories List DVR HLS "
+                "Staging Directories classifies as \"orphaned\" -- no "
+                "Recording row with that id exists at all. Never touches "
+                "\"active\", \"preserved_failure\", or \"referenced\" "
+                "directories, empty or not. Does not prune parent "
+                "directories left empty by a deletion -- run Scrub "
+                "Orphaned EDL/Logo Files for that."
+            ),
+            "confirm": {
+                "required": True,
+                "title": "Delete orphaned .dvr_*_hls directories?",
+                "message": (
+                    "Permanently deletes every .dvr_*_hls directory with "
+                    "no Recording row referencing it at all. Active and "
+                    "preserved-failure directories are never touched. "
+                    "This cannot be undone."
+                ),
+            },
+        },
     ]
 
     def run(self, action: str, params: dict, context: dict):
@@ -555,6 +613,16 @@ class Plugin:
                 )
                 message = f"{len(dirs)} .dvr_*_hls dir(s) found ({summary}): {entries}"
             return {"status": "ok", "message": message, "directories": dirs}
+
+        if action == "delete_orphaned_dvr_hls_dirs":
+            removed, errors = _delete_orphaned_dvr_hls_dirs(logger)
+            if not removed and not errors:
+                message = "No orphaned .dvr_*_hls directories found"
+            else:
+                message = f"Removed {len(removed)} orphaned .dvr_*_hls director{'y' if len(removed) == 1 else 'ies'}"
+                if errors:
+                    message += f", {len(errors)} error(s) (see plugin log)"
+            return {"status": "ok", "message": message, "removed": removed, "errors": errors}
 
         if action != "get_edl":
             return {"status": "error", "message": f"Unknown action: {action}"}
