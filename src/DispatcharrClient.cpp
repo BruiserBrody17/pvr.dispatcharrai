@@ -1010,6 +1010,12 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
       else if (!status.empty())
         r.isInProgress = false;
 
+      // See this field's own comment in DispatcharrClient.h: present for
+      // the whole window between "user stopped it" and "concat + viewer-wait
+      // actually finished," regardless of what status already says.
+      r.hlsDirStillPresent =
+          custom.contains("_hls_dir") && !custom["_hls_dir"].is_null();
+
       const json& program = custom.contains("program") ? custom["program"] : json();
       if (program.is_object())
       {

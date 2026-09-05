@@ -1340,7 +1340,12 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
       {
         if (rec.id == id)
         {
-          isRealTime = rec.isInProgress;
+          // hlsDirStillPresent alongside isInProgress: see its own comment
+          // in DispatcharrClient.h -- a just-stopped recording still needs
+          // the growing-buffer path (and is therefore still "real-time" in
+          // the sense Kodi cares about here) for the whole window until
+          // Dispatcharr's own HLS-to-MKV concat actually finishes.
+          isRealTime = rec.isInProgress || rec.hlsDirStillPresent;
           break;
         }
       }
@@ -1404,6 +1409,7 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   // isn't the right one to have started with if it was in progress right
   // now).
   bool inProgress = false;
+  bool hlsDirStillPresent = false;
   {
     std::vector<Recording> recordings;
     std::string recError;
@@ -1414,17 +1420,32 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
         if (rec.id == id)
         {
           inProgress = rec.isInProgress;
+          hlsDirStillPresent = rec.hlsDirStillPresent;
           break;
         }
       }
     }
   }
 
+  // Route through the growing-buffer reader whenever the HLS directory is
+  // still there, not just while Dispatcharr's own status still says
+  // "recording" -- see hlsDirStillPresent's own comment in
+  // DispatcharrClient.h for why those two go false at very different times
+  // (status flips immediately on stop; the HLS-to-MKV concat that has to
+  // finish before there's a real, stable file to byte-range against can
+  // take real time afterward). Reported live: opening a just-stopped
+  // recording during that window either errored outright (no file yet) or
+  // played without seeking (a real file existed but was still being
+  // actively written by the concat, an unstable Content-Length the
+  // completed-recording path was never built to tolerate).
+  bool useGrowingBuffer = inProgress || hlsDirStillPresent;
+
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharrai: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d",
-            recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0);
-  bool opened = inProgress ? m_client.OpenInProgressRecordingStream(id, error)
-                            : m_client.OpenRecordingStream(id, error);
+            "pvr.dispatcharrai: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
+            "hlsDirStillPresent=%d",
+            recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0, hlsDirStillPresent ? 1 : 0);
+  bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, error)
+                                  : m_client.OpenRecordingStream(id, error);
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
             opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (!opened)

@@ -1432,4 +1432,55 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   in-progress recording is expected, not a bug, and there's nothing left
   to trim on this addon's side without Dispatcharr itself segmenting DVR
   recordings faster.
+- **Opening a recording immediately after stopping it could error outright,
+  or play without the ability to seek, depending on exactly when you
+  tried -- fixed by adding a second signal alongside `isInProgress`.**
+  Reported live: stopped a recording, tried playing it right away -- first
+  attempt errored, second attempt played but wouldn't seek, third attempt
+  (a little later) worked normally. Root cause: Dispatcharr's stop endpoint
+  flips `custom_properties.status` away from `"recording"` synchronously,
+  the instant the user stops it -- confirmed in `tasks.py`'s own comment,
+  "'stopped' is set by the stop endpoint before stream teardown" -- well
+  before the HLS-to-MKV concat that happens afterward, in the background
+  recording task, actually produces a complete, stable file. This addon's
+  `OpenRecordedStream()` was deciding "completed vs. still-recording" purely
+  off that `status`-derived `isInProgress` flag, so during that gap it
+  guessed "completed" and opened whatever partial state happened to exist
+  on disk: nothing yet (error), or a real file still being actively written
+  by the concat (played, but an unstable Content-Length the completed-
+  recording path was never built to seek against safely).
+
+  Fixed with a second, independent signal: `custom_properties._hls_dir`,
+  which (confirmed in `tasks.py`) is only ever popped from custom_properties
+  *after* the concat and the post-recording active-viewer-wait grace period
+  both finish -- i.e. it stays present for the entire window `isInProgress`
+  alone can't see. `OpenRecordedStream()` now keeps routing through the
+  growing-buffer HLS reader for as long as `_hls_dir` is still there,
+  regardless of what `status` already says. That reader already tolerates a
+  frozen (finished, no-longer-growing) manifest correctly on its own --
+  `RefreshInProgressRecordingManifest()` ties its own `finished` flag to
+  `isInProgress`, not to whether Dispatcharr's ffmpeg process happens to
+  still be running -- so once ffmpeg has actually exited, reads correctly
+  stop waiting and just play through to genuine EOF like any static file.
+  Deliberately NOT folded into `isInProgress` itself, which also drives
+  Kodi's timer-state UI (`PVR_TIMER_STATE_RECORDING`) and must keep
+  reflecting Dispatcharr's real status, not this file-readiness detail.
+
+  Confirmed live after the fix: stopped a ~30-minute recording and opened
+  it immediately -- played correctly on the first attempt (a few seconds'
+  wait, matching the still-open HLS reader's own cold-start behavior), with
+  the final MKV visibly still growing on disk throughout playback. A batch
+  of `HEAD .../hls/segNNNNN.ts` "Broken pipe" errors turned up in
+  Dispatcharr's own log around the same recording -- traced and ruled out
+  as this addon's problem: every `RefreshInProgressRecordingManifest()`
+  call in the corresponding `kodi.log` window reported `[0 failed]`
+  probes, and the final segment count/duration matched the recording's
+  full length with no gap. `ProbeSegmentByteSize()` sends exactly this kind
+  of HEAD request (`CURLOPT_NOBODY`), which by HTTP definition carries no
+  response body -- curl only needs the headers (Content-Length, status) to
+  succeed, so a server that still attempts an unnecessary `sendfile()` for
+  that nonexistent body and hits a broken pipe once the client (correctly)
+  isn't reading one logs a scary-looking error even though the request
+  itself, from curl's side, already succeeded. Dispatcharr-side log noise,
+  not a real failure -- confirmed by hard evidence rather than assumed.
 
