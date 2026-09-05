@@ -7,7 +7,7 @@
   <requires>
     @ADDON_DEPENDS@
     <!--
-      Not a hard dependency -- this addon works fully without it (Off and
+      Not a hard dependency: this addon works fully without it (Off and
       Server-side live-TV pause/rewind, plus completed/in-progress
       recording playback, need nothing beyond Kodi's own PVR API). Listed
       as optional so Kodi surfaces the relationship in this addon's own
@@ -17,11 +17,16 @@
       setting, and per Kodi's own CAddonInstallJob::CheckDependencies() /
       Install() (xbmc/addons/AddonInstaller.cpp, confirmed by reading
       Kodi's current source), a missing optional dependency never blocks
-      or fails an install the way a missing required one would -- making
+      or fails an install the way a missing required one would; making
       this required instead would mean this addon fails to install
       outright for anyone whose enabled repositories don't have
       inputstream.ffmpegdirect available, even if they'd never touch
-      either feature that needs it.
+      either feature that needs it. (Note for future edits: XML comments
+      may not contain a literal double hyphen anywhere in the body, not
+      just at the delimiters; this project's usual prose style uses a
+      double hyphen as a separator, which breaks strict XML parsers like
+      xmlstarlet; CoreELEC's build caught this live. Use a colon,
+      semicolon, or single hyphen inside any addon.xml.in comment instead.)
     -->
     <import addon="inputstream.ffmpegdirect" version="3.0.0" optional="true"/>
   </requires>
