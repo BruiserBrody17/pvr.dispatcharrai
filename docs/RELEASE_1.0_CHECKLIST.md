@@ -227,19 +227,36 @@ to its original settings and left running normally.
   Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
   confirmed live on all four, closing out what was the last real gap in
   platform coverage.
-- **A genuine, unexplained anomaly from the macOS pass, not yet
-  root-caused**: `kodi.log` showed a full `UpdateClients: Recreating PVR
-  client` (clean DLL unload/reload, no crash, playback fine right after)
-  immediately after dismissing a resume-prompt dialog, with no settings
-  change involved -- ruling out the known beta.2 spurious-restart bug
-  (settings-write-triggered). Did not reproduce on a second attempt.
-  Worth a dedicated look (does dismissing a modal PVR-recording dialog
-  itself ever trigger a client reload? on which platforms?) before
-  1.0, or at minimum before assuming it's noise.
-- Catch-up and recurring-timer creation still have no clean way to
-  exercise via Kodi's JSON-RPC alone (see any platform's section above)
-  -- worth deciding whether future platform passes should just accept
-  this as a documented tooling gap (the underlying logic is
-  platform-independent and already covered on Windows) or find a real
-  driving mechanism (e.g. scripted GUI input) before calling any platform
-  fully "tested."
+- ~~A genuine, unexplained anomaly from the macOS pass~~ -- **Decided:
+  treating as a one-off, not pursuing further.** `kodi.log` showed a full
+  `UpdateClients: Recreating PVR client` (clean DLL unload/reload, no
+  crash, playback fine right after) immediately after dismissing a
+  resume-prompt dialog, with no settings change involved -- ruling out
+  the known beta.2 spurious-restart bug (settings-write-triggered). Did
+  not reproduce on a second attempt. Left here for the record in case it
+  ever resurfaces and this becomes useful context.
+- ~~Catch-up and recurring-timer creation have no clean way to exercise
+  via Kodi's JSON-RPC alone~~ -- **Decided: counted as tested anyway, not
+  worth building a dedicated driving mechanism for.** The underlying
+  logic is platform-independent and already has real live-verification
+  from earlier sessions; the gap is in this testing technique
+  (JSON-RPC-driven, not GUI-driven), not in the feature.
+- **Version bump for the real 1.0 tag.** `addon.xml.in` is still
+  `1.0.0-beta.3`; needs bumping to `1.0.0`. Per the existing pattern in
+  git history, `packaging/coreelec/pvr.dispatcharrai/package.mk`'s
+  `PKG_VERSION`/`PKG_SHA256` can only be filled in *after* the tag exists
+  and the real release tarball's checksum is known -- a follow-up commit,
+  not something to do in the same commit as the version bump.
+- **Both companion plugins' `plugin.json` are still at version `0.1.0`**,
+  despite `recording_edl` gaining orphan-cleanup and `.dvr_*_hls`
+  diagnostics this session and both getting real production mileage.
+  Decide whether these get bumped for 1.0 and by what scheme -- this
+  version is what Dispatcharr's own Plugins page shows users, independent
+  of the addon's own version.
+- **No CHANGELOG/HISTORY file exists.** The `docs/*.md` engineering-history
+  family plus the concise READMEs cover *why* things are the way they are,
+  but not "what changed between beta.3 and 1.0.0" for someone tracking
+  releases -- and a fair amount actually changed (default flip to `Off`,
+  Local mode reintroduced, the admin-scoping clarifications). Worth at
+  least one release-notes-style entry for the 1.0.0 tag, even without
+  committing to a full CHANGELOG going forward.
