@@ -90,6 +90,7 @@ every push and attaches release zips on a version tag.
 
 ## More detail
 
+See [CHANGELOG.md](CHANGELOG.md) for what changed release to release.
 The `docs/` directory holds engineering notes -- how each feature was
 built, root causes for bugs that were found and fixed, and decisions that
 were tried and reverted -- kept as project history rather than user
