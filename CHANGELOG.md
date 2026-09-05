@@ -32,6 +32,17 @@ Becomes `1.0.0` at tag time.
   not yet fixed, just now documented.
 - All three READMEs rewritten to be concise; engineering narrative moved
   into `docs/`.
+- `timeshift_buffer` plugin tuning, found via real hardware/load testing:
+  `segment_seconds` default lowered 6s -> 2s and `idle_timeout_seconds`
+  default lowered 120s -> 30s (both for snappier catch-up and faster
+  cleanup of abandoned buffers), and ffmpeg's SIGTERM-to-SIGKILL grace
+  period on stop shortened 5s -> 2s. A buffer that can't start because a
+  provider's own concurrent-stream limit is already exhausted now fails
+  fast instead of hanging for a slow timeout.
+- `recording_edl` plugin: diagnostic action results (e.g. the `.dvr_*_hls`
+  cleanup actions) now surface through Dispatcharr's own result toast
+  instead of a field nothing displayed; added a `test_recording_id`
+  setting for easier manual testing from the Plugins page.
 
 ### Added
 
@@ -52,6 +63,12 @@ Becomes `1.0.0` at tag time.
 - `inputstream.ffmpegdirect` declared as an optional addon dependency, so
   Kodi's own addon info reflects the relationship.
 
+### Removed
+
+- `timeshift_buffer`'s `snapshot_buffer` plugin action -- superseded by
+  later fixes to seeking directly against the live buffer, so the
+  workaround it existed for is no longer needed.
+
 ### Fixed
 
 - Recording playback failing immediately after stopping a recording,
@@ -65,6 +82,13 @@ Becomes `1.0.0` at tag time.
 - An invalid XML comment that broke CoreELEC builds specifically (not
   caught by Windows/macOS/Linux builds, which don't validate addon.xml as
   strictly).
+- README incorrectly claimed a second device joining an already-running
+  server-side timeshift buffer could rewind into another device's earlier
+  viewing history. Live-tested and found false: the underlying buffer
+  *process* is genuinely shared per-channel, but each device's own
+  rewind window is still capped to its own viewing session either way --
+  corrected, with the accurate explanation moved into
+  `timeshift_buffer`'s own README.
 
 ## [1.0.0-beta.3] - 2026-09-04
 
