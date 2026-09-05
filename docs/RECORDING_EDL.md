@@ -51,7 +51,7 @@ Dispatcharr admin account** -- this isn't specific to this plugin or to
 EDL data: Dispatcharr's plugin `run/` API (`PluginRunAPIView`) is
 admin-only for every plugin's every action, a blanket restriction
 confirmed against Dispatcharr's own source and detailed in
-[docs/TIMESHIFT.md](TIMESHIFT.md)'s "permission requirement" section.
+[TIMESHIFT.md](TIMESHIFT.md)'s "permission requirement" section.
 Unlike `timeshift_buffer`, a non-admin account here fails soft rather
 than hard: `GetRecordingEdl()` treats any `get_edl` failure the same as
 "plugin not installed" (see below) -- logged at debug level, empty
