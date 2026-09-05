@@ -1055,6 +1055,17 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
     return false;
   }
 
+  // Surfaces the plugin's own "started new" vs "reattached to an
+  // already-running buffer" distinction (see plugin.py's start_buffer),
+  // which this addon otherwise has no visibility into -- useful for
+  // confirming the buffer is genuinely shared per-channel across viewers
+  // rather than per-device, not just assumed from reading the plugin's
+  // own source.
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharrai: CallTimeshiftPluginAction(%s): %s (already_running=%d)",
+            action.c_str(), FieldOr<std::string>(result, "message", "").c_str(),
+            FieldOr(result, "already_running", false) ? 1 : 0);
+
   playlistUrlOut = "http://" + m_config.host + ":" + std::to_string(httpPort) + playlistRoute;
   WaitForTimeshiftPlaylistReady(playlistUrlOut); // best-effort; see its own comment
   return true;
