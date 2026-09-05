@@ -16,8 +16,9 @@ directly onto Dispatcharr's own backend and settings.
   Dispatcharr admin account needed (see below)
 - Recording playback, including watching a recording while it's still
   being written
-- Recording pre/post padding, synced both ways with Dispatcharr's own
-  global setting
+- Recording pre/post padding, synced with Dispatcharr's own global
+  setting -- reading it needs no special permission, pushing a change
+  back needs a real admin account (see below)
 - Commercial-break markers on a recording's seekbar, for recordings
   Dispatcharr's comskip integration has marked (needs the
   `recording_edl` companion plugin)
@@ -71,11 +72,22 @@ recording playback need no special permission, and recording management
 (adding/editing/deleting timers) just needs that account's `dvr_access`
 set to `manage` -- still short of full admin.
 
-Both companion plugins are the exception: Dispatcharr's plugin API is
-admin-only regardless of what a plugin actually does, so **either one
-requires a real Dispatcharr admin account** for the configured account to
-use it at all -- server-side live-TV pause/rewind (`timeshift_buffer`) and
-comskip markers (`recording_edl`) alike. By default (`live_timeshift_mode`
+Recording padding sync is split down the middle: Dispatcharr's global
+pre/post padding is read into Kodi's settings on every startup with no
+special permission needed, but pushing a change made in Kodi's settings
+back to Dispatcharr needs a real admin account -- Dispatcharr's
+`/api/core/settings/` endpoint only allows a write from `user_level >= 10`.
+With a lesser account this currently fails silently: the value you typed
+stays showing in Kodi's settings screen, but Dispatcharr's actual global
+setting is left unchanged, with nothing surfaced beyond an error line in
+`kodi.log`.
+
+Both companion plugins need a real Dispatcharr admin account for a
+different reason: Dispatcharr's plugin API is admin-only regardless of
+what a plugin actually does, so **either one requires a real Dispatcharr
+admin account** for the configured account to use it at all -- server-side
+live-TV pause/rewind (`timeshift_buffer`) and comskip markers
+(`recording_edl`) alike. By default (`live_timeshift_mode`
 set to `Off`), live channels play with no extra setup; set it to
 `Server-side` once you've installed `timeshift_buffer` and have an admin
 account, otherwise every live channel will fail to play in that mode. If
