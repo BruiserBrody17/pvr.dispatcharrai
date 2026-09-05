@@ -1633,6 +1633,15 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
       now - m_inProgressRecordingStream.lastManifestFetch < kMinRefreshInterval)
     return true;
 
+  // Timing breakdown for diagnosing "seek to live took ~10s"-type reports:
+  // this one call does up to three separate HTTP round trips (playlist
+  // fetch, one ranged-GET probe per newly-discovered segment, and an
+  // unconditional GetRecordings() call below just to re-check this one
+  // recording's isInProgress flag), any of which could plausibly dominate
+  // depending on network conditions -- log each piece rather than
+  // guessing which one matters.
+  auto refreshStart = std::chrono::steady_clock::now();
+
   std::string baseDir =
       BaseUrl() + kRecordingsPath + std::to_string(m_inProgressRecordingStream.recordingId) + "/hls/";
   std::string playlistUrl = baseDir + "index.m3u8";
@@ -1641,6 +1650,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   if (!FetchRawInProgressPlaylist(m_inProgressRecordingStream.recordingId, playlistUrl, playlistText,
                                    error))
     return false;
+  double fetchPlaylistSec =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
 
   // Append-only merge: segments before the count we already know about are
   // skipped (no rolling-window eviction for a recording -- see
@@ -1650,8 +1661,11 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // ranged-GET probe for that.
   size_t alreadyKnown = m_inProgressRecordingStream.segments.size();
   size_t segmentIndex = 0;
+  size_t newSegmentsProbed = 0;
+  size_t newSegmentsProbeFailed = 0;
   double pendingDurationSec = 0.0;
   size_t pos = 0;
+  auto probeStart = std::chrono::steady_clock::now();
   while (pos <= playlistText.size())
   {
     size_t newlinePos = playlistText.find('\n', pos);
@@ -1694,6 +1708,11 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
           m_inProgressRecordingStream.totalDurationMs +=
               static_cast<int64_t>(pendingDurationSec * 1000 + 0.5);
           m_inProgressRecordingStream.segments.push_back(std::move(info));
+          ++newSegmentsProbed;
+        }
+        else
+        {
+          ++newSegmentsProbeFailed;
         }
         // A segment that can't be sized (transient network hiccup, or
         // recycled mid-probe) is skipped rather than retried here --
@@ -1711,12 +1730,15 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
       break;
     pos = newlinePos + 1;
   }
+  double probeSegmentsSec =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - probeStart).count();
 
   // Fresh in-progress check every call, not just at open: this is what
   // lets ReadInProgressRecordingStream() eventually stop waiting for a
   // recording that's actually finished, and CanPauseStream()/
   // IsRealTimeStream() reflect current reality rather than whatever was
   // true when the stream was opened.
+  auto getRecordingsStart = std::chrono::steady_clock::now();
   bool stillInProgress = false;
   std::vector<Recording> recordings;
   std::string recordingsError;
@@ -1732,6 +1754,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     }
   }
   m_inProgressRecordingStream.finished = !stillInProgress;
+  double getRecordingsSec =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - getRecordingsStart).count();
 
   // Proactive self-heal: cheaper to catch a stale key here than mid-read.
   if (!GetApiKey().empty() && !IsApiKeyValidFor(playlistUrl))
@@ -1739,6 +1763,16 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     std::string regenKey, regenError;
     GenerateApiKey(regenKey, regenError);
   }
+
+  double totalSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharrai: RefreshInProgressRecordingManifest: %.3fs total (playlist fetch "
+            "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordings %.3fs), "
+            "totalBytes=%lld totalDurationMs=%lld finished=%d",
+            totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed,
+            getRecordingsSec, static_cast<long long>(m_inProgressRecordingStream.totalBytes),
+            static_cast<long long>(m_inProgressRecordingStream.totalDurationMs),
+            m_inProgressRecordingStream.finished ? 1 : 0);
 
   m_inProgressRecordingStream.lastManifestFetch = now;
   return true;
@@ -1842,10 +1876,13 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
             ? 1
             : static_cast<int>((lastSegmentDurationMs * 3 / 2) / kCatchUpSleepMs) + 1;
 
+    auto catchUpStart = std::chrono::steady_clock::now();
+    int attemptsUsed = 0;
     for (int attempt = 0; attempt < catchUpAttempts &&
                            m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
          ++attempt)
     {
+      attemptsUsed = attempt + 1;
       std::string refreshError;
       RefreshInProgressRecordingManifest(/*force=*/true, refreshError);
       if (m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes)
@@ -1859,6 +1896,18 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     bool caughtUp = m_inProgressRecordingStream.position < m_inProgressRecordingStream.totalBytes;
     m_inProgressRecordingStream.lastShortGiveUpPosition =
         (likelySeekProbe && !caughtUp) ? m_inProgressRecordingStream.position : -1;
+
+    double elapsedSec =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharrai: ReadInProgressRecordingStream: catch-up loop used %d/%d attempts, "
+              "%.3fs (likelySeekProbe=%d, lastSegmentDurationMs=%lld), position=%lld totalBytes=%lld "
+              "-> %s",
+              attemptsUsed, catchUpAttempts, elapsedSec, likelySeekProbe ? 1 : 0,
+              static_cast<long long>(lastSegmentDurationMs),
+              static_cast<long long>(m_inProgressRecordingStream.position),
+              static_cast<long long>(m_inProgressRecordingStream.totalBytes),
+              caughtUp ? "caught up" : "gave up");
 
     if (!caughtUp)
       return 0;
@@ -1887,6 +1936,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
   {
     for (int attempt = 0; attempt < 2; ++attempt)
     {
+      auto segmentFetchStart = std::chrono::steady_clock::now();
       CURL* curl = static_cast<CURL*>(m_inProgressRecordingStream.curl);
       if (!curl)
       {
@@ -1920,6 +1970,22 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       long httpCode = 0;
       curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
       curl_slist_free_all(headers);
+
+      // Uncached until now: this is the ONE unlogged blocking network call
+      // in the whole read path -- a seek landing on a segment ordinary
+      // playback hasn't reached yet pays this full synchronous
+      // curl_easy_perform() with no visibility at all before this was
+      // added, which the catch-up-loop and manifest-refresh logging next
+      // to it could never explain by itself (this fires regardless of
+      // whether position was ever >= totalBytes, so it's not gated on
+      // "likelySeekProbe" the way those are).
+      double fetchSec =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - segmentFetchStart).count();
+      kodi::Log(ADDON_LOG_DEBUG,
+                "pvr.dispatcharrai: ReadInProgressRecordingStream: segment body fetch (attempt=%d) "
+                "byteSize=%lld took %.3fs, curlResult=%d httpCode=%ld url=%s",
+                attempt, static_cast<long long>(seg->byteSize), fetchSec, static_cast<int>(res),
+                httpCode, seg->url.c_str());
 
       if (httpCode == 401 && attempt == 0)
       {
@@ -1987,8 +2053,34 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
   }
   if (newPos < 0)
     return -1;
-  if (newPos > m_inProgressRecordingStream.totalBytes)
-    newPos = m_inProgressRecordingStream.totalBytes;
+
+  // Same live-backoff SeekLiveTimeshiftStream() already applies, and for
+  // the identical reason: clamping a forward seek to exactly totalBytes
+  // (the tip) leaves zero read-ahead margin, so playback resumes,
+  // immediately re-catches-up to the (still-)tail within moments of real
+  // playback, and has to wait through another chunk of Dispatcharr's own
+  // DVR ffmpeg's ~4s HLS segment cadence a second time right after what
+  // looked like a completed seek -- exactly the "skip ahead to live took
+  // ~10s" symptom this was added to investigate. Backing off by one
+  // segment's worth of bytes means at least that much is already
+  // available to play immediately, the same margin SeekLiveTimeshiftStream()
+  // already keeps.
+  int64_t liveBackoffBytes = m_inProgressRecordingStream.segments.empty()
+                                 ? 0
+                                 : m_inProgressRecordingStream.segments.back().byteSize;
+  int64_t tailTarget =
+      std::max<int64_t>(0, m_inProgressRecordingStream.totalBytes - liveBackoffBytes);
+  bool clampedToTail = newPos > tailTarget;
+  if (clampedToTail)
+    newPos = tailTarget;
+
+  kodi::Log(ADDON_LOG_DEBUG,
+            "pvr.dispatcharrai: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
+            "current=%lld, totalBytes=%lld -> newPos=%lld%s",
+            static_cast<long long>(position), whence,
+            static_cast<long long>(m_inProgressRecordingStream.position),
+            static_cast<long long>(m_inProgressRecordingStream.totalBytes),
+            static_cast<long long>(newPos), clampedToTail ? " (clamped to tail)" : "");
 
   m_inProgressRecordingStream.position = newPos;
   return newPos;
