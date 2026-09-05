@@ -65,83 +65,32 @@ conversation that produced this draft for the full reasoning):
 
 Verified live end-to-end against a real Dispatcharr instance and a real
 pvr.dispatcharrai build: buffer capture, this plugin's own HTTP serving,
-and a real channel opening and playing cleanly through
-inputstream.ffmpegdirect are all confirmed working. One real finding from
-that pass: the live buffer's rolling playlist (Duration: N/A, by design --
-that's what lets it keep tailing new content) means Kodi's own PVR layer
-reports canseek: false and a Player.Seek call fails outright, confirmed
-live, not just a stale UI report -- the same root cause already documented
-in pvr.dispatcharrai's docs/RECORDINGS.md for in-progress-recording "Play
-live": Kodi-core requires a known, *finite* duration to permit seeking at
-all, independent of whatever INPUTSTREAM_SUPPORTS_SEEK the inputstream
-addon itself advertises, and a perpetually-growing buffer can never
-provide one by definition.
+and a real channel opening and playing cleanly are all confirmed working.
 
-snapshot_buffer (below) is the fix for that, mirroring the same trade-off
-pvr.dispatcharrai already applies to in-progress recordings ("Play live"
-tails forever with no seek; "Play from start" is a one-shot, finite,
-ENDLIST-terminated snapshot with real seek but stops following new
-content). It **copies** the buffer's currently-listed segment files into a
-separate, non-recycled snapshot/ subdirectory rather than just writing a
-differently-shaped playlist against the same live files -- the live
-buffer's own -segment_wrap keeps recycling those original files in the
-background the whole time a snapshot might be watched, so referencing them
-directly would risk the exact "a segment gets overwritten while a client
-still has it queued up" race this project already got bitten by once
-before (see docs/RECORDINGS.md in pvr.dispatcharrai for that
-history) -- copying sidesteps it entirely by giving the snapshot
-its own segment files the live recording can never touch.
-
-snapshot_buffer itself is confirmed live: playback opens correctly and
-Kodi reports canseek: true. Seeking within it, however, was confirmed
-live to fail 100% of the time (every position tried, both directions) --
-not the "imprecise" behavior this project's other ffmpegdirect-routed
-seeking (catch-up, in-progress recordings) has, but every seek producing
-"unknown position after seek" in inputstream.ffmpegdirect's own log,
-immediately followed by the demuxer hitting EOF. Root-caused by reading
-inputstream.ffmpegdirect's own source: pvr.dispatcharrai's server-side
-stream properties never set inputstream.ffmpegdirect.stream_mode, so
-ffmpegdirect falls back to its generic FFmpegStream class and a plain
-av_seek_frame() -- unlike this addon's catch-up feature (stream_mode:
-catchup, a specialized FFmpegCatchupStream with its own seek logic) or
-its local live-timeshift mode (stream_mode: timeshift, TimeshiftStream's
-own local buffer and seek), neither of which hits this. The generic
-class's seek needs a global target PTS to actually exist within some
-segment's own PTS space -- _start_ffmpeg's -reset_timestamps 1 (removed
-below) made every segment restart its PTS near zero, so no segment's
-local timeline ever actually contained the computed global target.
-Removed it (keeping timestamps continuous across segments, the way
-real-world HLS packaging normally does) as a fix attempt for that, then
-redeployed and re-tested live against a freshly-started buffer (old one
-explicitly stopped first, so the test genuinely exercised the new
-command): identical failure, same log signature, same stuck speed: 0.
-That rules out -reset_timestamps as the cause. The flag stays removed
-(continuous timestamps aren't harmful and are closer to normal HLS
-practice) but the actual root cause of the av_seek_frame failure was
-never chased further, because the real fix turned out to be architectural,
-not another guess at ffmpegdirect's own seek internals -- see below.
-
-SUPERSEDED, not just patched: pvr.dispatcharrai no longer routes the live
-buffer through inputstream.ffmpegdirect (a STREAMURL) at all. It now
-exposes the buffer via Kodi's own PVR_STREAM_PROPERTY-free
-OpenLiveStream/ReadLiveStream/SeekLiveStream API instead, using Kodi's
-native internal demuxer for MPEG-TS parsing and seek refinement --
-the same mechanism this addon's completed-recording playback already
-relied on successfully throughout this whole history. That needed two
-things from this plugin: Range support in the file server (do_GET, see
+This plugin originally routed live playback through
+`inputstream.ffmpegdirect` (a plain `STREAMURL`), with a `snapshot_buffer`
+action (copy the buffer's currently-listed segments into a separate,
+finite, `ENDLIST`-terminated playlist a client could seek within, since
+Kodi gates `canseek` on a known duration a perpetually-growing live
+playlist can never have) as a workaround for that route's own seeking,
+which turned out to be broken outright, not just imprecise. That whole
+approach is **superseded**: pvr.dispatcharrai now exposes the buffer via
+Kodi's own `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` API instead,
+using Kodi's native internal demuxer directly -- real seeking within the
+growing live buffer itself, no snapshot needed at all. That needed two
+things from this plugin: Range support in the file server (`do_GET`, see
 below -- individual segment files are Range-read directly, no HLS
-playlist involved at all for this path), and the get_live_manifest
-action (also below), which exposes the buffer's currently-known segments
-with a stable, HLS-media-sequence-derived `sequence` number so a client
-can merge repeated fetches into one consistent, growing byte-address
-space as the rolling window advances, instead of re-deriving fresh
-(and silently shifting) offsets on every call. Confirmed live: real
-pause/rewind/fast-forward/live-follow from plain Play on a real channel,
-including a 95-second rewind that spanned several manifest refreshes.
-The old snapshot_buffer/"Instant replay from buffer" workaround this
-section describes is retired on the pvr.dispatcharrai side (plain Play
-now gets everything it offered and more), though the action itself is
-left in this plugin as a standalone capability -- see its own docstring.
+playlist involved for this path), and the `get_live_manifest` action
+(also below), which exposes the buffer's currently-known segments with a
+stable, HLS-media-sequence-derived `sequence` number so a client can merge
+repeated fetches into one consistent, growing byte-address space as the
+rolling window advances. Confirmed live: real pause/rewind/fast-forward/
+live-follow from plain Play, including a 95-second rewind spanning
+several manifest refreshes. `snapshot_buffer` and the ffmpegdirect route
+it existed for have both been removed entirely as a result -- see
+pvr.dispatcharrai's own docs/TIMESHIFT.md for the full investigation this
+summary compresses, including the exact `av_seek_frame` failure signature
+that motivated moving off ffmpegdirect in the first place.
 """
 
 import json
@@ -582,15 +531,17 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
 
     # Deliberately NOT -reset_timestamps 1: that flag makes every segment's
     # own PTS restart near zero, which is fine for a client that just plays
-    # segments back-to-back but breaks inputstream.ffmpegdirect's seeking on
-    # a snapshot_buffer-produced ENDLIST playlist -- confirmed live (100%
-    # reproduction across forward/backward seeks at multiple positions):
-    # av_seek_frame computes a global target PTS that, with resets, no
-    # single segment's local PTS space actually contains, so ffmpegdirect
-    # logs "unknown position after seek" and the demuxer hits EOF instead of
-    # landing on the target. Leaving timestamps continuous across segments
-    # (matching how real-world HLS packagers do it) is what a seek needs to
-    # actually resolve to a real position within the file.
+    # segments back-to-back but confirmed live (100% reproduction across
+    # forward/backward seeks) to break seeking against an earlier client
+    # this plugin routed through (inputstream.ffmpegdirect, since removed --
+    # see this file's own top-of-file design notes): its generic
+    # av_seek_frame() computes a global target PTS that, with resets, no
+    # single segment's local PTS space actually contains. Continuous
+    # timestamps across segments (matching how real-world HLS packagers do
+    # it) are what a byte-domain seek needs to resolve to a real position at
+    # all, which is just as true for pvr.dispatcharrai's own native-demuxer
+    # seeking today -- kept removed for that reason, not merely inherited
+    # from the old client's own requirement.
     attribution_headers = _stream_attribution_headers(params, logger)
 
     cmd = [
@@ -720,12 +671,9 @@ class BufferFailedError(RuntimeError):
 
 
 def _remove_channel_files(state: dict, logger):
-    # shutil.rmtree rather than a flat glob+unlink+rmdir: a channel
-    # directory can contain the snapshot/ subdirectory created by
-    # _create_snapshot(), and the flat approach would leave that behind
-    # (non-recursive glob wouldn't touch it, then rmdir() would fail on a
-    # non-empty directory) -- this cleans up both in one pass regardless of
-    # whether a snapshot was ever taken for this channel.
+    # shutil.rmtree rather than a flat glob+unlink+rmdir: simpler, and
+    # robust to whatever this directory happens to contain rather than
+    # assuming a flat file list.
     channel_dir = Path(state["storage_path"]) / state["channel_uuid"]
     try:
         shutil.rmtree(channel_dir)
@@ -805,10 +753,8 @@ def _get_live_manifest(state: dict, logger) -> dict:
     files directly, see _BufferRequestHandler's Range support) instead of
     going through inputstream.ffmpegdirect's HLS-seek machinery, which
     pvr.dispatcharrai's docs/TIMESHIFT.md documents as confirmed broken for
-    this kind of buffer. Mirrors _create_snapshot's own live.m3u8 parsing
-    (see its comments for the recycling-race handling) but returns a
-    manifest instead of freezing a copy -- read fresh from disk on every
-    call rather than cached, since the whole point is reflecting how far
+    this kind of buffer. Read fresh from disk on every call rather than
+    cached, since the whole point is reflecting how far
     the buffer has grown since the caller last asked.
 
     The rolling window means "byte offset 0" in THIS response corresponds
@@ -880,9 +826,9 @@ def _get_live_manifest(state: dict, logger) -> dict:
             try:
                 size = (channel_dir / seg_name).stat().st_size
             except OSError:
-                # Recycled between the playlist listing it and this stat --
-                # the same race _create_snapshot already tolerates. Drop it
-                # rather than fail the whole manifest over one segment (but
+                # Recycled (by the live buffer's own -segment_wrap) between
+                # the playlist listing it and this stat -- drop it rather
+                # than fail the whole manifest over one segment (but
                 # list_index/sequence still advanced above, so later
                 # segments keep their true, stable sequence numbers).
                 i += 2
@@ -914,79 +860,6 @@ def _get_live_manifest(state: dict, logger) -> dict:
         "total_bytes": cumulative_bytes,
         "total_duration_ms": cumulative_ms,
     }
-
-
-def _create_snapshot(state: dict, logger) -> str:
-    """Freezes the buffer's currently-listed segments into a separate,
-    non-recycled snapshot/ subdirectory with an ENDLIST-terminated
-    playlist, so a client gets real seek within a finite window instead of
-    the live buffer's endless-but-unseekable tail. Returns the new
-    playlist's path component (same convention as start_buffer's
-    playlist_route). Raises RuntimeError on failure -- callers translate
-    that into the usual {"status": "error", "message": ...} shape."""
-    channel_dir = Path(state["storage_path"]) / state["channel_uuid"]
-    live_playlist_path = channel_dir / "live.m3u8"
-    if not live_playlist_path.is_file():
-        raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
-
-    lines = live_playlist_path.read_text(encoding="utf-8", errors="replace").splitlines()
-
-    snapshot_dir = channel_dir / "snapshot"
-    if snapshot_dir.exists():
-        shutil.rmtree(snapshot_dir)
-    snapshot_dir.mkdir(parents=True)
-
-    # Deliberately reuses the live playlist's own text verbatim (headers,
-    # #EXTINF durations, everything) rather than re-deriving any of it --
-    # the only things that actually change are: drop any segment whose file
-    # didn't make it (see below), copy the ones that did into snapshot_dir,
-    # and append ENDLIST. Less code, and guarantees the snapshot's segment
-    # timing exactly matches what ffmpeg itself already reported rather
-    # than a second, potentially-inconsistent computation of the same
-    # numbers.
-    out_lines = []
-    copied_count = 0
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith("#EXTINF:") and i + 1 < len(lines) and not lines[i + 1].startswith("#"):
-            seg_name = lines[i + 1].strip()
-            src = channel_dir / seg_name
-            try:
-                shutil.copy2(src, snapshot_dir / seg_name)
-            except OSError:
-                # Recycled by the still-running live buffer's -segment_wrap
-                # between the live playlist listing it and this copy --
-                # exactly the race this function exists to avoid exposing
-                # to a client, caught here instead: drop this one entry
-                # rather than fail the whole snapshot over it.
-                i += 2
-                continue
-            out_lines.append(line)
-            out_lines.append(seg_name)
-            copied_count += 1
-            i += 2
-        else:
-            if not line.startswith("#EXT-X-ENDLIST"):
-                out_lines.append(line)
-            i += 1
-
-    if copied_count == 0:
-        raise RuntimeError(
-            "no segments could be copied for the snapshot -- the buffer may be too new, or "
-            "every currently-listed segment was recycled before it could be copied"
-        )
-
-    out_lines.append("#EXT-X-ENDLIST")
-
-    snapshot_playlist_path = snapshot_dir / "snapshot.m3u8"
-    snapshot_playlist_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
-
-    logger.info(
-        "timeshift_buffer: created snapshot for channel %s with %d segments",
-        state["channel_uuid"], copied_count,
-    )
-    return f"/{state['channel_uuid']}/snapshot/snapshot.m3u8"
 
 
 # ---------------------------------------------------------------------------
@@ -1212,18 +1085,6 @@ class Plugin:
             "description": "Refreshes a channel's idle timeout. Params: channel_uuid (required). Not required for normal use -- every file fetch through this plugin's HTTP server already refreshes it. Kept for a client that wants to explicitly signal 'still active' without an in-flight request (e.g. mid-pause), and for manual testing.",
         },
         {
-            "id": "snapshot_buffer", "label": "Snapshot Buffer (manual test)",
-            "description": (
-                "Freezes the buffer's currently-recorded segments into a real, ENDLIST-terminated "
-                "seekable playlist (params: channel_uuid, required -- start_buffer must already be "
-                "running for it). The live buffer itself keeps recording in the background; this "
-                "creates a separate, non-recycled snapshot that a client can seek within, at the "
-                "cost of that snapshot not following new content -- the same trade-off as "
-                "pvr.dispatcharrai's in-progress-recording 'Play from start' vs. 'Play live'."
-            ),
-            "button_label": "Take Test Snapshot",
-        },
-        {
             "id": "get_live_manifest", "label": "Get Live Manifest (manual test)",
             "description": (
                 "Returns a byte-addressable manifest (segment filenames, byte sizes, durations, "
@@ -1279,8 +1140,6 @@ class Plugin:
             return self._stop_buffer(params, settings_dict, logger)
         if action == "heartbeat":
             return self._heartbeat(params, settings_dict, logger)
-        if action == "snapshot_buffer":
-            return self._snapshot_buffer(params, settings_dict, logger)
         if action == "get_live_manifest":
             return self._get_live_manifest_action(params, settings_dict, logger)
         if action == "list_buffers":
@@ -1456,32 +1315,6 @@ class Plugin:
         _set_buffer_state(channel_uuid, state)
         return {"status": "ok"}
 
-    def _snapshot_buffer(self, params, settings_dict, logger):
-        channel_uuid = self._resolve_channel_uuid(params, settings_dict)
-        if not channel_uuid:
-            return {"status": "error", "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)"}
-
-        state = _get_buffer_state(channel_uuid)
-        if not state:
-            return {"status": "error", "message": "no buffer running for this channel -- call start_buffer first"}
-
-        try:
-            route = _create_snapshot(state, logger)
-        except RuntimeError as exc:
-            return {"status": "error", "message": str(exc)}
-        except Exception as exc:
-            logger.exception("timeshift_buffer: snapshot creation failed for %s", channel_uuid)
-            return {"status": "error", "message": str(exc)}
-
-        # Counts as activity on the channel's own liveness clock too --
-        # taking a snapshot is itself a sign this buffer is actively being
-        # used, and the reaper's cleanup already covers the snapshot/
-        # subdirectory it just created (see _remove_channel_files).
-        state["last_heartbeat"] = time.time()
-        _set_buffer_state(channel_uuid, state)
-
-        return {"status": "ok", "http_port": state["http_port"], "playlist_route": route}
-
     def _get_live_manifest_action(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
         if not channel_uuid:
@@ -1513,8 +1346,8 @@ class Plugin:
             logger.exception("timeshift_buffer: manifest build failed for %s", channel_uuid)
             return {"status": "error", "message": str(exc)}
 
-        # Same liveness-signal treatment as snapshot_buffer -- asking for the
-        # manifest is itself a sign this buffer is actively being watched.
+        # Asking for the manifest is itself a sign this buffer is actively
+        # being watched.
         state["last_heartbeat"] = time.time()
         _set_buffer_state(channel_uuid, state)
 

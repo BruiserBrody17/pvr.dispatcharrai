@@ -28,9 +28,10 @@ addon can treat the rolling buffer as one growing, byte-seekable stream
 instead of an HLS playlist. **Confirmed live**: real pause/rewind/
 fast-forward/live-follow from plain Play on a real channel, including a
 95-second rewind spanning several manifest refreshes. `snapshot_buffer`
-is left in this plugin as a standalone action (still works, still a
-legitimate capability), but `pvr.dispatcharrai` itself no longer uses it
--- plain Play now gets everything that workflow offered and more.
+was left in this plugin for a while as a standalone action after
+`pvr.dispatcharrai` stopped using it, but has since been removed
+entirely -- no other real consumer of it ever existed, and plain Play
+already gets everything that workflow offered and more.
 
 ## How it works
 
@@ -80,22 +81,7 @@ legitimate capability), but `pvr.dispatcharrai` itself no longer uses it
    Redis) stops and cleans up any buffer whose `last_heartbeat` goes stale
    past `idle_timeout_seconds` -- covers a client crashing or losing
    network before it could otherwise signal it's done.
-5. `snapshot_buffer` (`{"channel_uuid": "..."}`, requires `start_buffer`
-   already running for that channel) **copies** the buffer's
-   currently-listed segment files into a separate, non-recycled `snapshot/`
-   subdirectory and writes an `ENDLIST`-terminated playlist referencing the
-   copies -- a real, finite window into what's been buffered so far. Copies
-   rather than just re-listing the live files in a different shape because
-   the live buffer's own `-segment_wrap` keeps recycling those original
-   files in the background for as long as it keeps running, which would
-   risk a segment getting overwritten while a client watching the "frozen"
-   snapshot still had it queued up. The live buffer itself keeps recording
-   in the background after a snapshot is taken -- only the snapshot's own
-   copied files are frozen. **Confirmed live**: playback of a snapshot
-   works correctly as a real, seekable file (`canseek: true` is reported).
-   Not used by `pvr.dispatcharrai` itself anymore (see the status note
-   above), kept as a standalone action.
-6. `get_live_manifest` (`{"channel_uuid": "..."}`, requires `start_buffer`
+5. `get_live_manifest` (`{"channel_uuid": "..."}`, requires `start_buffer`
    already running) is what `pvr.dispatcharrai` actually uses for real
    live seeking: returns the buffer's currently-listed segments (filename,
    byte size, duration) plus a `media_sequence`/per-segment `sequence`
@@ -105,9 +91,10 @@ legitimate capability), but `pvr.dispatcharrai` itself no longer uses it
    0 an hour from now), so a client that wants a *stable* address space
    across repeated calls needs to merge by sequence, not by re-deriving
    offsets fresh each time. Read live from `live.m3u8` + `os.path.getsize()`
-   on every call (not cached), same recycling-race handling as
-   `_create_snapshot`.
-7. The file server's `do_GET` supports HTTP Range requests (`Range:
+   on every call (not cached) -- tolerates a segment getting recycled by
+   the live buffer's own `-segment_wrap` between being listed and read by
+   dropping that one entry rather than failing the whole manifest.
+6. The file server's `do_GET` supports HTTP Range requests (`Range:
    bytes=X-Y`, standard 206/`Content-Range` handling) against any file
    under `storage_path`, not just whole-file GETs -- what actually lets a
    client read a growing buffer as a byte-seekable stream: `get_live_manifest`
@@ -164,14 +151,14 @@ legitimate capability), but `pvr.dispatcharrai` itself no longer uses it
 
 ## Testing manually
 
-Use the "Start Test Buffer" / "Take Test Snapshot" / "Get Test Manifest" /
-"List Active Buffers" / "Stop Test Buffer" buttons on the Plugins page
-(paste a channel's UUID into the `test_channel_uuid` setting first and
-save -- action buttons can't take click-time input) to confirm segments
-and a playlist actually appear under `storage_path`, and that
+Use the "Start Test Buffer" / "Get Test Manifest" / "List Active Buffers" /
+"Stop Test Buffer" buttons on the Plugins page (paste a channel's UUID
+into the `test_channel_uuid` setting first and save -- action buttons
+can't take click-time input) to confirm segments and a playlist actually
+appear under `storage_path`, and that
 `http://<dispatcharr-host>:<http_port><playlist_route>` (the pieces
-`start_buffer`/`snapshot_buffer`/`list_buffers` return) is fetchable.
-"Stop All Buffers" is there for cleanup if something's stuck.
+`start_buffer`/`list_buffers` return) is fetchable. "Stop All Buffers" is
+there for cleanup if something's stuck.
 
 **A real operational gotcha hit while developing this, worth knowing
 before you go looking for a bug that isn't one:** redeploying this plugin
@@ -194,7 +181,6 @@ outright) before assuming the change itself is wrong.
 ## What's still not done
 
 The addon-side integration -- live buffer playback, real seeking via
-`get_live_manifest` + Range reads, `snapshot_buffer` as a standalone
-capability -- is built and confirmed live, including pause/rewind/
-fast-forward/live-follow on a real channel. Nothing outstanding is
-currently tracked for this plugin.
+`get_live_manifest` + Range reads -- is built and confirmed live,
+including pause/rewind/fast-forward/live-follow on a real channel.
+Nothing outstanding is currently tracked for this plugin.
