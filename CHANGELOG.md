@@ -10,6 +10,19 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased]
+
+### Fixed
+
+- Opening an in-progress recording got slower the longer it had already
+  been recording, and re-paid that full cost on every open, not just the
+  first -- a ~2h-in recording took 29.4s to open. Fixed by probing new
+  segments' byte sizes concurrently instead of one at a time, and caching
+  already-probed segments across opens for the same recording (see
+  `docs/RECORDINGS.md` for the full root cause). Confirmed live: the same
+  kind of open now takes ~4.7s cold, and well under a tenth of a second on
+  a reopen.
+
 ## [1.0.0] - 2026-09-05
 
 ### Changed
