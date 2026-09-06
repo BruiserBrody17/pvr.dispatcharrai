@@ -558,11 +558,28 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
         break;
 
       std::unique_lock<std::mutex> lock(m_realtimeUpdateMutex);
-      bool stopped = m_realtimeUpdateCv.wait_for(lock, std::chrono::seconds(backoffSeconds),
-                                                  [this]() { return m_stopRealtimeUpdateThread.load(); });
-      if (stopped)
+      // Also wakes on m_wakeRealtimeUpdateThread (see OnSystemWake()) --
+      // wait_for()'s return tells the two apart from a natural timeout:
+      // true means the predicate was satisfied early (stop or wake), false
+      // means the full backoffSeconds actually elapsed.
+      bool predicateSatisfied = m_realtimeUpdateCv.wait_for(
+          lock, std::chrono::seconds(backoffSeconds), [this]() {
+            return m_stopRealtimeUpdateThread.load() || m_wakeRealtimeUpdateThread.load();
+          });
+      if (m_stopRealtimeUpdateThread)
         break;
-      backoffSeconds = std::min(backoffSeconds * 2, kMaxBackoffSeconds);
+      if (predicateSatisfied && m_wakeRealtimeUpdateThread.exchange(false))
+      {
+        // Cut short by a deliberate OnSystemWake() nudge, not a natural
+        // timeout -- retry right away with a fresh backoff instead of
+        // continuing to double whatever it had already climbed to before
+        // sleep.
+        backoffSeconds = kInitialBackoffSeconds;
+      }
+      else
+      {
+        backoffSeconds = std::min(backoffSeconds * 2, kMaxBackoffSeconds);
+      }
     }
   });
 }
@@ -620,6 +637,17 @@ PVR_ERROR PVRDispatcharr::GetConnectionString(std::string& connection)
 {
   connection = kodi::addon::GetSettingString("host", "127.0.0.1") + ":" +
                std::to_string(kodi::addon::GetSettingInt("port", 9191));
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::OnSystemWake()
+{
+  // See m_wakeRealtimeUpdateThread's own comment. A no-op if the thread
+  // isn't running (enable_realtime_updates off) or isn't currently in its
+  // reconnect wait (e.g. already mid-connect) -- the flag just gets
+  // checked and cleared on that thread's own next wait_for() regardless.
+  m_wakeRealtimeUpdateThread = true;
+  m_realtimeUpdateCv.notify_all();
   return PVR_ERROR_NO_ERROR;
 }
 

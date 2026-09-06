@@ -22,6 +22,13 @@ Addon only.
   buffer was gone. Found via a comparative-architecture review against
   `pvr.hts`/Tvheadend. See `docs/TIMESHIFT.md` for the full root cause.
 
+### Added
+
+- The optional real-time-updates WebSocket now reconnects immediately on
+  an OS/device wake from sleep, instead of waiting out however much of
+  its current (up to 60s) reconnect backoff was still left. See
+  `docs/API_NOTES.md`'s "OS sleep/wake" section.
+
 ## [1.0.2] - 2026-09-06
 
 Addon only, same as 1.0.1.
