@@ -344,8 +344,10 @@ private:
   // that entry's own. Recurring/series rules never consult this: Dispatcharr
   // computes those recordings' own start/end times server-side, with no
   // per-occurrence EPG entry here to check the "still unmodified" condition
-  // against.
-  std::atomic<int> m_sportsExtraPaddingMinutes{30};
+  // against. Off (0) by default -- opt-in, not opt-out, since it's new and
+  // its effect (a longer recording than the guide's own listed length)
+  // isn't something to spring on a user who hasn't chosen it.
+  std::atomic<int> m_sportsExtraPaddingMinutes{0};
 
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/
