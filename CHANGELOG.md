@@ -10,7 +10,11 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased]
+## [1.0.1] - 2026-09-06
+
+Addon only -- neither companion plugin changed, so neither's own version
+moved (see `CLAUDE.md`'s versioning note: the addon and each plugin version
+independently as of this release).
 
 ### Fixed
 
