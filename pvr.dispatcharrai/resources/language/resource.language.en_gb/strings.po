@@ -274,7 +274,7 @@ msgid "Extra padding for sports (minutes)"
 msgstr ""
 
 msgctxt "#30089"
-msgid "Added on top of the normal end-of-recording padding above, but only for a one-time recording created directly from an EPG entry whose category Dispatcharr's guide data tags as sports, and only when its end time hasn't already been manually adjusted in Kodi's own timer-edit dialog. Sports broadcasts commonly run long (extra innings, overtime, rain delays) in a way scripted programming doesn't -- 0 disables this. Recurring and series rules aren't affected: Dispatcharr computes those recordings' own start/end times server-side, with no per-occurrence EPG entry for this addon to check against."
+msgid "Added on top of the normal end-of-recording padding above, but only for a one-time recording created directly from an EPG entry whose category Dispatcharr's guide data tags as sports, and only when its end time hasn't already been manually adjusted in Kodi's own timer-edit dialog. Sports broadcasts commonly run long (extra innings, overtime, rain delays) in a way scripted programming doesn't -- 0 disables this. Recurring and series rules aren't affected: Dispatcharr computes those recordings' own start/end times server-side, with no per-occurrence EPG entry for this addon to check against. Whether a given channel's sports get detected at all depends entirely on that channel's own EPG source having category data in the first place -- a Schedules Direct-backed guide typically does, a channel using its provider's own backend guide data often doesn't. That's a per-channel Dispatcharr configuration matter, not something this addon or setting controls."
 msgstr ""
 
 msgctxt "#30047"
