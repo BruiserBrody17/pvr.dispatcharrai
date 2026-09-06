@@ -10,6 +10,20 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased]
+
+Addon only, same as 1.0.1.
+
+### Fixed
+
+- **1.0.1 regression, macOS only:** opening an in-progress recording could
+  crash Kodi outright (a real concurrency bug in macOS's own system
+  libcurl, triggered by 1.0.1's concurrent segment-probing). Fixed by no
+  longer sharing the connection cache specifically for that concurrent
+  probe burst -- see `docs/RECORDINGS.md` for the full root cause. The
+  speed fix from 1.0.1 is unaffected: still ~5-6s to open a multi-hour
+  in-progress recording cold, near-instant on a reopen.
+
 ## [1.0.1] - 2026-09-06
 
 Addon only -- neither companion plugin changed, so neither's own version
