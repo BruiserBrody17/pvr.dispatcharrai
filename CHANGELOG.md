@@ -21,6 +21,10 @@ Addon only.
   the addon kept silently retrying forever instead of recognizing the
   buffer was gone. Found via a comparative-architecture review against
   `pvr.hts`/Tvheadend. See `docs/TIMESHIFT.md` for the full root cause.
+- If Kodi ever requested a second concurrent PVR instance, creating it
+  could silently break settings-apply-live for the first one. Not known
+  to have happened in practice -- hardened defensively. See
+  `docs/API_NOTES.md`'s "Single-instance assumption" section.
 
 ### Added
 
