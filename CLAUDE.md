@@ -60,17 +60,32 @@ platform.
   workarounds for specific bugs -- not a restatement of the code. Match
   that style; don't add narrative comments describing what a block of
   code obviously does.
-- **Version lives in more than one place** -- when bumping the addon's
-  version, all of these need to move together, and it's easy to miss one:
-  - `pvr.dispatcharrai/addon.xml.in` (`<addon version="...">`)
-  - `packaging/coreelec/pvr.dispatcharrai/package.mk` (`PKG_VERSION`,
+- **Three independent version numbers, decoupled since 1.0.1** -- the
+  addon and each of the two companion plugins version separately. Bump
+  only the piece whose own files actually changed in a given release;
+  don't bump a plugin just because the addon released, or vice versa
+  (pre-1.0 releases moved all three together on purpose, to signal "the
+  1.0-era plugins" -- that was a deliberate one-time exception, not the
+  ongoing policy). Whichever piece(s) you *are* bumping, all of that
+  piece's own version locations still need to move together -- it's easy
+  to miss one:
+  - Addon: `pvr.dispatcharrai/addon.xml.in` (`<addon version="...">`) and
+    `packaging/coreelec/pvr.dispatcharrai/package.mk` (`PKG_VERSION`,
     with `PKG_SHA256` reset to the all-zeros placeholder until the tag
-    exists and the real checksum can be computed)
-  - Each plugin's `plugin.json` **and** its `plugin.py`'s own `Plugin`
-    class `version` attribute -- `plugin.json` is only used for
-    Dispatcharr's not-yet-trusted import preview; the hardcoded class
+    exists and the real checksum can be computed) move together -- CoreELEC
+    packages the addon binary, not either plugin, so this pair only moves
+    when the addon's version does, regardless of what the plugins are doing.
+  - Each plugin's `plugin.json` **and** its own `plugin.py`'s `Plugin`
+    class `version` attribute move together -- `plugin.json` is only used
+    for Dispatcharr's not-yet-trusted import preview; the hardcoded class
     attribute in `plugin.py` is what Dispatcharr actually runs once
     trusted. Bumping only `plugin.json` is a real, easy-to-miss mistake.
+  A git tag/GitHub Release is still addon-version-scoped (that's what
+  triggers CI); both plugins' zips get attached to it regardless of
+  whether their own version moved, since `package-dispatcharr-plugins`
+  zips whatever's currently committed either way. `CHANGELOG.md` should
+  say explicitly which piece(s) moved in a given entry rather than
+  implying all three share one number.
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure
