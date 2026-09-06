@@ -1526,12 +1526,15 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
      16 segments concurrently (bounded fan-out via `std::thread`, batched),
      merging results back in playlist order afterward so byte/time offsets
      stay correctly cumulative regardless of which probe actually finished
-     first. Safe to do because this addon's `CURLSH` share was already
-     built for exactly this (see its own comment: "Kodi's PVR API can call
-     into this client from multiple threads at once," with real
-     `CURLSHOPT_LOCKFUNC`/`UNLOCKFUNC` callbacks backing it) -- this just
-     exercises that existing thread-safety more heavily, it doesn't add a
-     new kind of risk.
+     first. Assumed safe at the time because this addon's `CURLSH` share
+     was already built for concurrent access (see its own comment: "Kodi's
+     PVR API can call into this client from multiple threads at once,"
+     with real `CURLSHOPT_LOCKFUNC`/`UNLOCKFUNC` callbacks backing it) --
+     reasoned that this just exercised that existing thread-safety more
+     heavily, without adding a new *kind* of risk. **That assumption was
+     wrong** -- see the entry directly below for what a real macOS crash
+     report revealed about the difference between occasional cross-thread
+     access and a tight same-host concurrent burst.
   2. **Cached probed segments across opens**, keyed by recording id
      (`m_inProgressSegmentCache` in `DispatcharrClient`). Safe because a
      recording's HLS output is genuinely append-only -- a segment probed on
@@ -1556,4 +1559,62 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   reset the in-memory cache and forced a fresh 4.457s cold probe again --
   expected, not a bug: the cache only ever claimed to survive re-opens
   within the same running addon instance.)
+- **1.0.1's concurrent segment-probing (the fix directly above) crashed
+  outright on macOS -- fixed by giving the concurrent probe burst its own
+  `CURLSH` that never shares the connection cache.** Reported live: macOS
+  26.6.2, addon 1.0.1, opening the same long-running in-progress recording
+  crashed Kodi (SIGSEGV/EXC_BAD_ACCESS, crash report
+  `Kodi-2026-09-06-135331.ips`), faulting inside `/usr/lib/libcurl.4.dylib`
+  -- macOS's own system libcurl, not a bundled/vendored one -- with a
+  backtrace bottoming out in `ProbeSegmentByteSize()` via
+  `curl_easy_perform` → `curl_multi_perform` → `multi_runsingle` →
+  `multi_done` → `Curl_conncache_return_conn` → `Curl_disconnect` →
+  `Curl_conn_close`.
+
+  Root cause: this addon's shared `CURLSH` (`m_curlShareState`) had always
+  allowed concurrent access from different threads -- Kodi's PVR API can
+  call into this client from more than one thread (background EPG/
+  recording-refresh threads alongside active playback) -- and had run
+  crash-free through many hours of real testing across all four platforms
+  this project supports, including on macOS earlier the same session. What
+  changed in 1.0.1 wasn't "concurrent access" in the abstract, but a much
+  more intense *pattern* of it: up to 16 threads at once, all hammering
+  `curl_easy_cleanup()` within milliseconds of each other, all against the
+  identical host (every segment of one recording's HLS output lives under
+  the same base URL). That specific stress pattern -- tight, bursty,
+  same-host, high-count -- triggered a real concurrency bug in macOS's
+  system libcurl's own connection-cache return/close path. The addon's own
+  `CURLSHOPT_LOCKFUNC`/`UNLOCKFUNC` callbacks were confirmed correctly
+  implemented (bounds-checked mutex array covering every `curl_lock_data`
+  type in use) -- this wasn't a locking gap on this addon's side, it's
+  libcurl's own share-connection-cache code not holding up under this much
+  concurrent churn on this specific build. Per curl's own project history,
+  connection-cache sharing (`CURL_LOCK_DATA_CONNECT`) is a substantially
+  newer, less battle-tested part of the share interface than DNS or
+  TLS-session sharing.
+
+  Fixed by giving `ProbeSegmentByteSize()` -- the *only* call site that's
+  ever invoked from a concurrent fan-out, confirmed via `grep` before
+  changing anything -- a second, separate `CURLSH`
+  (`m_probeCurlShareState`) that shares `CURL_LOCK_DATA_DNS` and
+  `CURL_LOCK_DATA_SSL_SESSION` but deliberately never
+  `CURL_LOCK_DATA_CONNECT`. This sidesteps the crash mechanism entirely --
+  no concurrent thread ever touches a shared connection cache during the
+  probe burst -- rather than working around one specific libcurl
+  version/platform (e.g. capping probe concurrency to 1 on macOS only,
+  considered and rejected: it would regress the very fix this was added
+  for, only on the one platform that happened to expose the bug, while
+  leaving the same latent risk in place for whatever other platform's
+  system libcurl hits it next). Every other call site keeps using the
+  original, connection-sharing `CURLSH` exactly as before, unchanged --
+  the same combination already proven crash-free through this project's
+  extensive prior live testing.
+
+  Confirmed live on Windows after the fix: the same in-progress recording
+  opened cleanly with no crash, still fast (2,577 elapsed segments probed
+  in 5.878s, consistent with the original fix's numbers) -- the DNS/TLS-
+  only probe share preserves the concurrency win, it just no longer shares
+  connections while doing it. The actual crash itself could only be
+  confirmed fixed on macOS, where it was reported; this addon has no way
+  to reproduce macOS's system libcurl locally.
 
