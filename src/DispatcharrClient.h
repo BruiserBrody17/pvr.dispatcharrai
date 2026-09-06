@@ -654,6 +654,12 @@ private:
   // <curl/curl.h>; defined in the .cpp, which does.
   void* GetCurlShare() const;
 
+  // A second, separate CURLSH for ProbeSegmentByteSize()'s concurrent probe
+  // burst only -- shares DNS/TLS-session but deliberately not connections,
+  // to sidestep a real macOS-libcurl connection-cache crash under that
+  // specific concurrency pattern. See m_probeCurlShareState's own comment.
+  void* GetProbeCurlShare() const;
+
   // A tiny ranged GET with the current API key attached, used by
   // RefreshInProgressRecordingManifest() as a proactive self-heal check
   // (cheaper to catch a stale key here than mid-read of an actual
@@ -758,6 +764,24 @@ private:
   // visible (1.8s-10s observed) delay before Kodi's own "recording started"
   // notification appeared, versus ~20ms/call under calm conditions.
   void* m_curlShareState = nullptr;
+
+  // Second CURLSH, used only by ProbeSegmentByteSize() when called from
+  // RefreshInProgressRecordingManifest()'s concurrent probe fan-out (up to
+  // 16 threads at once, all against the same host). Confirmed live on
+  // macOS 26.6.2 (real system libcurl, arm64e -- crash report
+  // Kodi-2026-09-06-135331.ips) that sharing CURL_LOCK_DATA_CONNECT across
+  // that specific burst crashes inside that libcurl build's own
+  // connection-cache return/close path, not this addon's lock/unlock
+  // callbacks (which were already correctly handling the *other* kind of
+  // concurrent access this client always allowed -- occasional background-
+  // thread calls alongside active playback -- crash-free through extensive
+  // live testing). Shares DNS and TLS-session (far more mature in
+  // libcurl's share interface than connection sharing, and still a real
+  // win for a same-host burst, especially TLS handshake avoidance over
+  // HTTPS) but never touches the connection cache at all, sidestepping the
+  // crash mechanism entirely rather than working around one specific
+  // libcurl build/version.
+  void* m_probeCurlShareState = nullptr;
 
   // Kodi only ever has one recording open for playback at a time.
   struct RecordingStreamState

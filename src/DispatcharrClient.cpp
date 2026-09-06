@@ -532,9 +532,7 @@ void CurlShareUnlock(CURL*, curl_lock_data data, void* userptr)
     state->locks[index].unlock();
 }
 
-} // namespace
-
-DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config))
+CurlShareState* MakeCurlShareState(bool shareConnections)
 {
   auto* state = new CurlShareState();
   state->handle = curl_share_init();
@@ -543,16 +541,16 @@ DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config)
     curl_share_setopt(state->handle, CURLSHOPT_LOCKFUNC, CurlShareLock);
     curl_share_setopt(state->handle, CURLSHOPT_UNLOCKFUNC, CurlShareUnlock);
     curl_share_setopt(state->handle, CURLSHOPT_USERDATA, state);
-    curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+    if (shareConnections)
+      curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
     curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
     curl_share_setopt(state->handle, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
   }
-  m_curlShareState = state;
+  return state;
 }
 
-DispatcharrClient::~DispatcharrClient()
+void FreeCurlShareState(CurlShareState* state)
 {
-  auto* state = static_cast<CurlShareState*>(m_curlShareState);
   if (state)
   {
     if (state->handle)
@@ -561,9 +559,48 @@ DispatcharrClient::~DispatcharrClient()
   }
 }
 
+} // namespace
+
+DispatcharrClient::DispatcharrClient(Config config) : m_config(std::move(config))
+{
+  m_curlShareState = MakeCurlShareState(/*shareConnections=*/true);
+  // Deliberately a second, separate share rather than reusing the one
+  // above: confirmed live on macOS 26.6.2 (real system libcurl, arm64e,
+  // crash report Kodi-2026-09-06-135331.ips) that sharing CURL_LOCK_DATA_CONNECT
+  // across ProbeSegmentByteSize()'s concurrent probe burst (up to 16
+  // threads at once, all against the same host, all calling
+  // curl_easy_cleanup() within milliseconds of each other) crashes inside
+  // that libcurl build's own connection-cache return/close path
+  // (Curl_conncache_return_conn) -- a real bug in that specific libcurl,
+  // not a gap in this addon's own lock/unlock callbacks (which are
+  // correctly implemented and had already been running the *other*,
+  // non-bursty concurrent access this client always allowed -- background
+  // refresh threads alongside active playback -- crash-free through
+  // extensive live testing). DNS and TLS-session sharing are far more
+  // mature/battle-tested in libcurl's share interface than connection
+  // sharing, so this second share keeps those (still meaningfully faster
+  // for a same-host probe burst, especially the TLS handshake avoidance
+  // over HTTPS) while never touching the connection cache at all --
+  // sidestepping the crash mechanism entirely rather than working around
+  // a specific libcurl version/platform.
+  m_probeCurlShareState = MakeCurlShareState(/*shareConnections=*/false);
+}
+
+DispatcharrClient::~DispatcharrClient()
+{
+  FreeCurlShareState(static_cast<CurlShareState*>(m_curlShareState));
+  FreeCurlShareState(static_cast<CurlShareState*>(m_probeCurlShareState));
+}
+
 void* DispatcharrClient::GetCurlShare() const
 {
   auto* state = static_cast<CurlShareState*>(m_curlShareState);
+  return state ? state->handle : nullptr;
+}
+
+void* DispatcharrClient::GetProbeCurlShare() const
+{
+  auto* state = static_cast<CurlShareState*>(m_probeCurlShareState);
   return state ? state->handle : nullptr;
 }
 
@@ -1834,7 +1871,11 @@ int64_t DispatcharrClient::ProbeSegmentByteSize(const std::string& segmentUrl) c
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+  // GetProbeCurlShare(), not GetCurlShare() -- this is the one call site
+  // invoked concurrently in a tight same-host burst (see
+  // m_probeCurlShareState's own comment for why that specifically needs a
+  // connection-cache-free share).
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetProbeCurlShare()));
 
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
