@@ -10,7 +10,7 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased]
+## [1.0.2] - 2026-09-06
 
 Addon only, same as 1.0.1.
 
