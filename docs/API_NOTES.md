@@ -68,6 +68,48 @@ the same "confirmed live, not just assumed" standard as this one.
   IPv6 root cause, known Kodi-core quirks that aren't this addon's
   bug, multi-client limitations, and what's still unconfirmed
 
+## OS sleep/wake and the real-time-updates WebSocket
+
+Found via a comparative-architecture review against `pvr.hts`/Tvheadend,
+which explicitly hooks Kodi's PVR `OnSystemSleep()`/`OnSystemWake()`
+because HTSP is a persistent, stateful subscription that a suspend
+silently kills, needing explicit disconnect/reconnect handling to avoid
+post-wake stuttering. This addon's actual live/recording read paths are
+stateless HTTP polls (a fresh request each time, byte position kept in
+this addon's own memory) -- a suspend gap just looks like "no reads
+happened for a while," and playback resumes wherever it left off with no
+explicit handling needed. So most of what pvr.hts guards against doesn't
+apply here architecturally.
+
+The one place it does apply: `enable_realtime_updates`'s WebSocket
+(`PVRDispatcharr::StartRealtimeUpdateThread()`) is this addon's one
+actual persistent connection, and a suspend kills it the same way it'd
+kill any other network interruption. The thread's own read timeout
+already notices and reconnects on its own via exponential backoff (2s
+doubling to a 60s cap, reset on a successful connection) -- so it was
+already going to self-heal regardless -- but if backoff had climbed
+toward the 60s cap before sleep, that's how long recording/timer sync
+could sit dead after waking with no proactive nudge.
+
+Implemented `PVRDispatcharr::OnSystemWake()` to cut short whatever
+backoff wait the thread is currently in (`m_wakeRealtimeUpdateThread`,
+checked alongside the existing stop flag in the same `wait_for()`
+predicate) and reset backoff to its initial value, so a genuine wake
+retries right away instead of continuing to wait out however much of the
+pre-sleep backoff interval was left. Deliberately did *not* add an
+`OnSystemSleep()` override -- there's nothing this addon's stateless
+architecture needs to do proactively on sleep, and an empty override
+that does nothing isn't worth having just for API completeness.
+
+Confirmed live (Windows): the normal connect path is unaffected by the
+`wait_for()` predicate change (same "realtime updates: connected" log
+line, immediately on startup). The wake-nudge path itself wasn't
+independently live-triggered -- doing so would mean actually suspending
+the machine this addon was being tested on, which would have also cut
+off the remote session driving the test. Confidence here comes from
+tracing all three cases the modified predicate has to handle (stop,
+wake, natural timeout) by hand, not a live repro.
+
 ## How to verify quickly
 
 From a machine that can reach your Dispatcharr instance:
