@@ -10,7 +10,11 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [Unreleased]
+## [1.0.4] - 2026-09-06
+
+Addon bumped to 1.0.4. Both companion plugins also bumped, to their own
+independent `1.0.1` (per the decoupled versioning policy) -- not tied to
+this addon release number.
 
 ### Changed
 
