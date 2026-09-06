@@ -92,6 +92,52 @@ data** forces an immediate full re-fetch through the addon and is the
 reliable way to verify an EPG-mapping change live without waiting out the
 interval.
 
+## Sports events get extra recording padding automatically
+
+Found via a comparative-architecture review against `pvr.hts`/Tvheadend --
+Tvheadend's own autorec has `segment_stop_extra`, automatic extra padding
+for EPG-flagged "runs long" programming (sports, mainly). This addon
+reuses the genre detection `MapCategoriesToGenreType()` already does for
+guide colour-coding (above) rather than adding a second, separate
+category-matching pass: `AddTimer()`'s one-time-recording branch (not
+series/recurring rules -- those never get an explicit end time from this
+addon at all, Dispatcharr computes their occurrences' start/end server-
+side) calls `ComputeOneTimeRecordingEndTime()`, which looks up the exact
+EPG entry a new timer's channel/start/end matches, and if its categories
+map to `EPG_EVENT_CONTENTMASK_SPORTS`, adds `sports_extra_padding_minutes`
+(default 30, a new setting) on top of the timer's own end time before
+sending it to Dispatcharr.
+
+**Exact-match, not "closest," is deliberate**: only applies when the
+timer's start *and* end still match the EPG entry precisely, i.e. Kodi's
+own unedited pre-fill from "Record" on a guide entry -- so a user who
+already hand-adjusted either boundary in the timer-edit dialog is never
+silently overridden with more padding on top of their own.
+
+**Composes correctly with the existing global padding, not double-
+counted**: `CreateOneTimeRecording()` already sends the *exact* time it's
+given with no client-side padding math of its own -- Dispatcharr applies
+its own global pre/post padding automatically, server-side, on top of
+whatever `start_time`/`end_time` it receives (confirmed by tracing the
+code: padding visibly works today despite the client never adding any).
+So sending `natural_end + sports_extra` here means the final recorded
+window lands at `natural_end + sports_extra + global_post_padding` --
+exactly the intended stacking.
+
+Confirmed live end-to-end: created a one-time timer via
+`PVR.AddTimer(broadcastid=...)` against a real "2026 US Open Tennis"
+broadcast (23:00-03:00, four hours, XMLTV categories `["Sport Event",
+"Sports event", "Tennis"]`) -- the resulting Dispatcharr recording's real
+`end_time` (read back via `PVR.GetTimers`, which reports the recording's
+actual stored field, not a display-only value) came back `03:30:00`,
+exactly the natural end plus the default 30-minute padding. Also
+confirmed the exact-match guard is real, not just correct in theory: the
+*identical* programme (same title, same start/end) sourced from a
+different upstream feed on a different channel variant had no
+`<category>` data at all in this Dispatcharr instance's real XMLTV output
+-- correctly left unpadded, not a bug, just that particular feed lacking
+genre metadata to detect sports from in the first place.
+
 ## Background loading
 
 `EnsureChannelsLoaded()`/`EnsureEpgLoaded()` (`PVRDispatcharr.cpp`) used to
