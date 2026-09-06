@@ -10,6 +10,18 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased]
+
+Addon only.
+
+### Fixed
+
+- Live TV server-side timeshift: if the buffer died mid-playback (not
+  just failing to start), playback froze indefinitely with no error --
+  the addon kept silently retrying forever instead of recognizing the
+  buffer was gone. Found via a comparative-architecture review against
+  `pvr.hts`/Tvheadend. See `docs/TIMESHIFT.md` for the full root cause.
+
 ## [1.0.2] - 2026-09-06
 
 Addon only, same as 1.0.1.

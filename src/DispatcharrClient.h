@@ -859,6 +859,19 @@ private:
     // own comment.
     int64_t lastShortGiveUpPosition = -1;
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
+    // Set once RefreshLiveManifest() reports the plugin's own `fatal` flag
+    // during a *steady-state* refresh (not the cold-start one OpenLiveTimeshiftStream()
+    // already handles) -- confirmed this buffer will never produce another
+    // segment, most commonly the underlying ffmpeg process having died or
+    // lost its upstream connection sometime after playback was already
+    // under way. Before this existed, ReadLiveTimeshiftStream()'s catch-up
+    // loop had no way to tell that apart from an ordinary "just waiting for
+    // the next segment" gap, so it retried forever, every single Read()
+    // call, silently returning 0 with nothing worse than a debug log line --
+    // to a user, playback just froze indefinitely with no explanation.
+    // Checked up front so a confirmed-dead buffer short-circuits
+    // immediately, without paying for another doomed network round trip.
+    bool fatal = false;
   };
   LiveTimeshiftStreamState m_liveTimeshiftStream;
 

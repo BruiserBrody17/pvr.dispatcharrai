@@ -3040,6 +3040,11 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
 {
   if (!m_liveTimeshiftStream.open || size == 0)
     return 0;
+  // See LiveTimeshiftStreamState::fatal's own comment -- a confirmed-dead
+  // buffer short-circuits here instead of paying for another doomed
+  // network round trip on every single Read() call.
+  if (m_liveTimeshiftStream.fatal)
+    return -1;
 
   // Caught up to the tail: give the buffer a bounded chance to grow rather
   // than reporting EOF immediately, which Kodi would read as "this live
@@ -3112,7 +3117,22 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
     {
       attemptsUsed = attempt + 1;
       std::string refreshError;
-      RefreshLiveManifest(/*force=*/true, refreshError); // best-effort; try again next attempt/call on failure
+      bool refreshFatal = false;
+      // fatalOut wired up here too, not just OpenLiveTimeshiftStream()'s own
+      // cold-start loop -- see LiveTimeshiftStreamState::fatal's own
+      // comment for the bug this fixes (a buffer that dies mid-playback,
+      // not just one that never started, retried forever with no
+      // indication anything was actually wrong).
+      RefreshLiveManifest(/*force=*/true, refreshError, &refreshFatal);
+      if (refreshFatal)
+      {
+        m_liveTimeshiftStream.fatal = true;
+        kodi::Log(ADDON_LOG_ERROR,
+                  "pvr.dispatcharrai: ReadLiveTimeshiftStream: timeshift buffer reported fatal "
+                  "mid-playback, giving up: %s",
+                  refreshError.c_str());
+        break;
+      }
       if (m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes)
         break;
       // Don't sleep after the last attempt -- nothing left to wait for
@@ -3122,6 +3142,8 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
       if (attempt + 1 < catchUpAttempts)
         std::this_thread::sleep_for(std::chrono::milliseconds(kCatchUpSleepMs));
     }
+    if (m_liveTimeshiftStream.fatal)
+      return -1;
     bool caughtUp = m_liveTimeshiftStream.position < m_liveTimeshiftStream.totalBytes;
     m_liveTimeshiftStream.lastShortGiveUpPosition =
         (likelySeekProbe && !caughtUp) ? m_liveTimeshiftStream.position : -1;
@@ -3226,6 +3248,9 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
 {
   if (!m_liveTimeshiftStream.open)
     return -1;
+  // See LiveTimeshiftStreamState::fatal's own comment.
+  if (m_liveTimeshiftStream.fatal)
+    return -1;
 
   m_liveTimeshiftStream.lastSeekTime = std::chrono::steady_clock::now();
 
@@ -3303,6 +3328,11 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamLength()
 {
   if (!m_liveTimeshiftStream.open)
     return -1;
+  // See LiveTimeshiftStreamState::fatal's own comment -- totalBytes is
+  // whatever it was when the buffer died, which is still the right answer
+  // once nothing more is coming; no need to keep re-querying for it.
+  if (m_liveTimeshiftStream.fatal)
+    return m_liveTimeshiftStream.totalBytes;
   std::string refreshError;
   RefreshLiveManifest(/*force=*/false, refreshError); // throttled, cheap to call often
   return m_liveTimeshiftStream.totalBytes;
