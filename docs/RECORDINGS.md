@@ -1617,4 +1617,48 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   connections while doing it. The actual crash itself could only be
   confirmed fixed on macOS, where it was reported; this addon has no way
   to reproduce macOS's system libcurl locally.
+- **A self-heal API-key regeneration during an in-progress-recording open
+  could immediately kill the playback that had just started -- fixed by
+  telling `OnAddonSettingChanged()` apart a self-persisted key from a
+  user-edited one.** Surfaced during the crash-fix verification above (on
+  the same live macOS session): right after a recording opened
+  successfully, Kodi showed a "PVR clients: Dispatcharr PVR Client --
+  Needs to restart" dialog; dismissing it triggered a real
+  `UpdateClients: Recreating PVR client` and stopped the playback that had
+  just started. Initially suspected as a `TransferSettings`/thread-timing
+  interaction from the concurrent probe burst -- reading the actual code
+  instead pointed at something more concrete and unrelated to either of
+  today's fixes.
+
+  Root cause: `OpenRecordedStream()` (and `ReadRecordedStream()`, same
+  pattern) compares the API key before and after opening/reading, and if
+  `RefreshInProgressRecordingManifest()`'s proactive self-heal check (see
+  its own comment) silently regenerated it during that call, persists the
+  new one via `kodi::addon::SetSettingString("api_key", ...)` -- purely so
+  a *future* restart doesn't lose it, since `GenerateApiKey()` already
+  applied the new key live, in `DispatcharrClient`'s own `m_config.apiKey`,
+  the moment it returned. That `SetSettingString()` call is exactly what
+  Kodi delivers back to `OnAddonSettingChanged("api_key", ...)`, and its
+  existing `m_lastAppliedConfig` guard (added specifically to catch a
+  *different*, spurious-renotification quirk -- see that struct's own
+  comment) correctly saw a genuine string change and returned
+  `ADDON_STATUS_NEED_RESTART`, exactly as it's supposed to for every other
+  connection setting. The guard logic itself wasn't wrong; it just had no
+  way to know this particular "change" was the addon's own self-heal
+  persistence rather than something that actually needs the running
+  instance rebuilt.
+
+  This bug predates both of today's other fixes -- it's not a regression
+  from 1.0.1's concurrent probing or the macOS crash fix above, just
+  surfaced by this session's unusually thorough live testing of a
+  long-running in-progress recording (giving the API key's own natural
+  expiry window more time to land mid-test). Fixed by updating
+  `m_lastAppliedConfig.apiKey` at the same two self-heal sites, before
+  their own `SetSettingString()` call, so the ensuing notification
+  correctly sees no genuine change and returns `ADDON_STATUS_OK` instead.
+  Guarded by a new dedicated mutex (`m_lastAppliedApiKeyMutex`) since
+  `apiKey` is now the one `m_lastAppliedConfig` field with two possible
+  writers on two different threads (Kodi's own `SetSetting()` dispatch,
+  and whichever thread calls `OpenRecordedStream()`/`ReadRecordedStream()`)
+  -- every other field still has exactly one.
 

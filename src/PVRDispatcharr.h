@@ -200,21 +200,45 @@ private:
   // m_recordingRefreshMinutes needs to for its own polling thread.
   int EffectiveRecurringRuleUtcOffsetMinutes() const;
   // Snapshot of LoadConfigFromSettings()'s result, taken once at
-  // construction and updated only by OnAddonSettingChanged() itself below
-  // -- exists purely so that method can tell a *genuine* change to a
-  // connection setting (host/port/.../api_key, every one of which needs a
-  // restart to take effect) apart from a spurious re-notification of the
-  // same value. That second case is real, not hypothetical: Kodi has a
-  // documented quirk where a settings-dialog save's terminal SetSetting()
-  // call can arrive mislabeled with the name of the *last* setting defined
-  // in settings.xml (api_key, here) even when nothing about that setting
-  // actually changed -- confirmed live against a real CoreELEC install:
-  // saving `debug_logging` alone, with nothing else touched, reliably
-  // produced a spurious "api_key changed" notification and restarted the
-  // PVR client instance every time, defeating live-apply for every
-  // setting, not just the connection ones. Comparing against this snapshot
-  // turns that spurious case into a no-op instead of an unwanted restart.
+  // construction and updated by OnAddonSettingChanged() itself below for
+  // host/port/username/password/verify_ssl/timeout -- exists purely so
+  // that method can tell a *genuine* change to a connection setting apart
+  // from a spurious re-notification of the same value. That second case is
+  // real, not hypothetical: Kodi has a documented quirk where a settings-
+  // dialog save's terminal SetSetting() call can arrive mislabeled with the
+  // name of the *last* setting defined in settings.xml (api_key, here)
+  // even when nothing about that setting actually changed -- confirmed
+  // live against a real CoreELEC install: saving `debug_logging` alone,
+  // with nothing else touched, reliably produced a spurious "api_key
+  // changed" notification and restarted the PVR client instance every
+  // time, defeating live-apply for every setting, not just the connection
+  // ones. Comparing against this snapshot turns that spurious case into a
+  // no-op instead of an unwanted restart.
+  //
+  // `apiKey` specifically has a *second* writer: OpenRecordedStream()/
+  // ReadRecordedStream()'s own self-heal persistence (see their own
+  // comments) also update it, guarded by m_lastAppliedApiKeyMutex below --
+  // confirmed live as a real bug otherwise: a self-generated key
+  // regeneration mid-open (RefreshInProgressRecordingManifest()'s
+  // proactive self-heal check) persists the new key via SetSettingString()
+  // so a *future* restart doesn't lose it, but that persistence call is
+  // itself what Kodi's SetSetting() delivers back here as a "genuine"
+  // change (correctly, by the letter of this comparison, since the string
+  // value did change) -- restarting the instance and tearing down the
+  // in-progress-recording stream that had just successfully opened,
+  // despite the new key already being live in DispatcharrClient's own
+  // m_config.apiKey the moment GenerateApiKey() returned it, with no
+  // restart actually needed. Updating this snapshot at the same two
+  // self-heal sites, before their own SetSettingString() call, makes the
+  // ensuing notification correctly see no *genuine* change and return
+  // ADDON_STATUS_OK instead.
   dispatcharr::Config m_lastAppliedConfig;
+  // Guards m_lastAppliedConfig.apiKey specifically, the one field with two
+  // writers on potentially different threads (Kodi's own SetSetting()
+  // dispatch thread via OnAddonSettingChanged(), and whichever thread calls
+  // OpenRecordedStream()/ReadRecordedStream()) -- see m_lastAppliedConfig's
+  // own comment. Every other field only has the one writer.
+  std::mutex m_lastAppliedApiKeyMutex;
   // Returns true if this call actually performed a fetch (cache was stale
   // or never loaded), false if it was a no-op (still fresh). The
   // background thread below uses this to know when to call
