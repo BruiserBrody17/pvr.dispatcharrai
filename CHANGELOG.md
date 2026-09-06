@@ -33,13 +33,13 @@ Addon only.
   its current (up to 60s) reconnect backoff was still left. See
   `docs/API_NOTES.md`'s "OS sleep/wake" section.
 - A one-time recording created directly from an EPG entry Dispatcharr's
-  guide data tags as sports now gets extra end-of-recording padding
-  automatically (new `sports_extra_padding_minutes` setting, default 30)
-  on top of the normal recording padding, since sports broadcasts commonly
-  run long in a way scripted programming doesn't. Doesn't apply if the
-  timer's end time has already been manually adjusted, or to recurring/
-  series rules. See `docs/EPG.md`'s "Sports events get extra recording
-  padding automatically" section.
+  guide data tags as sports can now get extra end-of-recording padding on
+  top of the normal recording padding, since sports broadcasts commonly
+  run long in a way scripted programming doesn't (new
+  `sports_extra_padding_minutes` setting -- off by default, opt-in).
+  Doesn't apply if the timer's end time has already been manually
+  adjusted, or to recurring/series rules. See `docs/EPG.md`'s "Sports
+  events get extra recording padding automatically" section.
 
 ## [1.0.2] - 2026-09-06
 

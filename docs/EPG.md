@@ -105,8 +105,9 @@ addon at all, Dispatcharr computes their occurrences' start/end server-
 side) calls `ComputeOneTimeRecordingEndTime()`, which looks up the exact
 EPG entry a new timer's channel/start/end matches, and if its categories
 map to `EPG_EVENT_CONTENTMASK_SPORTS`, adds `sports_extra_padding_minutes`
-(default 30, a new setting) on top of the timer's own end time before
-sending it to Dispatcharr.
+(a new setting, off/`0` by default -- opt-in, since it means recording
+longer than the guide's own listed length) on top of the timer's own end
+time before sending it to Dispatcharr.
 
 **Exact-match, not "closest," is deliberate**: only applies when the
 timer's start *and* end still match the EPG entry precisely, i.e. Kodi's
@@ -124,13 +125,14 @@ So sending `natural_end + sports_extra` here means the final recorded
 window lands at `natural_end + sports_extra + global_post_padding` --
 exactly the intended stacking.
 
-Confirmed live end-to-end: created a one-time timer via
+Confirmed live end-to-end (with the setting temporarily set to 30 for the
+test, since it's off by default): created a one-time timer via
 `PVR.AddTimer(broadcastid=...)` against a real "2026 US Open Tennis"
 broadcast (23:00-03:00, four hours, XMLTV categories `["Sport Event",
 "Sports event", "Tennis"]`) -- the resulting Dispatcharr recording's real
 `end_time` (read back via `PVR.GetTimers`, which reports the recording's
 actual stored field, not a display-only value) came back `03:30:00`,
-exactly the natural end plus the default 30-minute padding. Also
+exactly the natural end plus the configured 30-minute padding. Also
 confirmed the exact-match guard is real, not just correct in theory: the
 *identical* programme (same title, same start/end) sourced from a
 different upstream feed on a different channel variant had no
