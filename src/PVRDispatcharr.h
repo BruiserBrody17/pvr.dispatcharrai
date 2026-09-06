@@ -43,6 +43,18 @@ public:
   PVR_ERROR GetBackendVersion(std::string& version) override;
   PVR_ERROR GetConnectionString(std::string& connection) override;
 
+  // Only override worth having of the two system-power-state hooks Kodi's
+  // PVR API offers (OnSystemSleep()/OnSystemWake()) -- this addon's actual
+  // live/recording read paths are stateless HTTP polls (a fresh request
+  // each time, byte position kept in this addon's own memory), which
+  // recover from a suspend gap on their own with no explicit handling
+  // needed, unlike a persistent subscription-based protocol. The one place
+  // sleep silently breaks something is the real-time-updates WebSocket
+  // (see m_wakeRealtimeUpdateThread's own comment) -- nudging it here
+  // rather than leaving OnSystemSleep() as a no-op override that does
+  // nothing useful.
+  PVR_ERROR OnSystemWake() override;
+
   // --- Channel groups ---
   PVR_ERROR GetChannelGroupsAmount(int& amount) override;
   PVR_ERROR GetChannelGroups(bool radio, kodi::addon::PVRChannelGroupsResultSet& results) override;
@@ -397,6 +409,18 @@ private:
   std::mutex m_realtimeUpdateMutex;
   std::condition_variable m_realtimeUpdateCv;
   std::atomic<bool> m_stopRealtimeUpdateThread{false};
+  // Set by OnSystemWake() to cut short whatever reconnect backoff this
+  // thread is currently waiting out. A real OS/device suspend silently
+  // kills the WebSocket same as any other network interruption would --
+  // the thread's own timeout-based read already notices and reconnects on
+  // its own, this only makes that happen right away on a genuine wake
+  // instead of however much of the current (up to 60s) backoff interval
+  // was still left. Found via a comparative-architecture review against
+  // pvr.hts/Tvheadend, which explicitly hooks OS sleep/wake for its own
+  // (more stateful) HTSP subscription -- this addon's read/recording paths
+  // are stateless HTTP polls that don't need the same handling, so this is
+  // the one place a sleep/wake hook is actually worth something here.
+  std::atomic<bool> m_wakeRealtimeUpdateThread{false};
   // Atomic because OnAddonSettingChanged() now reads-then-writes this (to
   // detect a genuine change vs. the spurious-renotification quirk
   // documented on m_lastAppliedConfig above) on whatever thread Kodi
