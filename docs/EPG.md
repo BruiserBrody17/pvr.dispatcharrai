@@ -138,6 +138,20 @@ different upstream feed on a different channel variant had no
 -- correctly left unpadded, not a bug, just that particular feed lacking
 genre metadata to detect sports from in the first place.
 
+**Whether this applies to a given channel depends entirely on that
+channel's EPG source, not the addon** -- confirmed by a second live
+observation (two real, simultaneously-airing sports events, one per
+channel): ESPN (1080p)'s guide data comes from Schedules Direct, which
+does supply `<category>` tags, so its live event was correctly detected
+and padded; YES Network's guide data comes straight from the backend
+IPTV provider instead, which doesn't include category data at all, so
+its live event -- genuinely sports, just with no metadata this addon can
+detect that from -- was correctly left unpadded. Nothing to fix here: a
+channel's genre-detection quality is a direct function of whichever
+upstream guide source Dispatcharr has that channel configured to pull
+from, same as `GenreDescription`/EPG-grid colour-coding above already
+depend on.
+
 ## Background loading
 
 `EnsureChannelsLoaded()`/`EnsureEpgLoaded()` (`PVRDispatcharr.cpp`) used to
