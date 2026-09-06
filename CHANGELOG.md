@@ -28,7 +28,9 @@ compare against.
 - Trimmed the longest help text in both companion plugins' own settings
   (`timeshift_buffer`'s idle-timeout and test-channel-UUID fields,
   `recording_edl`'s test-recording-ID field) the same way, for the same
-  reason -- same content, tighter wording.
+  reason -- same content, tighter wording. Both plugins bumped to
+  `1.0.1` for this (their own independent version, per the decoupled
+  versioning policy -- the addon didn't change).
 
 ## [1.0.3] - 2026-09-06
 

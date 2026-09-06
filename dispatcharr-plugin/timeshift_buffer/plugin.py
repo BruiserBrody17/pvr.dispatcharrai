@@ -941,7 +941,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "1.0.0"
+    version = "1.0.1"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
