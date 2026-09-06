@@ -1380,3 +1380,49 @@ reaper reclaim it, and a genuinely long pause to confirm the heartbeat
 really does stay fresh throughout) -- both worth doing before trusting
 this fully, consistent with this project's own standard.
 
+## A buffer that died mid-playback retried forever with no indication anything was wrong
+
+Found via a comparative-architecture review against `pvr.hts`/Tvheadend
+(HTSP has explicit stalled-stream detection this addon's own read loop
+didn't). `RefreshLiveManifest()`'s `fatalOut` parameter -- set when the
+plugin confirms its own ffmpeg has exited and this buffer will never
+produce another segment, most commonly a provider's own concurrent-
+stream limit rejecting the connection -- was only ever wired up in
+`OpenLiveTimeshiftStream()`'s cold-start retry loop. Every steady-state
+call during actual playback (`ReadLiveTimeshiftStream()`'s catch-up-to-
+tail loop, `SeekLiveTimeshiftStream()`, `GetLiveTimeshiftStreamLength()`)
+passed no `fatalOut` at all.
+
+So if the buffer died *after* playback was already under way -- the same
+kind of failure the cold-start path already detects and gives up on
+immediately, just happening later -- `ReadLiveTimeshiftStream()`'s
+catch-up loop had no way to tell that apart from an ordinary "just
+waiting for the next segment" gap. It retried its full bounded budget on
+every single `Read()` call, forever, always returning 0 (Kodi's "no data
+yet, keep waiting" signal), with nothing worse than a debug-level "gave
+up" log line. To a user, that's indistinguishable from playback frozen
+indefinitely with no error, no explanation, and no way for Kodi to
+notice and give up on its own.
+
+Fixed by wiring `fatalOut` into the steady-state catch-up loop too, and
+adding `LiveTimeshiftStreamState::fatal` -- once a steady-state refresh
+confirms the buffer is genuinely dead, it's logged at `ADDON_LOG_ERROR`
+(not just debug, since this is a real failure worth surfacing) and
+`ReadLiveTimeshiftStream()`/`SeekLiveTimeshiftStream()` return `-1`
+(this codebase's established hard-error convention, e.g.
+`ReadRecordingStream()`'s own `curl_easy_init()`-failure path) instead of
+`0`, which is what actually lets Kodi's own player recognize the stream
+has genuinely ended rather than continuing to wait on it. `fatal` is
+checked up front on every subsequent call too, so a confirmed-dead
+buffer short-circuits immediately rather than paying for another doomed
+network round trip each time.
+
+Confirmed live (Windows, server-side timeshift mode): the *normal*,
+non-fatal catch-up loop behaves identically to before this change --
+same log format, same successful "caught up" cycles, no regression.
+The fatal path itself wasn't independently live-triggered (would need
+deliberately killing the plugin's ffmpeg process mid-playback on the
+server, not done this pass) -- confidence here comes from reusing the
+exact same `fatalOut` mechanism already proven correct for the
+cold-start case, not a fresh, untested code path.
+
