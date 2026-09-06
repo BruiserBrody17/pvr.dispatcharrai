@@ -110,6 +110,47 @@ off the remote session driving the test. Confidence here comes from
 tracing all three cases the modified predicate has to handle (stop,
 wake, natural timeout) by hand, not a live repro.
 
+## Single-instance assumption: partially hardened, not fully
+
+Also found via the `pvr.hts`/Tvheadend comparison above: `pvr.hts`
+added support for Kodi requesting a *second* concurrent recording stream
+open on the same addon (its v22.5.0 changelog entry says specifically
+for Kodi's own recording-thumbnail generation). This addon has never
+supported that, and does today, in two separate ways:
+
+1. `CAddonDispatcharr` (`addon.cpp`) used to track the single PVR
+   instance it expected via one raw pointer, unconditionally cleared on
+   any `DestroyInstance()` call regardless of which instance was being
+   destroyed. If Kodi ever *did* request a second instance, creating it
+   would silently overwrite the first instance's tracking, and
+   destroying either one would wipe settings-routing (`SetSetting()`) for
+   whichever instance was still alive. **Fixed**: now tracks a real
+   collection of instances (erasing only the one matching the destroyed
+   handle) and broadcasts `SetSetting()` to all of them -- correct
+   either way, since Kodi's `SetSetting()` call itself carries no
+   per-instance identity to begin with (settings.xml is one shared
+   config for the whole addon). A no-op change in the single-instance
+   case that's actually been observed in practice; a real fix if a
+   second instance is ever requested.
+2. **Not fixed, deliberately**: even with instance-tracking hardened,
+   Kodi's `OpenRecordedStream(const kodi::addon::PVRRecording&)` API
+   itself (confirmed in Kodi's own `kodi-dev-kit/include/kodi/addon-
+   instance/PVR.h`) takes no stream-handle/id -- it's a single implicit
+   slot per instance. `RecordingStreamState`/`InProgressRecordingStreamState`
+   in `DispatcharrClient` are built around that same single-slot
+   assumption throughout (`OpenRecordingStream()` closes whatever's
+   already open before opening the new one). Supporting a second
+   *concurrent* stream on one instance would mean turning that single
+   state struct into a small collection keyed by some caller-supplied
+   identity Kodi doesn't actually provide at this API level -- a real
+   redesign, not a small fix, and not attempted here without a confirmed
+   live trigger. Whether Kodi's PVR manager ever actually requests this
+   for this addon's recordings specifically (network-streamed HLS, not
+   pvr.hts's local-file-like VFS) is unconfirmed -- no evidence either
+   way from this addon's own testing history. Worth revisiting if a real
+   symptom (e.g. thumbnail generation silently failing or interrupting
+   active playback) ever surfaces.
+
 ## How to verify quickly
 
 From a machine that can reach your Dispatcharr instance:
