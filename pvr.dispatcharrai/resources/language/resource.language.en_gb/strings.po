@@ -269,6 +269,14 @@ msgctxt "#30087"
 msgid "Etc/UTC"
 msgstr ""
 
+msgctxt "#30088"
+msgid "Extra padding for sports (minutes)"
+msgstr ""
+
+msgctxt "#30089"
+msgid "Added on top of the normal end-of-recording padding above, but only for a one-time recording created directly from an EPG entry whose category Dispatcharr's guide data tags as sports, and only when its end time hasn't already been manually adjusted in Kodi's own timer-edit dialog. Sports broadcasts commonly run long (extra innings, overtime, rain delays) in a way scripted programming doesn't -- 0 disables this. Recurring and series rules aren't affected: Dispatcharr computes those recordings' own start/end times server-side, with no per-occurrence EPG entry for this addon to check against."
+msgstr ""
+
 msgctxt "#30047"
 msgid "Improve catch-up seek reliability (experimental)"
 msgstr ""
