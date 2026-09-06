@@ -21,7 +21,12 @@ Addon only.
   catch-up seek, real-time updates -- several were 800-1,260 characters,
   slow-scrolling walls of text in Kodi's help popup). Cut down to the
   essential decision-relevant info, with a pointer to the relevant
-  `docs/*.md` file for anyone who wants the full explanation.
+  `docs/*.md` file for anyone who wants the full explanation. Also fixed
+  a rendering artifact (extra-looking spacing) in `live_timeshift_mode`'s
+  help text caused by a repeated `" -- "` separator.
+- `Recurring timer: manual timezone offset from UTC` is now greyed out
+  and uneditable whenever `Recurring timer: timezone` is set to anything
+  other than "Manual", since it has no effect in that case.
 
 ## [1.0.3] - 2026-09-06
 

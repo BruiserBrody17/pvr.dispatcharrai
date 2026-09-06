@@ -90,7 +90,7 @@ msgid "Live TV pause/rewind (timeshift)"
 msgstr ""
 
 msgctxt "#30028"
-msgid "Off (default): plain live stream, no pause/rewind, works immediately. Local: real pause/rewind buffered on this device via inputstream.ffmpegdirect (must be installed, or live playback fails) -- doesn't persist across a Kodi restart or follow you to another device. Server-side: pause/rewind/fast-forward buffered by Dispatcharr via the companion Timeshift Buffer plugin, shared across every device on the account -- needs a Dispatcharr admin account and the plugin's HTTP port reachable from this device. See docs/TIMESHIFT.md for the full comparison."
+msgid "Off (default): plain live stream, no pause/rewind, works immediately. Local: real pause/rewind buffered on this device via inputstream.ffmpegdirect (must be installed, or live playback fails). Doesn't persist across a Kodi restart or follow you to another device. Server-side: pause/rewind/fast-forward buffered by Dispatcharr via the companion Timeshift Buffer plugin, shared across every device on the account. Needs a Dispatcharr admin account and the plugin's HTTP port reachable from this device. See docs/TIMESHIFT.md for the full comparison."
 msgstr ""
 
 msgctxt "#30035"
