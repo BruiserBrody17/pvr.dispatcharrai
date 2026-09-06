@@ -10,6 +10,19 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [Unreleased]
+
+Addon only.
+
+### Changed
+
+- Trimmed the longest addon-settings help texts (`live_timeshift_mode`,
+  the recording-padding/recurring-timezone settings, sports padding,
+  catch-up seek, real-time updates -- several were 800-1,260 characters,
+  slow-scrolling walls of text in Kodi's help popup). Cut down to the
+  essential decision-relevant info, with a pointer to the relevant
+  `docs/*.md` file for anyone who wants the full explanation.
+
 ## [1.0.3] - 2026-09-06
 
 Addon only.
