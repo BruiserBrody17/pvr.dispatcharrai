@@ -23,6 +23,12 @@ Addon only, same as 1.0.1.
   probe burst -- see `docs/RECORDINGS.md` for the full root cause. The
   speed fix from 1.0.1 is unaffected: still ~5-6s to open a multi-hour
   in-progress recording cold, near-instant on a reopen.
+- A self-heal API-key regeneration during an in-progress recording's open
+  or a completed recording's read could immediately kill the playback
+  that had just started, prompting a spurious "needs to restart" dialog.
+  Not a regression from either fix above -- an older, separate bug this
+  session's testing happened to surface. See `docs/RECORDINGS.md` for the
+  full root cause.
 
 ## [1.0.1] - 2026-09-06
 

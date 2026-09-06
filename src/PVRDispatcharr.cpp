@@ -328,6 +328,7 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
     else if (settingName == "api_key")
     {
       std::string value = settingValue.GetString();
+      std::lock_guard<std::mutex> apiKeyLock(m_lastAppliedApiKeyMutex);
       changed = value != m_lastAppliedConfig.apiKey;
       m_lastAppliedConfig.apiKey = std::move(value);
     }
@@ -1542,10 +1543,22 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   // regenerated the API key (see OpenRecordingStream()'s comment) if
   // another Kodi install using this same Dispatcharr account had
   // invalidated the one persisted here. Save the new one so a restart of
-  // this install doesn't immediately invalidate it again.
+  // this install doesn't immediately invalidate it again -- but update
+  // m_lastAppliedConfig.apiKey first (see its own comment): the stream
+  // above already opened successfully with the new key live in
+  // DispatcharrClient's own m_config.apiKey, so the SetSettingString()
+  // call below is purely for persistence, not something this already-open
+  // stream needs a restart to pick up. Confirmed live as a real bug
+  // without this: it tore down the very stream that had just opened.
   std::string keyAfter = m_client.GetApiKey();
   if (keyAfter != keyBefore)
+  {
+    {
+      std::lock_guard<std::mutex> apiKeyLock(m_lastAppliedApiKeyMutex);
+      m_lastAppliedConfig.apiKey = keyAfter;
+    }
     kodi::addon::SetSettingString("api_key", keyAfter);
+  }
   return true;
 }
 
@@ -1564,13 +1577,22 @@ int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
   if (m_client.IsInProgressRecordingStreamOpen())
     return m_client.ReadInProgressRecordingStream(buffer, size);
 
-  // Same self-heal persistence as OpenRecordedStream(): the key can also be
-  // invalidated mid-playback by another install, not just between opens.
+  // Same self-heal persistence as OpenRecordedStream() -- including
+  // updating m_lastAppliedConfig.apiKey first, for the same reason: the
+  // key can also be invalidated mid-playback by another install, not just
+  // between opens, and this already-open stream doesn't need a restart to
+  // keep using the new one.
   std::string keyBefore = m_client.GetApiKey();
   int result = m_client.ReadRecordingStream(buffer, size);
   std::string keyAfter = m_client.GetApiKey();
   if (keyAfter != keyBefore)
+  {
+    {
+      std::lock_guard<std::mutex> apiKeyLock(m_lastAppliedApiKeyMutex);
+      m_lastAppliedConfig.apiKey = keyAfter;
+    }
     kodi::addon::SetSettingString("api_key", keyAfter);
+  }
   return result;
 }
 
