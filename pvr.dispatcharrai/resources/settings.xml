@@ -172,6 +172,12 @@
             <maximum>840</maximum>
           </constraints>
           <control type="edit" format="integer" />
+          <!-- Only meaningful when the timezone dropdown above is
+               "Manual" (see EffectiveRecurringRuleUtcOffsetMinutes()'s
+               own comment): greyed out otherwise, so it doesn't look
+               like a live, independent value when a recognized zone is
+               already computing the real offset automatically. -->
+          <enable>eq(recurring_rule_timezone,manual)</enable>
         </setting>
         <setting id="recording_pre_offset_minutes" type="integer" label="30054" help="30055">
           <level>0</level>
