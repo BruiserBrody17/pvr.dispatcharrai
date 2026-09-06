@@ -12,8 +12,6 @@ compare against.
 
 ## [Unreleased]
 
-Addon only.
-
 ### Changed
 
 - Trimmed the longest addon-settings help texts (`live_timeshift_mode`,
@@ -27,6 +25,10 @@ Addon only.
 - `Recurring timer: manual timezone offset from UTC` is now greyed out
   and uneditable whenever `Recurring timer: timezone` is set to anything
   other than "Manual", since it has no effect in that case.
+- Trimmed the longest help text in both companion plugins' own settings
+  (`timeshift_buffer`'s idle-timeout and test-channel-UUID fields,
+  `recording_edl`'s test-recording-ID field) the same way, for the same
+  reason -- same content, tighter wording.
 
 ## [1.0.3] - 2026-09-06
 

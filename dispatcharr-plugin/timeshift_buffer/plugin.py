@@ -1006,17 +1006,13 @@ class Plugin:
             "id": "idle_timeout_seconds", "label": "Idle timeout (seconds)", "type": "number",
             "default": 30,
             "help_text": (
-                "Stop a channel's buffer automatically if no heartbeat action "
-                "arrives for this long. Only a backstop for a viewer that "
-                "disappears without cleanly closing (a crash, a force-quit, a "
-                "network drop) -- a normal Stop tears the buffer down directly "
-                "and immediately regardless of this setting (see "
-                "pvr.dispatcharrai's own docs/TIMESHIFT.md), and an actively "
-                "watching client (even paused) keeps its heartbeat fresh on "
-                "its own, so this doesn't need to be generous to avoid killing "
-                "a real session. Kept short instead so an abandoned buffer "
-                "doesn't sit occupying one of a provider's own "
-                "concurrent-stream slots for long."
+                "Stops a channel's buffer if no heartbeat arrives for this "
+                "long -- only a backstop for a client that disappears without "
+                "cleanly closing (a crash, a network drop), not a normal "
+                "Stop, which tears the buffer down immediately regardless. "
+                "Kept short so an abandoned buffer doesn't occupy one of a "
+                "provider's concurrent-stream slots for long. See "
+                "pvr.dispatcharrai's docs/TIMESHIFT.md for details."
             ),
         },
         {
@@ -1053,13 +1049,11 @@ class Plugin:
             "id": "test_channel_uuid", "label": "Test channel UUID", "type": "string",
             "default": "",
             "help_text": (
-                "Only used for the manual-test buttons below, as a "
-                "fallback when no channel_uuid param is supplied (plugin "
-                "action buttons can't take click-time input) -- paste a "
-                "channel's UUID here, save, then use Start/Stop Test "
-                "Buffer. The real integration (a client calling run/ over "
-                "the REST API) passes channel_uuid directly and ignores "
-                "this field entirely."
+                "Only used by the manual-test buttons below (plugin action "
+                "buttons can't take click-time input) -- paste a channel's "
+                "UUID here, save, then use Start/Stop Test Buffer. The real "
+                "integration (a client calling run/ over the REST API) "
+                "passes channel_uuid directly and ignores this field."
             ),
         },
     ]
