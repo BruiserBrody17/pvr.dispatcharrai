@@ -1502,4 +1502,58 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   isn't reading one logs a scary-looking error even though the request
   itself, from curl's side, already succeeded. Dispatcharr-side log noise,
   not a real failure -- confirmed by hard evidence rather than assumed.
+- **Opening an in-progress recording got slower the longer it had already
+  been running, and re-paid that cost on every open, not just the first --
+  fixed by parallelizing the segment probe and caching results across
+  opens.** Reported live (post-1.0.0): opening a ~2h-in recording on macOS
+  took 29.4s, with `kodi.log`'s own timing breakdown pinning it exactly on
+  `RefreshInProgressRecordingManifest`: 1,842 new-segment probes, 29.417s,
+  serialized one at a time (each individual probe was already fast, ~16ms
+  average -- `ProbeSegmentByteSize()` already used the shared `CURLSH`
+  connection pool, so this wasn't a fresh-connection-per-request problem).
+  Root cause: HLS playlists carry each segment's `#EXTINF` duration but
+  never its byte size, and Dispatcharr's in-progress-recording HLS segment
+  endpoint doesn't support `Range` (see this file's `Broken pipe` entry
+  above and `ProbeSegmentByteSize()`'s own comment) -- so this addon has to
+  discover each segment's byte size itself via a HEAD probe to build the
+  byte-offset index Kodi's `IStream` API needs, and on a cold open, every
+  segment the recording has produced so far counts as "new."
+
+  Two independent fixes, addressing the two compounding problems
+  separately:
+  1. **Parallelized the probing.** `RefreshInProgressRecordingManifest()`
+     now parses the playlist into a pending list first, then probes up to
+     16 segments concurrently (bounded fan-out via `std::thread`, batched),
+     merging results back in playlist order afterward so byte/time offsets
+     stay correctly cumulative regardless of which probe actually finished
+     first. Safe to do because this addon's `CURLSH` share was already
+     built for exactly this (see its own comment: "Kodi's PVR API can call
+     into this client from multiple threads at once," with real
+     `CURLSHOPT_LOCKFUNC`/`UNLOCKFUNC` callbacks backing it) -- this just
+     exercises that existing thread-safety more heavily, it doesn't add a
+     new kind of risk.
+  2. **Cached probed segments across opens**, keyed by recording id
+     (`m_inProgressSegmentCache` in `DispatcharrClient`). Safe because a
+     recording's HLS output is genuinely append-only -- a segment probed on
+     one open is still at the same byte offset on the next, so re-probing
+     it on every reopen (channel switch and back, resuming after pausing in
+     the Kodi UI) was pure waste. `OpenInProgressRecordingStream()` seeds
+     from the cache before its own cold-start wait loop; the cache entry
+     itself is dropped once `finished` goes true, since a finished
+     recording plays back through the completed-recording path instead.
+
+  Confirmed live on Windows against a real, currently-recording game (same
+  matchup as the original report, coincidentally): a cold open (fresh addon
+  instance, no cache) of a recording ~2h15m in, with 2,032 elapsed segments,
+  completed in 4.65s total (`4.596s` of probing) -- down from the 29.4s/
+  1,842-segments baseline despite having *more* segments to probe this
+  time. A same-process reopen right after (`Player.Stop` then `Player.Open`
+  again, no addon/DLL reload in between) completed in **0.038s total**,
+  probing only the 1 segment that had newly appeared since the close --
+  confirming the cache is what closed the gap between "fast on this open"
+  and "fast on every open." (A DLL-reload/PVR-client-recreation event
+  between two of the manual open attempts during this same test correctly
+  reset the in-memory cache and forced a fresh 4.457s cold probe again --
+  expected, not a bug: the cache only ever claimed to survive re-opens
+  within the same running addon instance.)
 

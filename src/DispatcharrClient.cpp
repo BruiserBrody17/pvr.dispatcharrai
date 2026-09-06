@@ -1888,15 +1888,25 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // skipped (no rolling-window eviction for a recording -- see
   // InProgressRecordingStreamState's own comment), everything past it is
   // new. #EXTINF: precedes each segment URI line with its duration; HLS
-  // never carries byte size, so each newly-discovered segment gets a tiny
-  // ranged-GET probe for that.
+  // never carries byte size, so each newly-discovered segment needs a tiny
+  // ranged-GET probe for that -- done in a separate pass below (parse
+  // first, probe second) so the probes, which don't depend on each other,
+  // can run concurrently instead of one at a time: a cold open of a
+  // recording that's been running a while has thousands of already-elapsed
+  // segments to size on its very first refresh, and probing them fully
+  // serially was confirmed live to take ~29s for a recording ~2h in (1,842
+  // probes at ~16ms each -- each probe itself was already fast, it was
+  // purely the lack of concurrency).
   size_t alreadyKnown = m_inProgressRecordingStream.segments.size();
   size_t segmentIndex = 0;
-  size_t newSegmentsProbed = 0;
-  size_t newSegmentsProbeFailed = 0;
+  struct PendingSegment
+  {
+    std::string url;
+    double durationSec = 0.0;
+  };
+  std::vector<PendingSegment> pending;
   double pendingDurationSec = 0.0;
   size_t pos = 0;
-  auto probeStart = std::chrono::steady_clock::now();
   while (pos <= playlistText.size())
   {
     size_t newlinePos = playlistText.find('\n', pos);
@@ -1927,31 +1937,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
         std::string segUrl = (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
                                   ? line
                                   : baseDir + line;
-        int64_t segSize = ProbeSegmentByteSize(segUrl);
-        if (segSize > 0)
-        {
-          InProgressRecordingSegmentInfo info;
-          info.url = std::move(segUrl);
-          info.byteOffset = m_inProgressRecordingStream.totalBytes;
-          info.byteSize = segSize;
-          info.timeOffsetMs = m_inProgressRecordingStream.totalDurationMs;
-          m_inProgressRecordingStream.totalBytes += segSize;
-          m_inProgressRecordingStream.totalDurationMs +=
-              static_cast<int64_t>(pendingDurationSec * 1000 + 0.5);
-          m_inProgressRecordingStream.segments.push_back(std::move(info));
-          ++newSegmentsProbed;
-        }
-        else
-        {
-          ++newSegmentsProbeFailed;
-        }
-        // A segment that can't be sized (transient network hiccup, or
-        // recycled mid-probe) is skipped rather than retried here --
-        // segmentIndex still advances, so it's simply missing from this
-        // stream's address space; the next manifest refresh only looks at
-        // segments past the current known count anyway, so a skipped one
-        // is never retried. Rare enough in practice (a recording's own
-        // segments aren't recycled) not to warrant more than that.
+        pending.push_back({std::move(segUrl), pendingDurationSec});
       }
       ++segmentIndex;
       pendingDurationSec = 0.0;
@@ -1961,8 +1947,62 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
       break;
     pos = newlinePos + 1;
   }
+
+  // Bounded fan-out: kMaxConcurrentProbes threads in flight at a time, each
+  // doing the same HEAD-based probe as before. Every thread writes only its
+  // own index of probedSizes, so no locking is needed here -- the merge
+  // below, which needs playlist order to keep byte/time offsets correctly
+  // cumulative, happens afterward on this thread once every probe in a
+  // batch has finished.
+  auto probeStart = std::chrono::steady_clock::now();
+  std::vector<int64_t> probedSizes(pending.size(), -1);
+  constexpr size_t kMaxConcurrentProbes = 16;
+  for (size_t batchStart = 0; batchStart < pending.size(); batchStart += kMaxConcurrentProbes)
+  {
+    size_t batchEnd = std::min(batchStart + kMaxConcurrentProbes, pending.size());
+    std::vector<std::thread> batch;
+    batch.reserve(batchEnd - batchStart);
+    for (size_t i = batchStart; i < batchEnd; ++i)
+    {
+      batch.emplace_back(
+          [this, &pending, &probedSizes, i]() { probedSizes[i] = ProbeSegmentByteSize(pending[i].url); });
+    }
+    for (auto& t : batch)
+      t.join();
+  }
   double probeSegmentsSec =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - probeStart).count();
+
+  size_t newSegmentsProbed = 0;
+  size_t newSegmentsProbeFailed = 0;
+  for (size_t i = 0; i < pending.size(); ++i)
+  {
+    int64_t segSize = probedSizes[i];
+    if (segSize > 0)
+    {
+      InProgressRecordingSegmentInfo info;
+      info.url = std::move(pending[i].url);
+      info.byteOffset = m_inProgressRecordingStream.totalBytes;
+      info.byteSize = segSize;
+      info.timeOffsetMs = m_inProgressRecordingStream.totalDurationMs;
+      m_inProgressRecordingStream.totalBytes += segSize;
+      m_inProgressRecordingStream.totalDurationMs +=
+          static_cast<int64_t>(pending[i].durationSec * 1000 + 0.5);
+      m_inProgressRecordingStream.segments.push_back(std::move(info));
+      ++newSegmentsProbed;
+    }
+    else
+    {
+      // A segment that can't be sized (transient network hiccup, or
+      // recycled mid-probe) is skipped rather than retried here -- it's
+      // simply missing from this stream's address space; the next
+      // manifest refresh only looks at segments past the current known
+      // count anyway, so a skipped one is never retried. Rare enough in
+      // practice (a recording's own segments aren't recycled) not to
+      // warrant more than that.
+      ++newSegmentsProbeFailed;
+    }
+  }
 
   // Fresh in-progress check every call, not just at open: this is what
   // lets ReadInProgressRecordingStream() eventually stop waiting for a
@@ -1987,6 +2027,34 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   m_inProgressRecordingStream.finished = !stillInProgress;
   double getRecordingsSec =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - getRecordingsStart).count();
+
+  // Keep the cross-open cache (m_inProgressSegmentCache) in step. A
+  // finished recording won't be opened through this path again -- it plays
+  // back as a completed recording instead -- so its entry is just dead
+  // weight once that happens. Otherwise, append only the segments this
+  // call newly probed rather than recopying the whole vector: this refresh
+  // runs roughly every 500ms during active playback of a long recording,
+  // and m_inProgressRecordingStream.segments is always exactly this cache
+  // entry's own prefix (seeded from it verbatim on open, append-only since)
+  // plus whatever's new here, so the two stay in lockstep without a full
+  // copy each time.
+  if (newSegmentsProbed > 0 || m_inProgressRecordingStream.finished)
+  {
+    std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
+    if (m_inProgressRecordingStream.finished)
+    {
+      m_inProgressSegmentCache.erase(m_inProgressRecordingStream.recordingId);
+    }
+    else
+    {
+      auto& cacheEntry = m_inProgressSegmentCache[m_inProgressRecordingStream.recordingId];
+      cacheEntry.segments.insert(cacheEntry.segments.end(),
+                                  m_inProgressRecordingStream.segments.end() - newSegmentsProbed,
+                                  m_inProgressRecordingStream.segments.end());
+      cacheEntry.totalBytes = m_inProgressRecordingStream.totalBytes;
+      cacheEntry.totalDurationMs = m_inProgressRecordingStream.totalDurationMs;
+    }
+  }
 
   // Proactive self-heal: cheaper to catch a stale key here than mid-read.
   if (!GetApiKey().empty() && !IsApiKeyValidFor(playlistUrl))
@@ -2015,6 +2083,20 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, std::stri
 
   m_inProgressRecordingStream.open = true;
   m_inProgressRecordingStream.recordingId = recordingId;
+
+  // Reopening the same still-recording (channel switch and back, resuming
+  // after a pause) shouldn't re-probe segments already sized on a previous
+  // open -- see m_inProgressSegmentCache's own comment.
+  {
+    std::lock_guard<std::mutex> cacheLock(m_inProgressSegmentCacheMutex);
+    auto cacheIt = m_inProgressSegmentCache.find(recordingId);
+    if (cacheIt != m_inProgressSegmentCache.end())
+    {
+      m_inProgressRecordingStream.segments = cacheIt->second.segments;
+      m_inProgressRecordingStream.totalBytes = cacheIt->second.totalBytes;
+      m_inProgressRecordingStream.totalDurationMs = cacheIt->second.totalDurationMs;
+    }
+  }
 
   // Cold-start grace period, same reasoning as OpenLiveTimeshiftStream()'s:
   // Dispatcharr's own DVR ffmpeg needs a real few seconds to connect to

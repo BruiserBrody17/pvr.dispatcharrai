@@ -65,6 +65,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -914,6 +915,30 @@ private:
     int64_t cachedSegmentByteOffset = -1;
   };
   InProgressRecordingStreamState m_inProgressRecordingStream;
+
+  // Cross-open cache of already-probed segments for an in-progress
+  // recording, keyed by recordingId. Dispatcharr's in-progress HLS output
+  // is append-only (see InProgressRecordingStreamState::segments' own
+  // comment) -- a segment probed on one open is still valid, at the same
+  // byte offset, on the next -- so without this, reopening the same
+  // still-recording (e.g. after a channel switch, or resuming after
+  // pausing playback in the Kodi UI) would otherwise re-probe every single
+  // already-known segment from scratch every time -- on top of the cost
+  // every *first* open already pays for a recording that's been running a
+  // while, which was confirmed live (a ~2h-in recording took 29.4s to
+  // open, entirely spent probing 1,842 already-elapsed segments one at a
+  // time). Cleared for a recording once RefreshInProgressRecordingManifest()
+  // sees it's finished -- a finished recording is played back through the
+  // completed-recording path instead, so its entry here would just sit
+  // unused.
+  struct InProgressRecordingSegmentCache
+  {
+    std::vector<InProgressRecordingSegmentInfo> segments;
+    int64_t totalBytes = 0;
+    int64_t totalDurationMs = 0;
+  };
+  std::map<int, InProgressRecordingSegmentCache> m_inProgressSegmentCache;
+  std::mutex m_inProgressSegmentCacheMutex;
 
   // Fetches the recording's current HLS playlist (FetchRawInProgressPlaylist)
   // and merges any segments not already known into
