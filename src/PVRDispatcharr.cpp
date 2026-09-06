@@ -53,7 +53,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
   m_recurringRuleUtcOffsetMinutes = kodi::addon::GetSettingInt("recurring_rule_utc_offset_minutes", 0);
-  m_sportsExtraPaddingMinutes = kodi::addon::GetSettingInt("sports_extra_padding_minutes", 30);
+  m_sportsExtraPaddingMinutes = kodi::addon::GetSettingInt("sports_extra_padding_minutes", 0);
   m_enableRealtimeUpdates = kodi::addon::GetSettingBoolean("enable_realtime_updates", false);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
