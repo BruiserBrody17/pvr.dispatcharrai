@@ -164,6 +164,17 @@
           </constraints>
           <control type="list" format="string" />
         </setting>
+        <!-- <dependencies>/<dependency type="enable" setting="...">
+             is the pattern already proven working in this exact file
+             (see verify_ssl above, confirmed live greyed out correctly).
+             Two earlier attempts at the inline eq()-attribute form
+             (both plausible-looking, sourced from reading Kodi's own
+             AddonSettings.cpp) did not actually render as disabled when
+             tested live, for reasons not fully root-caused. Trusting the
+             pattern already confirmed live in this codebase over what
+             the C++ source alone suggested. Only meaningful when the
+             timezone dropdown above is "Manual" (see
+             EffectiveRecurringRuleUtcOffsetMinutes()'s own comment). -->
         <setting id="recurring_rule_utc_offset_minutes" type="integer" label="30049" help="30050">
           <level>1</level>
           <default>0</default>
@@ -172,12 +183,9 @@
             <maximum>840</maximum>
           </constraints>
           <control type="edit" format="integer" />
-          <!-- Only meaningful when the timezone dropdown above is
-               "Manual" (see EffectiveRecurringRuleUtcOffsetMinutes()'s
-               own comment): greyed out otherwise, so it doesn't look
-               like a live, independent value when a recognized zone is
-               already computing the real offset automatically. -->
-          <enable>eq(recurring_rule_timezone,manual)</enable>
+          <dependencies>
+            <dependency type="enable" setting="recurring_rule_timezone">manual</dependency>
+          </dependencies>
         </setting>
         <setting id="recording_pre_offset_minutes" type="integer" label="30054" help="30055">
           <level>0</level>
