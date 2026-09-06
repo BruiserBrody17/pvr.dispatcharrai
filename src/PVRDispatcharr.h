@@ -272,6 +272,17 @@ private:
                                   std::vector<int>& daysOfWeekOut, int& startSecondsOut,
                                   int& endSecondsOut, time_t& startDateOut, std::string& error);
 
+  // AddTimer()'s one-time-recording branch only. Returns timer.GetEndTime()
+  // unchanged unless: the timer's own channel/start/end exactly match a
+  // currently-cached EPG entry (i.e. this timer was created straight from
+  // that entry and its end time hasn't been hand-adjusted in Kodi's own
+  // timer-edit dialog -- an exact match on *both* start and end is the
+  // signal for that, not just end, since a start-only edit should be
+  // respected too), and that entry's own categories map to
+  // EPG_EVENT_CONTENTMASK_SPORTS. See sports_extra_padding_minutes in
+  // settings.xml/strings.po.
+  time_t ComputeOneTimeRecordingEndTime(const kodi::addon::PVRTimer& timer);
+
   dispatcharr::DispatcharrClient m_client;
 
   std::mutex m_dataMutex;
@@ -326,6 +337,15 @@ private:
   // as a fallback now, when recurring_rule_timezone is "manual" or an
   // unrecognized zone -- see EffectiveRecurringRuleUtcOffsetMinutes().
   std::atomic<int> m_recurringRuleUtcOffsetMinutes{0};
+  // See sports_extra_padding_minutes in settings.xml/strings.po -- read by
+  // AddTimer()'s one-time-recording branch only, for a timer created
+  // straight from an EPG entry whose category maps to sports (see
+  // MapCategoriesToGenreType()) with its end time still unmodified from
+  // that entry's own. Recurring/series rules never consult this: Dispatcharr
+  // computes those recordings' own start/end times server-side, with no
+  // per-occurrence EPG entry here to check the "still unmodified" condition
+  // against.
+  std::atomic<int> m_sportsExtraPaddingMinutes{30};
 
   // Recordings/timers only ever get re-fetched by Kodi when this addon
   // calls TriggerRecordingUpdate()/TriggerTimerUpdate() -- unlike channels/

@@ -53,6 +53,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
   m_recurringRuleUtcOffsetMinutes = kodi::addon::GetSettingInt("recurring_rule_utc_offset_minutes", 0);
+  m_sportsExtraPaddingMinutes = kodi::addon::GetSettingInt("sports_extra_padding_minutes", 30);
   m_enableRealtimeUpdates = kodi::addon::GetSettingBoolean("enable_realtime_updates", false);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
@@ -214,6 +215,10 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
   else if (settingName == "recurring_rule_utc_offset_minutes")
   {
     m_recurringRuleUtcOffsetMinutes = settingValue.GetInt();
+  }
+  else if (settingName == "sports_extra_padding_minutes")
+  {
+    m_sportsExtraPaddingMinutes = settingValue.GetInt();
   }
   else if (settingName == "recording_pre_offset_minutes" ||
            settingName == "recording_post_offset_minutes")
@@ -1877,6 +1882,49 @@ bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& tim
   return true;
 }
 
+time_t PVRDispatcharr::ComputeOneTimeRecordingEndTime(const kodi::addon::PVRTimer& timer)
+{
+  time_t endTime = timer.GetEndTime();
+  int extraMinutes = m_sportsExtraPaddingMinutes.load();
+  if (extraMinutes <= 0)
+    return endTime;
+
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
+  if (!ch || ch->channelNumber <= 0)
+    return endTime;
+
+  auto it = m_epgByChannelNumber.find(std::to_string(ch->channelNumber));
+  if (it == m_epgByChannelNumber.end())
+    return endTime;
+
+  for (const auto& entry : it->second)
+  {
+    // Exact match on both ends, not just end: only apply this when the
+    // timer is still exactly what Kodi pre-filled from the EPG entry
+    // itself, so a user who already hand-adjusted either boundary in the
+    // timer-edit dialog is never silently overridden.
+    if (entry.startTime != timer.GetStartTime() || entry.endTime != timer.GetEndTime())
+      continue;
+    int genreType = EPG_GENRE_USE_STRING;
+    // Some EPG sources are richer than others -- confirmed live, the exact
+    // same programme on one channel's feed had real <category> data and
+    // matched here, while a same-title/same-time duplicate feed from a
+    // different upstream source had none at all and legitimately didn't
+    // (correct behavior, not a bug: nothing here to detect sports from).
+    bool isSports =
+        MapCategoriesToGenreType(entry.categories, genreType) && genreType == EPG_EVENT_CONTENTMASK_SPORTS;
+    kodi::Log(ADDON_LOG_DEBUG,
+              "pvr.dispatcharrai: ComputeOneTimeRecordingEndTime: \"%s\" isSports=%d -> %s",
+              entry.title.c_str(), isSports ? 1 : 0,
+              isSports ? "extending end time" : "leaving end time as-is");
+    if (isSports)
+      return endTime + static_cast<time_t>(extraMinutes) * 60;
+    break; // matched the entry but it isn't sports -- no need to keep looking
+  }
+  return endTime;
+}
+
 PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
 {
   std::string error;
@@ -1910,7 +1958,7 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   else
   {
     ok = m_client.CreateOneTimeRecording(static_cast<int>(timer.GetClientChannelUid()),
-                                         timer.GetStartTime(), timer.GetEndTime(),
+                                         timer.GetStartTime(), ComputeOneTimeRecordingEndTime(timer),
                                          timer.GetTitle(), error);
   }
 
