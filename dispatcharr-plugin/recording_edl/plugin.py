@@ -485,15 +485,12 @@ class Plugin:
             "id": "test_recording_id", "label": "Test recording ID", "type": "string",
             "default": "",
             "help_text": (
-                "Only used for the manual-test button below, as a fallback "
-                "when no recording_id param is supplied (plugin action "
+                "Only used by the manual-test button below (plugin action "
                 "buttons can't take click-time input) -- paste a "
                 "recording's numeric id here, save, then use Get Recording "
-                "EDL. Without this, the button has no way to ever succeed, "
-                "since a click always calls this action with no params at "
-                "all. The real integration (a client calling run/ over the "
+                "EDL. The real integration (a client calling run/ over the "
                 "REST API) passes recording_id directly and ignores this "
-                "field entirely."
+                "field."
             ),
         },
     ]
