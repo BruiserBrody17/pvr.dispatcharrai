@@ -1,8 +1,10 @@
-*(tracked punch-list for the 1.0 release -- not part of the "confirmed live" API_NOTES.md family of docs; check items off and add new ones here as they come up)*
+*(the project's running punch-list -- not part of the "confirmed live" API_NOTES.md family of docs; check items off and add new ones here as they come up. Started life as a checklist scoped to the 1.0 release specifically -- that section is kept below as a closed-out historical record, not something to keep adding to. "Ongoing" at the bottom is the live section: add anything new there, regardless of which release it surfaces in.)*
 
-# 1.0 release checklist
+# Open items
 
-## Documentation
+## 1.0 release checklist (historical -- closed out, all items done)
+
+### Documentation
 
 - [x] README cleaned up and made concise -- rewritten from 211 lines down
       to install/config/features only, narrative moved out (line count
@@ -31,7 +33,7 @@
       action does and doesn't touch, the `.dvr_*_hls` classification
       table) rather than treating them as narrative to cut.
 
-## Platform testing
+### Platform testing
 
 Four platforms: Windows, Rocky Linux, CoreELEC/ODROID, macOS.
 
@@ -42,11 +44,11 @@ right before release.
 | Platform | Status |
 |---|---|
 | Windows | ✅ Pass -- full 6-item smoke test |
-| Rocky Linux | ✅ Pass (catch-up/recurring-timer creation not exercised -- see [Open items](#open-items-more-will-likely-come-up)) |
+| Rocky Linux | ✅ Pass (catch-up/recurring-timer creation not exercised -- see [Ongoing](#ongoing-more-will-likely-come-up)) |
 | CoreELEC / ODROID | ✅ Pass (same catch-up/recurring-timer caveat as Rocky Linux) |
 | macOS | ✅ Pass (same catch-up/recurring-timer caveat; one unexplained anomaly noted below) |
 
-### Windows
+#### Windows
 
 Recording start/stop, catch-up, recurring timers, EPG, and live playback
 (`Off`, `Local`, and `Server-side` modes) all verified this session against
@@ -67,7 +69,7 @@ recording variant were) -- since verified directly on CoreELEC (below)
 using the exact same platform-independent C++ path, this is a
 documentation gap rather than a suspected regression.
 
-### Rocky Linux
+#### Rocky Linux
 
 **Full smoke-test pass completed this session**, against a fresh build of
 current `master` (git checkout at `~/kodi-linux-build`, `git reset --hard
@@ -104,7 +106,7 @@ clip) left on the account. Device fully restored (`debug_logging` off,
 `live_timeshift_mode` back to `2`, Kodi's global debug logging off) and
 Kodi left running normally.
 
-### CoreELEC / ODROID
+#### CoreELEC / ODROID
 
 **Full smoke-test pass completed this session**, against a fresh
 cross-compiled build of current `master` on real ODROID N2+ hardware on
@@ -153,7 +155,7 @@ Kodi's own UI if desired. Device fully restored to its original settings
 (`debug_logging` off, `live_timeshift_mode` back to `2`, Kodi's global
 debug logging off) and left at the normal Home screen.
 
-### macOS
+#### macOS
 
 **Full smoke-test pass completed this session**, run by a separate Claude
 Code instance on the user's own Mac (relayed back rather than driven
@@ -208,7 +210,7 @@ One ~5-minute test recording left on the account (no JSON-RPC delete
 method exists, same gap as every other platform). Device fully restored
 to its original settings and left running normally.
 
-## Release packaging
+### Release packaging
 
 - [x] Kodi addon zips for all 4 platforms -- already automated
       (`.github/workflows/build.yml`), attached to GitHub Releases on every
@@ -226,7 +228,7 @@ to its original settings and left running normally.
       `plugin.py`/`plugin.json`/`README.md` -- no stray `__pycache__`, no
       extra nesting.
 
-## Open items (more will likely come up)
+## Ongoing (more will likely come up)
 
 - **Recurring, non-fatal `Packet corrupt` on server-side live timeshift,
   post-1.0 (surfaced during 1.0.7 verification, 2026-09-07).** Confirmed
@@ -248,18 +250,23 @@ to its original settings and left running normally.
   it's currently causing visible harm. (Not the same bug as the next
   item below -- that one *did* trigger the size-disagreement
   diagnostic; this one still hasn't, across 134+ occurrences.)
-- [x] **A second, related `Packet corrupt`/freeze, this one confirmed
-  root-caused and fixed (2026-09-07).** Switching away from a channel
-  and back could reproduce a real segment-size disagreement -- this one
-  *did* trigger the 1.0.7 diagnostic live. Root cause: the plugin's
-  per-worker manifest cache wasn't invalidated across a buffer restart
-  in a multi-worker deployment (a new ffmpeg process reuses the same
-  segment filenames/sequence numbers as its predecessor). Fixed by
-  tying cache entries to the buffer's own process ID; a mismatch now
-  discards the whole entry. See `docs/TIMESHIFT.md`'s "1.0.7 follow-up
-  #2" section. Not yet re-verified live against the exact repro (would
-  need another macOS pass) -- if it recurs, the diagnostic will still
-  catch and log it.
+- [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
+  and fixed, then re-verified live (2026-09-07).** Switching away from a
+  channel and back could reproduce a real segment-size disagreement --
+  this one *did* trigger the 1.0.7 diagnostic live. Root cause: the
+  plugin's per-worker manifest cache wasn't invalidated across a buffer
+  restart in a multi-worker deployment (a new ffmpeg process reuses the
+  same segment filenames/sequence numbers as its predecessor). A first
+  fix tied cache entries to the buffer's own process ID -- itself then
+  confirmed live to have a gap under heavy testing churn (OS pids get
+  recycled; a stale entry tagged with a since-reassigned pid passed the
+  check it should have failed). Fixed properly by keying on the
+  buffer's own access token instead (a fresh, random value per genuine
+  instance, no reuse risk regardless of churn). Re-verified live on
+  macOS across two independent repro conditions, including the specific
+  churn pattern that broke the pid-based version -- both clean. Shipped
+  in `1.0.7` / `timeshift_buffer` `1.0.5`. See `docs/TIMESHIFT.md`'s
+  "1.0.7 follow-up #2" section for the full account.
 - **All four platforms now have a completed smoke-test pass** (Windows,
   Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
   confirmed live on all four, closing out what was the last real gap in
