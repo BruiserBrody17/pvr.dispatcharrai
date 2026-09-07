@@ -228,6 +228,24 @@ to its original settings and left running normally.
 
 ## Open items (more will likely come up)
 
+- **Recurring, non-fatal `Packet corrupt` on server-side live timeshift,
+  post-1.0 (surfaced during 1.0.7 verification, 2026-09-07).** Confirmed
+  live on macOS (ESPN 1080p): ffmpeg's mpegts demuxer logs `Packet
+  corrupt` roughly once every ~2.5s throughout an otherwise-healthy
+  4+ minute playback session (close to the plugin's 2s
+  `segment_seconds`), with Kodi's own demuxer evidently resyncing
+  cleanly each time -- no stall, no visible playback impact, real seeks
+  worked fine. Ruled out as the *same* mechanism as 1.0.7's
+  permanent-freeze fix (that fix's own diagnostic, which directly
+  detects a segment-size disagreement, never fired once across 134
+  occurrences of this). Leading, unconfirmed guess: something about
+  concatenating independently-produced segment *files* into one
+  continuous raw byte stream for a non-HLS-aware demuxer (a PCR/
+  continuity-counter discontinuity at each splice point). See
+  `docs/TIMESHIFT.md`'s "1.0.6 follow-up" section's "Update -- verified
+  live against the real failure" note for the full account. Not
+  blocking any release -- flagged so it doesn't get lost, not because
+  it's currently causing visible harm.
 - **All four platforms now have a completed smoke-test pass** (Windows,
   Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
   confirmed live on all four, closing out what was the last real gap in
