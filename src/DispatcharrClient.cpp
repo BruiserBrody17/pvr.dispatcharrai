@@ -999,9 +999,9 @@ bool DispatcharrClient::WaitForTimeshiftPlaylistReady(const std::string& playlis
   // raced that and failed outright ("Error, could not open file"), even
   // though the exact same URL was trivially fetchable moments later by
   // hand -- the file just didn't exist on disk yet at the moment
-  // ffmpegdirect tried. Polls the playlist URL itself (no auth needed --
-  // the plugin's own file server doesn't require any) rather than the
-  // Dispatcharr API, up to a few seconds, so GetChannelStreamProperties()
+  // ffmpegdirect tried. Polls the playlist URL itself (the caller already
+  // appended the required ?token=..., see CallTimeshiftPluginAction())
+  // rather than the Dispatcharr API, up to a few seconds, so GetChannelStreamProperties()
   // only hands back a STREAMURL once there's actually something there to
   // open. Best-effort: if it never becomes ready in time, still returns
   // (false) rather than blocking indefinitely -- the caller proceeds with
@@ -1104,6 +1104,24 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
             FieldOr(result, "already_running", false) ? 1 : 0);
 
   playlistUrlOut = "http://" + m_config.host + ":" + std::to_string(httpPort) + playlistRoute;
+
+  // The plugin's own file server requires a per-buffer access token on
+  // every request (see plugin.py's _check_access_token) -- issued here,
+  // via this authenticated action call, not readable any other way.
+  // token_urlsafe()'s output (Python's secrets module) is already
+  // URL-safe base64 ([A-Za-z0-9_-], no padding), so it's safe to append
+  // to a query string directly with no escaping needed. Stored on
+  // m_liveTimeshiftStream so ReadLiveTimeshiftStream()'s later segment
+  // fetches (against segmentBaseUrl, built separately by
+  // RefreshLiveManifest() from a different action's response) can reuse
+  // it without needing every action's response to carry it.
+  std::string accessToken = FieldOr<std::string>(result, "access_token", "");
+  if (!accessToken.empty())
+  {
+    m_liveTimeshiftStream.accessToken = accessToken;
+    playlistUrlOut += (playlistUrlOut.find('?') == std::string::npos ? "?token=" : "&token=") + accessToken;
+  }
+
   WaitForTimeshiftPlaylistReady(playlistUrlOut); // best-effort; see its own comment
   return true;
 }
@@ -1167,6 +1185,30 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
     return false;
   }
   return true;
+}
+
+void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId)
+{
+  // Best-effort and fire-and-forget by design -- see this method's own
+  // header comment for why a failure here shouldn't interrupt playback.
+  if (viewerId.empty())
+    return;
+  std::string error;
+  if (!EnsureAuthenticated(error))
+  {
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: SendTimeshiftHeartbeat: not authenticated, skipping: %s",
+              error.c_str());
+    return;
+  }
+  json body = {
+      {"action", "heartbeat"},
+      {"params", {{"channel_uuid", channelUuid}, {"viewer_id", viewerId}}},
+  };
+  json response;
+  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+  {
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: SendTimeshiftHeartbeat: request failed: %s", error.c_str());
+  }
 }
 
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
@@ -3046,6 +3088,27 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   if (m_liveTimeshiftStream.fatal)
     return -1;
 
+  // Opportunistically refresh this viewer's own heartbeat on an interval
+  // comfortably under idle_timeout_seconds' default (30s) -- see
+  // SendTimeshiftHeartbeat()'s own comment for why. Piggybacked on
+  // ordinary reads (this function is already called continuously for as
+  // long as playback continues) rather than a dedicated thread, so the
+  // occasional extra round trip lands on whichever read happens to cross
+  // the interval -- bounded and infrequent enough (once per ~10s, not per
+  // read) to be well within the waits this same function already tolerates
+  // from the catch-up-to-tail logic below.
+  {
+    constexpr auto kHeartbeatInterval = std::chrono::seconds(10);
+    auto now = std::chrono::steady_clock::now();
+    if (!m_liveTimeshiftStream.viewerId.empty() &&
+        (m_liveTimeshiftStream.lastHeartbeatSent.time_since_epoch().count() == 0 ||
+         now - m_liveTimeshiftStream.lastHeartbeatSent >= kHeartbeatInterval))
+    {
+      m_liveTimeshiftStream.lastHeartbeatSent = now;
+      SendTimeshiftHeartbeat(m_liveTimeshiftStream.channelUuid, m_liveTimeshiftStream.viewerId);
+    }
+  }
+
   // Caught up to the tail: give the buffer a bounded chance to grow rather
   // than reporting EOF immediately, which Kodi would read as "this live
   // stream just ended". A fixed 8 attempts * 250ms (2s total) here used to
@@ -3197,7 +3260,11 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
 
   int64_t rangeEnd = offsetInSegment + static_cast<int64_t>(wantSize) - 1;
   std::string range = std::to_string(offsetInSegment) + "-" + std::to_string(rangeEnd);
-  std::string url = m_liveTimeshiftStream.segmentBaseUrl + seg->filename;
+  // ?token=... is required by the plugin's own file server (see
+  // StartTimeshiftBuffer()/CallTimeshiftPluginAction()'s own comment for
+  // where accessToken comes from and why it needs no URL-escaping).
+  std::string url = m_liveTimeshiftStream.segmentBaseUrl + seg->filename + "?token=" +
+                     m_liveTimeshiftStream.accessToken;
 
   CURL* curl = static_cast<CURL*>(m_liveTimeshiftStream.curl);
   if (!curl)
@@ -3208,8 +3275,6 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
     m_liveTimeshiftStream.curl = curl;
   }
 
-  // No auth header: the plugin's own file server is deliberately
-  // unauthenticated (see plugin.py's module docstring).
   FixedBufferSink sink{buffer, wantSize, 0};
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
