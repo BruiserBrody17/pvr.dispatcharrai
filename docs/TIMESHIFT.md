@@ -1805,3 +1805,56 @@ session) -- if this recurs after both ship, the new addon-side
 diagnostic should name the exact segment and size disagreement, which
 would be the fastest path to a fully confirmed root cause.
 
+**Update -- verified live against the real failure (macOS, ESPN 1080p,
+a separate Claude Code instance on the user's own Mac, relayed back):**
+the permanent-freeze regression is genuinely fixed. ESPN (1080p) played
+continuously for 4+ minutes, including a real -30s rewind seek partway
+through (`demuxer seek to: ..., success`, `speed:1`/`canseek:true`
+holding throughout) -- well past the ~10s mark that reliably killed it
+under 1.0.6. Confirmed safe to tag.
+
+However: `Packet corrupt` did **not** go away -- it just stopped causing
+a permanent stall. Over the same session: 134 occurrences, recurring at
+a strikingly regular ~2.5s interval (close to the plugin's 2s
+`segment_seconds`) continuously throughout, not clustered near open;
+118 `hardware accelerator failed to decode picture` lines alongside it;
+and -- the important part -- **zero** occurrences of the new
+`ReadLiveTimeshiftStream: segment ... real size ... disagrees with the
+manifest-reported size` diagnostic, despite `Packet corrupt` firing 134
+times in the same window.
+
+That diagnostic exists specifically to catch the mechanism this fix
+targeted (a cached size disagreeing with the file server's own
+`Content-Range` total). It never firing, while the symptom kept
+recurring, is real evidence -- not just an absence of proof -- that
+*these* `Packet corrupt` occurrences are **not** caused by that
+mechanism: segment sizes agree, every single time, on every read. Two
+distinct things share the same ffmpeg log signature:
+
+1. **The permanent-freeze mechanism this fix targets**: a wrong size,
+   once locked in, permanently shifts every later segment's computed
+   offset -- corruption that never resolves on its own, matching the
+   original report (freeze within ~10s, never recovers). Fixed, and
+   the diagnostic above would catch it if it ever recurs.
+2. **A separate, apparently pre-existing, self-limiting artifact**:
+   `Packet corrupt` recurring roughly once per segment boundary,
+   throughout an entire session, that Kodi's own demuxer evidently
+   resyncs from cleanly each time without visible playback impact.
+   Given the interval lines up with `segment_seconds` almost exactly,
+   this smells like something about the transition between two
+   independently-produced segment *files* being concatenated into one
+   continuous raw byte stream and handed to a demuxer that has no
+   HLS-level awareness a segment boundary occurred at all (a genuine
+   architectural property of this whole feature -- see this file's own
+   "The actual fix: this addon demuxes the buffer itself" section --
+   not something introduced by any change in this session) -- a PCR/
+   continuity-counter discontinuity at the exact splice point is the
+   leading guess, not confirmed.
+
+**Deliberately left open, not chased further this pass** -- flagged
+here rather than closed out, per the live-testing session's own
+recommendation: it's the *same symptom* that started this whole
+investigation, just not currently fatal, and "harmless so far" isn't
+the same as "understood." Tracked in
+`docs/RELEASE_1.0_CHECKLIST.md`'s Open items.
+
