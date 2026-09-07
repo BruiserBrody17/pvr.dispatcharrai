@@ -1858,3 +1858,95 @@ investigation, just not currently fatal, and "harmless so far" isn't
 the same as "understood." Tracked in
 `docs/RELEASE_1.0_CHECKLIST.md`'s Open items.
 
+### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
+
+Reproduced live (macOS, addon 1.0.7, plugin 1.0.3, redeployed and
+reloaded): ESPN (1080p) played fine, switched to MLB Network (played
+fine), switched back to ESPN -- froze within ~8s of the fresh buffer
+being created (`already_running=0`, confirming this is a brand-new
+buffer instance, not leftover state). The Content-Range cross-check
+added for 1.0.7 fired exactly as designed:
+
+```
+ReadLiveTimeshiftStream: segment seg_00001.ts (sequence 1) real size (2883732, from Content-Range)
+disagrees with the manifest-reported size this session cached (3139788) -- every later segment's
+computed offset may already be misaligned; giving up on this stream rather than risk silent corruption
+```
+
+This is the first real, confirmed instance of the theorized mechanism
+firing live, not just a plausible theory -- the diagnostic did exactly
+its job (caught the disagreement, logged the segment/sequence/both
+sizes, refused to keep reading). But net effect for the user was
+unchanged from before 1.0.7: a clean detection that still results in
+"frozen, never recovers," just now for a well-understood, logged
+reason instead of a silent one.
+
+**The size direction matters.** Cached (3,139,788) was *larger* than
+real (2,883,732) -- the opposite of what a "sampled before the write
+fully settled" race would produce (that would read *smaller* than
+final, never larger). That ruled out the original 1.0.5-manifest-cache
+race theory for this specific instance and pointed at something else:
+the cached value wasn't stale-and-growing, it was **describing a
+completely different file**.
+
+**Root cause: `_manifest_cache` invalidation was per-process, not
+per-buffer-instance.** `_delete_buffer_state()` (called by
+`stop_buffer`/the reaper/dead-buffer cleanup) clears
+`_manifest_cache[channel_uuid]`, but only in *that calling worker
+process's own memory* -- Dispatcharr's multi-worker deployment means
+the `stop_buffer` call tearing down the old ESPN buffer instance isn't
+guaranteed to land on the same worker process that had cached
+`get_live_manifest` data for it. A channel switched away and back gets
+a brand-new ffmpeg process whose `live.m3u8` restarts sequence
+numbering from scratch -- so its early segments have the *exact same*
+`(sequence, filename)` pairs as the previous instance's, despite being
+completely different files with different real content. Whichever
+worker never got the (process-local) memo that the old instance was
+torn down would happily "recognize" `sequence=1, filename=seg_00001.ts`
+as a cache hit and serve the *old* instance's size for the *new*
+instance's file -- exactly matching a wrong-in-either-direction size
+(this time larger; the original 1.0.5-race theory would only ever
+produce smaller), and exactly matching why it hit `sequence=1` this
+early (the second segment of a fresh buffer is squarely within the
+narrow window before that segment stops being "newest" -- see the
+1.0.7 fix above -- so the *newest*-segment protection doesn't cover
+it once a worker's stale entry pre-dates the new instance entirely: the
+cache lookup itself was returning wrong data for a "known" segment,
+which the newest-segment check never had a reason to distrust).
+
+**Fixed:** every cache entry is now tagged with the buffer's own
+`state["pid"]` (already tracked for dead-buffer detection) at write
+time. On every lookup, a pid mismatch discards the *entire* cached
+entry outright -- treated exactly like a cold cache, no partial trust
+of any part of it -- rather than trying to reason about which parts
+might still be safe. This closes the gap regardless of which worker
+built the stale entry or whether `_delete_buffer_state()`'s own
+cache-clear ever reached it: correctness no longer depends on
+cross-worker message delivery at all, only on data (`pid`) already
+present in the authoritative Redis-backed buffer state every worker
+reads. The newest-segment-always-re-stat protection from the first
+1.0.7 fix is kept alongside this, unrelated failure mode, still worth
+having.
+
+Verified via a functional test against the real, unmodified function,
+directly reproducing the reported scenario: a cache entry built under
+one `pid` or a channel's segment (matching sequence *and* filename)
+served in a request carrying a *different* `pid`, with different real
+file content at each name -- confirmed the stale entry is fully
+discarded and both segments are freshly stat()'d, returning the new
+instance's real sizes (500 and 2,883,732 bytes in the test, the latter
+matching the exact value from the live incident).
+
+Not yet re-verified against the exact live failure (would need another
+macOS pass, channel-switch-away-and-back on ESPN specifically) -- if
+this recurs, the same Content-Range diagnostic from the first 1.0.7 fix
+will still catch it and log the disagreement, so any remaining gap
+would at least be immediately visible rather than silent.
+
+**Distinct from the still-open "recurring, non-fatal `Packet corrupt`
+every ~2.5s" item above** -- that one never triggered this diagnostic
+across 134 occurrences in a single, continuously-running buffer
+instance (no channel switch involved), so it isn't explained by this
+fix and remains open, untouched, tracked separately in
+`docs/RELEASE_1.0_CHECKLIST.md`.
+
