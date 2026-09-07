@@ -12,7 +12,7 @@ compare against.
 
 ## [1.0.7] - 2026-09-07
 
-`timeshift_buffer` also bumped, to its own independent `1.0.4` -- this
+`timeshift_buffer` also bumped, to its own independent `1.0.5` -- this
 release **requires redeploying the updated plugin to Dispatcharr** for
 the plugin-side half to take effect.
 
@@ -42,10 +42,14 @@ the plugin-side half to take effect.
   channel's new ffmpeg process reuses the same segment filenames and
   sequence numbers as its previous instance, and a worker holding a
   stale cache entry from the old instance had no way to know it was
-  gone). Fixed by tying every cache entry to the specific buffer
-  instance (its ffmpeg process ID) it was built from -- a mismatch now
-  discards the whole entry outright rather than partially trusting it.
-  See `docs/TIMESHIFT.md`'s "1.0.7 follow-up #2" section.
+  gone). An initial fix tying cache entries to the buffer's process ID
+  was itself confirmed live to have a gap under heavy testing churn --
+  OS pids get recycled, and a stale entry tagged with a since-reassigned
+  pid passed the check it should have failed. Fixed properly by keying
+  on the buffer's own access token instead (already a fresh, random
+  value per genuine instance, with no reuse risk regardless of churn).
+  See `docs/TIMESHIFT.md`'s "1.0.7 follow-up #2" section, including the
+  "pid-based version wasn't good enough" update.
 
 ## [1.0.6] - 2026-09-07
 

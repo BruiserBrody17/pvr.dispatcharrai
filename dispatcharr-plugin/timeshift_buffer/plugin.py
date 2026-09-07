@@ -834,16 +834,24 @@ def _get_live_manifest(state: dict, logger) -> dict:
       since appeared after it (see the inline comment where this is
       checked).
     - The *whole cache entry* for a channel_uuid is discarded outright,
-      not partially trusted, if `state["pid"]` (the buffer's own ffmpeg
-      process) doesn't match what the cache was built from -- "a sequence
+      not partially trusted, if `state["access_token"]` (a fresh random
+      value per genuine new buffer instance, see _start_buffer's own
+      comment) doesn't match what the cache was built from -- "a sequence
       number is never reused" is only true *within* one continuously-
       running buffer instance; a channel stopped and later restarted
       (e.g. a channel switch away and back) gets a brand-new ffmpeg
       process whose live.m3u8 restarts numbering from scratch, reusing
       the exact same (sequence, filename) pairs for completely different,
-      unrelated file content. See the inline comment where `buffer_pid`
-      is read for the live incident (a channel switched away from and
-      back, "Packet corrupt" within seconds) that found this.
+      unrelated file content. An earlier version of this same check
+      compared the buffer's pid instead -- confirmed live that isn't
+      good enough: pids get recycled by the OS, and under heavy
+      start_buffer/stop_buffer churn (many hours of repeated test
+      cycles), a stale cache entry tagged with a pid the OS has since
+      reassigned to a genuinely new instance passed the check it should
+      have failed. See the inline comment where `buffer_token` is read
+      for the live incidents (a channel switched away from and back,
+      then a cold open with heavy same-day buffer churn, both "Packet
+      corrupt" within seconds) that found and then fully closed this.
 
     Matters because
     this is called far more often than the buffer could possibly have
@@ -933,16 +941,30 @@ def _get_live_manifest(state: dict, logger) -> dict:
     # from and back produced exactly this, "Packet corrupt" within
     # seconds of the fresh buffer starting, caught by pvr.dispatcharrai's
     # own Content-Range cross-check -- see docs/TIMESHIFT.md's "1.0.7
-    # follow-up #2"). Comparing the buffer's own pid (already tracked in
-    # `state` for dead-buffer detection) closes this regardless of which
-    # worker built the stale entry or whether any cache-clearing message
-    # ever reached it: a pid mismatch is treated exactly like a cold
-    # cache, full stop, no partial trust of anything in it.
-    buffer_pid = state.get("pid")
+    # follow-up #2").
+    #
+    # Identified by `access_token`, NOT `pid` -- confirmed live this
+    # distinction matters: an earlier version of this fix compared pid,
+    # which reproducibly still failed under heavy start_buffer/stop_buffer
+    # churn (many hours of repeated test cycles against one channel),
+    # because OS pids get recycled -- a stale cache entry tagged with a
+    # pid the OS has since reassigned to a genuinely new ffmpeg process
+    # passes an equality check it has no business passing. `access_token`
+    # (see _start_buffer's own comment -- secrets.token_urlsafe(24),
+    # freshly generated for every genuine new buffer instance, never
+    # reused for a *different* instance no matter how much churn happens)
+    # has none of that risk. A mismatch here is treated exactly like a
+    # cold cache, full stop, no partial trust of anything in it.
+    buffer_token = state.get("access_token")
 
     with _manifest_cache_lock:
         cached = _manifest_cache.get(channel_uuid)
-        if cached is not None and cached.get("pid") != buffer_pid:
+        # A missing/empty buffer_token (state predates the access_token
+        # feature, or something else went wrong establishing identity)
+        # can't be trusted to match anything, itself included -- fails
+        # closed to a full cold rebuild rather than risk two different
+        # "unknown" instances comparing equal.
+        if cached is not None and (not buffer_token or cached.get("instance_token") != buffer_token):
             cached = None
         if (cached is not None and cached["playlist_mtime_ns"] == playlist_stat.st_mtime_ns and
                 cached["playlist_size"] == playlist_stat.st_size):
@@ -1042,7 +1064,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
                 ordered.append((sequence,) + entry)
 
             _manifest_cache[channel_uuid] = {
-                "pid": buffer_pid,
+                "instance_token": buffer_token,
                 "playlist_mtime_ns": playlist_stat.st_mtime_ns,
                 "playlist_size": playlist_stat.st_size,
                 "media_sequence": media_sequence,
@@ -1194,7 +1216,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "1.0.4"
+    version = "1.0.5"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
