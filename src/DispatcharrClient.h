@@ -102,7 +102,7 @@ struct Channel
   int id = 0;
   std::string uuid; // used to build the live-stream proxy URL
   std::string name;
-  int logoId = -1; // -1 means no logo; pass to GetChannelLogoUrl()
+  int logoId = -1;       // -1 means no logo; pass to GetChannelLogoUrl()
   int channelNumber = 0; // also what the XMLTV guide's <channel id="..."> uses, not tvgId
   int groupId = -1;
   std::string groupName;
@@ -260,11 +260,8 @@ public:
   // short-lived JWT embedded directly in the URL would). Only meaningful
   // for a channel with Channel::catchupEnabled set; programmeStart must be
   // the EPG entry's own start time, not when the viewer pressed play.
-  bool CreateCatchupSession(const std::string& channelUuid,
-                            time_t programmeStart,
-                            int durationMinutes,
-                            std::string& playbackUrlOut,
-                            std::string& error);
+  bool CreateCatchupSession(const std::string& channelUuid, time_t programmeStart, int durationMinutes,
+                            std::string& playbackUrlOut, std::string& error);
 
   // Starts (or, if already running, confirms) a server-side rolling live
   // buffer for a channel via this addon's companion Dispatcharr plugin
@@ -282,9 +279,7 @@ public:
   // Dispatcharr's own source (apps/accounts/permissions.py) that the
   // plugin run endpoint requires IsAdmin (user_level >= 10) for POST, not
   // just any authenticated user.
-  bool StartTimeshiftBuffer(const std::string& channelUuid,
-                            std::string& playlistUrlOut,
-                            std::string& error);
+  bool StartTimeshiftBuffer(const std::string& channelUuid, std::string& playlistUrlOut, std::string& error);
   // Tells the plugin this specific viewer (m_liveTimeshiftStream.viewerId)
   // is done with the channel's buffer -- NOT an unconditional stop. The
   // plugin reference-counts viewers per buffer (registered by
@@ -304,8 +299,7 @@ public:
   // staying exhausted well after its only real viewer stopped, since
   // nothing used to proactively tell the plugin so). Best-effort:
   // "nothing was running" is success, not an error.
-  bool StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId,
-                           std::string& error);
+  bool StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId, std::string& error);
   // Refreshes this specific viewer's own last-seen time on the plugin side
   // (plugin.py's heartbeat action, viewer_id param), separate from the
   // buffer-wide liveness that ordinary segment fetches already provide.
@@ -365,7 +359,10 @@ public:
   // constructor) runs before any thread that could concurrently call
   // GenerateApiKey() exists yet; do not add a second call site without
   // reconsidering that.
-  bool HasApiKey() const { return !m_config.apiKey.empty(); }
+  bool HasApiKey() const
+  {
+    return !m_config.apiKey.empty();
+  }
   // A currently-valid JWT access token, for the real-time-updates
   // WebSocket connection (see PVRDispatcharr's realtime-update thread) --
   // logs in/refreshes first via EnsureAuthenticated() if needed.
@@ -406,11 +403,7 @@ public:
   // title is used only as a client-side placeholder (see GetRecordings()'s
   // pending-title cache) -- not sent to Dispatcharr itself; see the .cpp for
   // why.
-  bool CreateOneTimeRecording(int channelId,
-                               time_t start,
-                               time_t end,
-                               const std::string& title,
-                               std::string& error);
+  bool CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title, std::string& error);
   // Reschedules an existing one-time recording's start/end time via
   // PATCH /api/channels/recordings/{id}/. Deliberately sends ONLY
   // start_time/end_time, mirroring CreateOneTimeRecording()'s own choice
@@ -434,10 +427,7 @@ public:
   // the server default "all") -- confirmed against the live schema: "all"
   // records every matching episode including reruns, "new" only
   // first-run ones.
-  bool CreateSeriesRule(int channelId,
-                        const std::string& tvgId,
-                        const std::string& titlePattern,
-                        bool recordNewOnly,
+  bool CreateSeriesRule(int channelId, const std::string& tvgId, const std::string& titlePattern, bool recordNewOnly,
                         std::string& error);
   // Series rules have no numeric id in Dispatcharr's API at all -- they're
   // deleted by DELETE /api/channels/series-rules/?title=...&tvg_id=...
@@ -457,13 +447,8 @@ public:
   // create despite the model declaring them nullable (confirmed against
   // its live validation code) -- endDate should already reflect the
   // caller's chosen "how far out" default (see AddTimer()), not left at 0.
-  bool CreateRecurringRule(int channelId,
-                           const std::string& name,
-                           const std::vector<int>& daysOfWeek,
-                           int startTimeOfDaySeconds,
-                           int endTimeOfDaySeconds,
-                           time_t startDate,
-                           time_t endDate,
+  bool CreateRecurringRule(int channelId, const std::string& name, const std::vector<int>& daysOfWeek,
+                           int startTimeOfDaySeconds, int endTimeOfDaySeconds, time_t startDate, time_t endDate,
                            std::string& error);
   // Edits an existing recurring rule -- also how Kodi's own "enable/
   // disable" timer action reaches this rule type
@@ -478,14 +463,8 @@ public:
   // own comment on why that's a somewhat arbitrary "far enough out"
   // value) is preserved automatically rather than needing to be
   // re-fetched and resent on every edit.
-  bool UpdateRecurringRule(int ruleId,
-                           int channelId,
-                           const std::string& name,
-                           const std::vector<int>& daysOfWeek,
-                           int startTimeOfDaySeconds,
-                           int endTimeOfDaySeconds,
-                           time_t startDate,
-                           bool enabled,
+  bool UpdateRecurringRule(int ruleId, int channelId, const std::string& name, const std::vector<int>& daysOfWeek,
+                           int startTimeOfDaySeconds, int endTimeOfDaySeconds, time_t startDate, bool enabled,
                            std::string& error);
   bool DeleteRecurringRule(int ruleId, std::string& error);
   // Extends an existing recurring rule's end_date forward -- a partial
@@ -549,8 +528,7 @@ public:
   // static so PVRDispatcharr's constructor can call it directly.
   // `nowUtc` is a parameter purely for testability; real callers should
   // always pass the actual current time.
-  static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc,
-                                             int& offsetMinutesOut);
+  static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut);
 
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
@@ -656,15 +634,14 @@ private:
   // SetDvrOffsetMinutes() (key kDvrSettingsKey) and GetSystemTimeZone()
   // (key kSystemSettingsKey) all need this same lookup, just against
   // different rows of the same /api/core/settings/ list.
-  bool FindCoreSettingsRow(const std::string& key, int& idOut, nlohmann::json& valueOut,
-                            std::string& error);
+  bool FindCoreSettingsRow(const std::string& key, int& idOut, nlohmann::json& valueOut, std::string& error);
 
   // Fetches the raw HLS playlist text for an in-progress recording, with a
   // self-healing retry on a 401. Returns false (with `error` set) on a
   // genuine network/HTTP failure. Called from
   // RefreshInProgressRecordingManifest().
-  bool FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl,
-                                   std::string& playlistText, std::string& error);
+  bool FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl, std::string& playlistText,
+                                  std::string& error);
 
   // The CURLSH* behind m_curlShareState, or nullptr if it failed to
   // initialise -- pass to CURLOPT_SHARE on every easy handle this client
@@ -693,13 +670,8 @@ private:
   // POST/PATCH/DELETE-with-body; pass an empty object for bodyless calls.
   // On success, parses the response into `responseOut` (may be left null
   // for 204 No Content) and returns true.
-  bool Request(const std::string& method,
-               const std::string& path,
-               const nlohmann::json& body,
-               nlohmann::json& responseOut,
-               std::string& error,
-               bool withAuth = true,
-               int retryOnAuthFailure = 1);
+  bool Request(const std::string& method, const std::string& path, const nlohmann::json& body,
+               nlohmann::json& responseOut, std::string& error, bool withAuth = true, int retryOnAuthFailure = 1);
 
   // Confirmed live: a freshly-(re)started buffer's playlist URL can be
   // unreachable for a real moment after CallTimeshiftPluginAction()
@@ -722,11 +694,8 @@ private:
   // the envelope" call against a differently-shaped response, so the split
   // still documents the shared pattern even with one caller of this exact
   // signature.
-  bool CallTimeshiftPluginAction(const std::string& action,
-                                 const std::string& channelUuid,
-                                 std::string& playlistUrlOut,
-                                 std::string& error,
-                                 const nlohmann::json& extraParams);
+  bool CallTimeshiftPluginAction(const std::string& action, const std::string& channelUuid, std::string& playlistUrlOut,
+                                 std::string& error, const nlohmann::json& extraParams);
 
   Config m_config;
   // Guards only m_config.apiKey -- every other Config field is set once in
@@ -924,7 +893,7 @@ private:
 
   struct InProgressRecordingSegmentInfo
   {
-    std::string url; // absolute, already resolved against the playlist's own baseDir
+    std::string url;        // absolute, already resolved against the playlist's own baseDir
     int64_t byteOffset = 0; // in this stream's own fixed-origin address space
     int64_t byteSize = 0;
     int64_t timeOffsetMs = 0; // ditto, fixed-origin

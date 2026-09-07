@@ -38,7 +38,9 @@ constexpr const char* kChannelsPath = "/api/channels/channels/";
 // -- Dispatcharr's SPA catches unmatched routes and serves index.html for it,
 // which returned HTTP 200 but wasn't JSON, so it always failed to parse.
 constexpr const char* kChannelGroupsPath = "/api/channels/groups/";
-constexpr const char* kChannelGroupsPathFallback = "/api/channels/channel-groups/"; // pre-confirmation guess, kept as a fallback in case older Dispatcharr versions differ
+constexpr const char* kChannelGroupsPathFallback =
+    "/api/channels/channel-groups/"; // pre-confirmation guess, kept as a fallback in case older Dispatcharr versions
+                                     // differ
 constexpr const char* kEpgOutputPath = "/output/epg";
 // Both confirmed against a live instance's own OpenAPI schema -- see the
 // endpoint/payload notes in DispatcharrClient.h.
@@ -396,7 +398,7 @@ bool IsEuDstInEffect(time_t nowUtc)
 
 enum class DstFamily
 {
-  kNone,     // fixed offset year-round, no DST
+  kNone, // fixed offset year-round, no DST
   kUsCanada,
   kEu,
 };
@@ -485,8 +487,7 @@ std::string GenerateViewerId()
 // instance: ~0.4% of a 9360-channel list had an explicit `"logo_id": null`).
 // This wraps every field read so a null or wrong-typed value degrades to
 // the default instead of throwing.
-template <typename T>
-T FieldOr(const json& item, const char* key, T defaultValue)
+template <typename T> T FieldOr(const json& item, const char* key, T defaultValue)
 {
   if (!item.contains(key) || item[key].is_null())
     return defaultValue;
@@ -611,13 +612,8 @@ std::string DispatcharrClient::BaseUrl() const
   return scheme + m_config.host + ":" + std::to_string(m_config.port);
 }
 
-bool DispatcharrClient::Request(const std::string& method,
-                                 const std::string& path,
-                                 const json& body,
-                                 json& responseOut,
-                                 std::string& error,
-                                 bool withAuth,
-                                 int retryOnAuthFailure)
+bool DispatcharrClient::Request(const std::string& method, const std::string& path, const json& body, json& responseOut,
+                                std::string& error, bool withAuth, int retryOnAuthFailure)
 {
   CURL* curl = curl_easy_init();
   if (!curl)
@@ -953,11 +949,8 @@ std::string DispatcharrClient::GetChannelLogoUrl(int logoId) const
   return BaseUrl() + kLogosPath + std::to_string(logoId) + "/cache/";
 }
 
-bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid,
-                                             time_t programmeStart,
-                                             int durationMinutes,
-                                             std::string& playbackUrlOut,
-                                             std::string& error)
+bool DispatcharrClient::CreateCatchupSession(const std::string& channelUuid, time_t programmeStart, int durationMinutes,
+                                             std::string& playbackUrlOut, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1038,11 +1031,9 @@ bool DispatcharrClient::WaitForTimeshiftPlaylistReady(const std::string& playlis
   return false;
 }
 
-bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
-                                                    const std::string& channelUuid,
-                                                    std::string& playlistUrlOut,
-                                                    std::string& error,
-                                                    const json& extraParams)
+bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, const std::string& channelUuid,
+                                                  std::string& playlistUrlOut, std::string& error,
+                                                  const json& extraParams)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1099,8 +1090,7 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
   // confirming the buffer is genuinely shared per-channel across viewers
   // rather than per-device, not just assumed from reading the plugin's
   // own source.
-  kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharrai: CallTimeshiftPluginAction(%s): %s (already_running=%d)",
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: CallTimeshiftPluginAction(%s): %s (already_running=%d)",
             action.c_str(), FieldOr<std::string>(result, "message", "").c_str(),
             FieldOr(result, "already_running", false) ? 1 : 0);
 
@@ -1127,9 +1117,8 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action,
   return true;
 }
 
-bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid,
-                                              std::string& playlistUrlOut,
-                                              std::string& error)
+bool DispatcharrClient::StartTimeshiftBuffer(const std::string& channelUuid, std::string& playlistUrlOut,
+                                             std::string& error)
 {
   // Passed through so the plugin's ffmpeg connection (which otherwise
   // looks anonymous and container-local in Dispatcharr's own Stats screen,
@@ -1299,8 +1288,7 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
     r.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
     r.startTime = TimeFromIso(FieldOr<std::string>(item, "start_time", ""));
     r.endTime = TimeFromIso(FieldOr<std::string>(item, "end_time", ""));
-    r.durationSeconds =
-        (r.endTime > r.startTime) ? static_cast<int>(r.endTime - r.startTime) : 0;
+    r.durationSeconds = (r.endTime > r.startTime) ? static_cast<int>(r.endTime - r.startTime) : 0;
     r.isInProgress = r.startTime > 0 && r.startTime <= now && now < r.endTime;
     r.isUpcoming = r.startTime > now;
 
@@ -1337,8 +1325,7 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
       // See this field's own comment in DispatcharrClient.h: present for
       // the whole window between "user stopped it" and "concat + viewer-wait
       // actually finished," regardless of what status already says.
-      r.hlsDirStillPresent =
-          custom.contains("_hls_dir") && !custom["_hls_dir"].is_null();
+      r.hlsDirStillPresent = custom.contains("_hls_dir") && !custom["_hls_dir"].is_null();
 
       const json& program = custom.contains("program") ? custom["program"] : json();
       if (program.is_object())
@@ -1371,10 +1358,9 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
       std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
       constexpr auto kPendingTitleTtl = std::chrono::minutes(3);
       auto now = std::chrono::steady_clock::now();
-      m_pendingTitles.erase(
-          std::remove_if(m_pendingTitles.begin(), m_pendingTitles.end(),
-                          [&](const PendingTitle& p) { return now - p.insertedAt > kPendingTitleTtl; }),
-          m_pendingTitles.end());
+      m_pendingTitles.erase(std::remove_if(m_pendingTitles.begin(), m_pendingTitles.end(), [&](const PendingTitle& p)
+                                           { return now - p.insertedAt > kPendingTitleTtl; }),
+                            m_pendingTitles.end());
       // Deliberately NOT erased on match: this runs on every poll until
       // Dispatcharr's own enrichment lands (at which point r.title is no
       // longer empty and this isn't consulted again for that recording), so
@@ -1397,8 +1383,7 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
   return true;
 }
 
-bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEdlEntry>& out,
-                                         std::string& error)
+bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEdlEntry>& out, std::string& error)
 {
   out.clear();
   if (!EnsureAuthenticated(error))
@@ -1499,8 +1484,8 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
   // Confirmed against a live instance: the response is {"rules": [...]},
   // not a bare array and not the usual DRF {"results": [...]} wrapper.
   const json& list = response.contains("rules")     ? response["rules"]
-                      : response.contains("results") ? response["results"]
-                                                      : response;
+                     : response.contains("results") ? response["results"]
+                                                    : response;
   if (!list.is_array())
   {
     error = "Unexpected series-rules response shape";
@@ -1528,8 +1513,8 @@ bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& 
   return true;
 }
 
-bool DispatcharrClient::CreateOneTimeRecording(
-    int channelId, time_t start, time_t end, const std::string& title, std::string& error)
+bool DispatcharrClient::CreateOneTimeRecording(int channelId, time_t start, time_t end, const std::string& title,
+                                               std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1566,8 +1551,7 @@ bool DispatcharrClient::CreateOneTimeRecording(
   return true;
 }
 
-bool DispatcharrClient::UpdateOneTimeRecording(int recordingId, time_t start, time_t end,
-                                               std::string& error)
+bool DispatcharrClient::UpdateOneTimeRecording(int recordingId, time_t start, time_t end, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1579,13 +1563,11 @@ bool DispatcharrClient::UpdateOneTimeRecording(int recordingId, time_t start, ti
       {"end_time", IsoFromTime(end)},
   };
   json response;
-  return Request("PATCH", std::string(kRecordingsPath) + std::to_string(recordingId) + "/", body,
-                 response, error);
+  return Request("PATCH", std::string(kRecordingsPath) + std::to_string(recordingId) + "/", body, response, error);
 }
 
-bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId,
-                                         const std::string& titlePattern, bool recordNewOnly,
-                                         std::string& error)
+bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId, const std::string& titlePattern,
+                                         bool recordNewOnly, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1620,8 +1602,7 @@ bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId
   return true;
 }
 
-bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::string& tvgId,
-                                         std::string& error)
+bool DispatcharrClient::DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1659,10 +1640,8 @@ bool DispatcharrClient::GetRecurringRules(std::vector<RecurringRule>& out, std::
     rule.channelId = FieldOr(item, "channel", 0);
     rule.name = FieldOr<std::string>(item, "name", "");
     rule.enabled = FieldOr(item, "enabled", true);
-    rule.startTimeOfDaySeconds =
-        SecondsSinceMidnightFromString(FieldOr<std::string>(item, "start_time", ""));
-    rule.endTimeOfDaySeconds =
-        SecondsSinceMidnightFromString(FieldOr<std::string>(item, "end_time", ""));
+    rule.startTimeOfDaySeconds = SecondsSinceMidnightFromString(FieldOr<std::string>(item, "start_time", ""));
+    rule.endTimeOfDaySeconds = SecondsSinceMidnightFromString(FieldOr<std::string>(item, "end_time", ""));
     rule.startDate = TimeFromDateString(FieldOr<std::string>(item, "start_date", ""));
     rule.endDate = TimeFromDateString(FieldOr<std::string>(item, "end_date", ""));
     const json& days = item.contains("days_of_week") ? item["days_of_week"] : json();
@@ -1679,10 +1658,9 @@ bool DispatcharrClient::GetRecurringRules(std::vector<RecurringRule>& out, std::
   return true;
 }
 
-bool DispatcharrClient::CreateRecurringRule(int channelId, const std::string& name,
-                                            const std::vector<int>& daysOfWeek,
-                                            int startTimeOfDaySeconds, int endTimeOfDaySeconds,
-                                            time_t startDate, time_t endDate, std::string& error)
+bool DispatcharrClient::CreateRecurringRule(int channelId, const std::string& name, const std::vector<int>& daysOfWeek,
+                                            int startTimeOfDaySeconds, int endTimeOfDaySeconds, time_t startDate,
+                                            time_t endDate, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1709,9 +1687,8 @@ bool DispatcharrClient::CreateRecurringRule(int channelId, const std::string& na
 }
 
 bool DispatcharrClient::UpdateRecurringRule(int ruleId, int channelId, const std::string& name,
-                                            const std::vector<int>& daysOfWeek,
-                                            int startTimeOfDaySeconds, int endTimeOfDaySeconds,
-                                            time_t startDate, bool enabled, std::string& error)
+                                            const std::vector<int>& daysOfWeek, int startTimeOfDaySeconds,
+                                            int endTimeOfDaySeconds, time_t startDate, bool enabled, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1730,8 +1707,7 @@ bool DispatcharrClient::UpdateRecurringRule(int ruleId, int channelId, const std
       {"enabled", enabled},
   };
   json response;
-  return Request("PATCH", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", body,
-                 response, error);
+  return Request("PATCH", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", body, response, error);
 }
 
 bool DispatcharrClient::DeleteRecurringRule(int ruleId, std::string& error)
@@ -1739,23 +1715,19 @@ bool DispatcharrClient::DeleteRecurringRule(int ruleId, std::string& error)
   if (!EnsureAuthenticated(error))
     return false;
   json response;
-  return Request("DELETE", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/",
-                 json(), response, error);
+  return Request("DELETE", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", json(), response, error);
 }
 
-bool DispatcharrClient::ExtendRecurringRuleEndDate(int ruleId, time_t newEndDate,
-                                                   std::string& error)
+bool DispatcharrClient::ExtendRecurringRuleEndDate(int ruleId, time_t newEndDate, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
   json body = {{"end_date", DateStringFromTime(newEndDate)}};
   json response;
-  return Request("PATCH", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", body,
-                 response, error);
+  return Request("PATCH", std::string(kRecurringRulesPath) + std::to_string(ruleId) + "/", body, response, error);
 }
 
-bool DispatcharrClient::FindCoreSettingsRow(const std::string& key, int& idOut, json& valueOut,
-                                             std::string& error)
+bool DispatcharrClient::FindCoreSettingsRow(const std::string& key, int& idOut, json& valueOut, std::string& error)
 {
   if (!EnsureAuthenticated(error))
     return false;
@@ -1814,8 +1786,7 @@ bool DispatcharrClient::SetDvrOffsetMinutes(int preMinutes, int postMinutes, std
 
   json body = {{"value", value}};
   json response;
-  return Request("PATCH", std::string(kCoreSettingsPath) + std::to_string(id) + "/", body, response,
-                 error);
+  return Request("PATCH", std::string(kCoreSettingsPath) + std::to_string(id) + "/", body, response, error);
 }
 
 bool DispatcharrClient::GetSystemTimeZone(std::string& timeZoneOut, std::string& error)
@@ -1834,7 +1805,7 @@ bool DispatcharrClient::GetSystemTimeZone(std::string& timeZoneOut, std::string&
 }
 
 bool DispatcharrClient::ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc,
-                                                        int& offsetMinutesOut)
+                                                      int& offsetMinutesOut)
 {
   for (const auto& zone : kKnownTimeZones)
   {
@@ -1842,18 +1813,16 @@ bool DispatcharrClient::ComputeKnownZoneOffsetMinutes(const std::string& ianaZon
       continue;
     switch (zone.family)
     {
-      case DstFamily::kNone:
-        offsetMinutesOut = zone.standardOffsetMinutes;
-        break;
-      case DstFamily::kUsCanada:
-        offsetMinutesOut = IsUsCanadaDstInEffect(nowUtc, zone.standardOffsetMinutes)
-                                ? zone.standardOffsetMinutes + 60
-                                : zone.standardOffsetMinutes;
-        break;
-      case DstFamily::kEu:
-        offsetMinutesOut =
-            IsEuDstInEffect(nowUtc) ? zone.standardOffsetMinutes + 60 : zone.standardOffsetMinutes;
-        break;
+    case DstFamily::kNone:
+      offsetMinutesOut = zone.standardOffsetMinutes;
+      break;
+    case DstFamily::kUsCanada:
+      offsetMinutesOut = IsUsCanadaDstInEffect(nowUtc, zone.standardOffsetMinutes) ? zone.standardOffsetMinutes + 60
+                                                                                   : zone.standardOffsetMinutes;
+      break;
+    case DstFamily::kEu:
+      offsetMinutesOut = IsEuDstInEffect(nowUtc) ? zone.standardOffsetMinutes + 60 : zone.standardOffsetMinutes;
+      break;
     }
     return true;
   }
@@ -1891,7 +1860,7 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
 }
 
 bool DispatcharrClient::FetchRawInProgressPlaylist(int recordingId, const std::string& playlistUrl,
-                                                    std::string& playlistText, std::string& error)
+                                                   std::string& playlistText, std::string& error)
 {
   // Two attempts: the playlist fetch itself can self-heal on a 401, same
   // pattern as OpenRecordingStream().
@@ -2019,16 +1988,13 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // guessing which one matters.
   auto refreshStart = std::chrono::steady_clock::now();
 
-  std::string baseDir =
-      BaseUrl() + kRecordingsPath + std::to_string(m_inProgressRecordingStream.recordingId) + "/hls/";
+  std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(m_inProgressRecordingStream.recordingId) + "/hls/";
   std::string playlistUrl = baseDir + "index.m3u8";
 
   std::string playlistText;
-  if (!FetchRawInProgressPlaylist(m_inProgressRecordingStream.recordingId, playlistUrl, playlistText,
-                                   error))
+  if (!FetchRawInProgressPlaylist(m_inProgressRecordingStream.recordingId, playlistUrl, playlistText, error))
     return false;
-  double fetchPlaylistSec =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
+  double fetchPlaylistSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
 
   // Append-only merge: segments before the count we already know about are
   // skipped (no rolling-window eviction for a recording -- see
@@ -2056,8 +2022,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   while (pos <= playlistText.size())
   {
     size_t newlinePos = playlistText.find('\n', pos);
-    std::string line = (newlinePos == std::string::npos) ? playlistText.substr(pos)
-                                                           : playlistText.substr(pos, newlinePos - pos);
+    std::string line =
+        (newlinePos == std::string::npos) ? playlistText.substr(pos) : playlistText.substr(pos, newlinePos - pos);
     if (!line.empty() && line.back() == '\r')
       line.pop_back();
 
@@ -2095,9 +2061,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     {
       if (segmentIndex >= alreadyKnown)
       {
-        std::string segUrl = (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0)
-                                  ? line
-                                  : baseDir + line;
+        std::string segUrl =
+            (line.compare(0, 7, "http://") == 0 || line.compare(0, 8, "https://") == 0) ? line : baseDir + line;
         pending.push_back({std::move(segUrl), pendingDurationSec});
       }
       ++segmentIndex;
@@ -2125,14 +2090,13 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     batch.reserve(batchEnd - batchStart);
     for (size_t i = batchStart; i < batchEnd; ++i)
     {
-      batch.emplace_back(
-          [this, &pending, &probedSizes, i]() { probedSizes[i] = ProbeSegmentByteSize(pending[i].url); });
+      batch.emplace_back([this, &pending, &probedSizes, i]()
+                         { probedSizes[i] = ProbeSegmentByteSize(pending[i].url); });
     }
     for (auto& t : batch)
       t.join();
   }
-  double probeSegmentsSec =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - probeStart).count();
+  double probeSegmentsSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - probeStart).count();
 
   size_t newSegmentsProbed = 0;
   size_t newSegmentsProbeFailed = 0;
@@ -2147,8 +2111,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
       info.byteSize = segSize;
       info.timeOffsetMs = m_inProgressRecordingStream.totalDurationMs;
       m_inProgressRecordingStream.totalBytes += segSize;
-      m_inProgressRecordingStream.totalDurationMs +=
-          static_cast<int64_t>(pending[i].durationSec * 1000 + 0.5);
+      m_inProgressRecordingStream.totalDurationMs += static_cast<int64_t>(pending[i].durationSec * 1000 + 0.5);
       m_inProgressRecordingStream.segments.push_back(std::move(info));
       ++newSegmentsProbed;
     }
@@ -2210,8 +2173,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
     {
       auto& cacheEntry = m_inProgressSegmentCache[m_inProgressRecordingStream.recordingId];
       cacheEntry.segments.insert(cacheEntry.segments.end(),
-                                  m_inProgressRecordingStream.segments.end() - newSegmentsProbed,
-                                  m_inProgressRecordingStream.segments.end());
+                                 m_inProgressRecordingStream.segments.end() - newSegmentsProbed,
+                                 m_inProgressRecordingStream.segments.end());
       cacheEntry.totalBytes = m_inProgressRecordingStream.totalBytes;
       cacheEntry.totalDurationMs = m_inProgressRecordingStream.totalDurationMs;
     }
@@ -2229,8 +2192,8 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
             "pvr.dispatcharrai: RefreshInProgressRecordingManifest: %.3fs total (playlist fetch "
             "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordings %.3fs), "
             "totalBytes=%lld totalDurationMs=%lld finished=%d",
-            totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed,
-            getRecordingsSec, static_cast<long long>(m_inProgressRecordingStream.totalBytes),
+            totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, getRecordingsSec,
+            static_cast<long long>(m_inProgressRecordingStream.totalBytes),
             static_cast<long long>(m_inProgressRecordingStream.totalDurationMs),
             m_inProgressRecordingStream.finished ? 1 : 0);
 
@@ -2279,8 +2242,7 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, std::stri
   bool haveSegment = false;
   for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenInProgressRecordingStream: cold-start attempt=%d",
-              attempt);
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenInProgressRecordingStream: cold-start attempt=%d", attempt);
     if (!RefreshInProgressRecordingManifest(/*force=*/true, error))
     {
       m_inProgressRecordingStream = InProgressRecordingStreamState();
@@ -2384,19 +2346,17 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     bool sameAsLastShortGiveUp =
         m_inProgressRecordingStream.position == m_inProgressRecordingStream.lastShortGiveUpPosition;
     bool likelySeekProbe =
-        !sameAsLastShortGiveUp &&
-        m_inProgressRecordingStream.lastSeekTime.time_since_epoch().count() != 0 &&
+        !sameAsLastShortGiveUp && m_inProgressRecordingStream.lastSeekTime.time_since_epoch().count() != 0 &&
         std::chrono::steady_clock::now() - m_inProgressRecordingStream.lastSeekTime < kSeekProbeWindow;
 
-    int64_t segmentDurationEstimateMs = EstimateSegmentDurationMs(
-        m_inProgressRecordingStream.totalDurationMs, m_inProgressRecordingStream.segments);
-    int catchUpAttempts =
-        ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
+    int64_t segmentDurationEstimateMs =
+        EstimateSegmentDurationMs(m_inProgressRecordingStream.totalDurationMs, m_inProgressRecordingStream.segments);
+    int catchUpAttempts = ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
 
     auto catchUpStart = std::chrono::steady_clock::now();
     int attemptsUsed = 0;
-    for (int attempt = 0; attempt < catchUpAttempts &&
-                           m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
+    for (int attempt = 0;
+         attempt < catchUpAttempts && m_inProgressRecordingStream.position >= m_inProgressRecordingStream.totalBytes;
          ++attempt)
     {
       attemptsUsed = attempt + 1;
@@ -2414,8 +2374,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
     m_inProgressRecordingStream.lastShortGiveUpPosition =
         (likelySeekProbe && !caughtUp) ? m_inProgressRecordingStream.position : -1;
 
-    double elapsedSec =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
+    double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharrai: ReadInProgressRecordingStream: catch-up loop used %d/%d attempts, "
               "%.3fs (likelySeekProbe=%d, segmentDurationEstimateMs=%lld), position=%lld totalBytes=%lld "
@@ -2423,8 +2382,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
               attemptsUsed, catchUpAttempts, elapsedSec, likelySeekProbe ? 1 : 0,
               static_cast<long long>(segmentDurationEstimateMs),
               static_cast<long long>(m_inProgressRecordingStream.position),
-              static_cast<long long>(m_inProgressRecordingStream.totalBytes),
-              caughtUp ? "caught up" : "gave up");
+              static_cast<long long>(m_inProgressRecordingStream.totalBytes), caughtUp ? "caught up" : "gave up");
 
     if (!caughtUp)
       return 0;
@@ -2496,13 +2454,12 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       // to it could never explain by itself (this fires regardless of
       // whether position was ever >= totalBytes, so it's not gated on
       // "likelySeekProbe" the way those are).
-      double fetchSec =
-          std::chrono::duration<double>(std::chrono::steady_clock::now() - segmentFetchStart).count();
+      double fetchSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - segmentFetchStart).count();
       kodi::Log(ADDON_LOG_DEBUG,
                 "pvr.dispatcharrai: ReadInProgressRecordingStream: segment body fetch (attempt=%d) "
                 "byteSize=%lld took %.3fs, curlResult=%d httpCode=%ld url=%s",
-                attempt, static_cast<long long>(seg->byteSize), fetchSec, static_cast<int>(res),
-                httpCode, seg->url.c_str());
+                attempt, static_cast<long long>(seg->byteSize), fetchSec, static_cast<int>(res), httpCode,
+                seg->url.c_str());
 
       if (httpCode == 401 && attempt == 0)
       {
@@ -2556,25 +2513,24 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
   int64_t newPos;
   switch (whence)
   {
-    case SEEK_SET:
-      newPos = position;
-      break;
-    case SEEK_CUR:
-      newPos = m_inProgressRecordingStream.position + position;
-      break;
-    case SEEK_END:
-      newPos = m_inProgressRecordingStream.totalBytes + position;
-      break;
-    default:
-      return -1;
+  case SEEK_SET:
+    newPos = position;
+    break;
+  case SEEK_CUR:
+    newPos = m_inProgressRecordingStream.position + position;
+    break;
+  case SEEK_END:
+    newPos = m_inProgressRecordingStream.totalBytes + position;
+    break;
+  default:
+    return -1;
   }
   if (newPos < 0)
   {
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharrai: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
               "current=%lld -> computed newPos=%lld < 0, failing",
-              static_cast<long long>(position), whence,
-              static_cast<long long>(m_inProgressRecordingStream.position),
+              static_cast<long long>(position), whence, static_cast<long long>(m_inProgressRecordingStream.position),
               static_cast<long long>(newPos));
     return -1;
   }
@@ -2590,11 +2546,9 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
   // segment's worth of bytes means at least that much is already
   // available to play immediately, the same margin SeekLiveTimeshiftStream()
   // already keeps.
-  int64_t liveBackoffBytes = m_inProgressRecordingStream.segments.empty()
-                                 ? 0
-                                 : m_inProgressRecordingStream.segments.back().byteSize;
-  int64_t tailTarget =
-      std::max<int64_t>(0, m_inProgressRecordingStream.totalBytes - liveBackoffBytes);
+  int64_t liveBackoffBytes =
+      m_inProgressRecordingStream.segments.empty() ? 0 : m_inProgressRecordingStream.segments.back().byteSize;
+  int64_t tailTarget = std::max<int64_t>(0, m_inProgressRecordingStream.totalBytes - liveBackoffBytes);
   bool clampedToTail = newPos > tailTarget;
   if (clampedToTail)
     newPos = tailTarget;
@@ -2602,10 +2556,9 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
   kodi::Log(ADDON_LOG_DEBUG,
             "pvr.dispatcharrai: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
             "current=%lld, totalBytes=%lld -> newPos=%lld%s",
-            static_cast<long long>(position), whence,
-            static_cast<long long>(m_inProgressRecordingStream.position),
-            static_cast<long long>(m_inProgressRecordingStream.totalBytes),
-            static_cast<long long>(newPos), clampedToTail ? " (clamped to tail)" : "");
+            static_cast<long long>(position), whence, static_cast<long long>(m_inProgressRecordingStream.position),
+            static_cast<long long>(m_inProgressRecordingStream.totalBytes), static_cast<long long>(newPos),
+            clampedToTail ? " (clamped to tail)" : "");
 
   m_inProgressRecordingStream.position = newPos;
   return newPos;
@@ -2728,8 +2681,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
     // redirects to an HLS playlist (.../hls/index.m3u8), which this reader
     // doesn't understand -- treating it as a flat byte range would just
     // hand the demuxer m3u8 text instead of video.
-    if (contentType.find("mpegurl") != std::string::npos ||
-        resolvedUrl.find("/hls/") != std::string::npos)
+    if (contentType.find("mpegurl") != std::string::npos || resolvedUrl.find("/hls/") != std::string::npos)
     {
       error = "This recording is still in progress; playback of in-progress "
               "recordings isn't supported yet, only completed ones";
@@ -2832,19 +2784,19 @@ int64_t DispatcharrClient::SeekRecordingStream(int64_t position, int whence)
   int64_t newPos;
   switch (whence)
   {
-    case SEEK_SET:
-      newPos = position;
-      break;
-    case SEEK_CUR:
-      newPos = m_recordingStream.position + position;
-      break;
-    case SEEK_END:
-      if (m_recordingStream.length < 0)
-        return -1;
-      newPos = m_recordingStream.length + position;
-      break;
-    default:
+  case SEEK_SET:
+    newPos = position;
+    break;
+  case SEEK_CUR:
+    newPos = m_recordingStream.position + position;
+    break;
+  case SEEK_END:
+    if (m_recordingStream.length < 0)
       return -1;
+    newPos = m_recordingStream.length + position;
+    break;
+  default:
+    return -1;
   }
   if (newPos < 0)
     return -1;
@@ -2914,14 +2866,12 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
 
   int httpPort = FieldOr(result, "http_port", 0);
   std::string routePrefix = FieldOr<std::string>(result, "segment_route_prefix", "");
-  if (httpPort <= 0 || routePrefix.empty() || !result.contains("segments") ||
-      !result["segments"].is_array())
+  if (httpPort <= 0 || routePrefix.empty() || !result.contains("segments") || !result["segments"].is_array())
   {
     error = "timeshift_buffer plugin manifest response was missing required fields";
     return false;
   }
-  m_liveTimeshiftStream.segmentBaseUrl =
-      "http://" + m_config.host + ":" + std::to_string(httpPort) + routePrefix;
+  m_liveTimeshiftStream.segmentBaseUrl = "http://" + m_config.host + ":" + std::to_string(httpPort) + routePrefix;
 
   // Segments come back ordered by sequence; only ones newer than what we
   // already know get appended, each extending OUR cumulative address space
@@ -3107,7 +3057,7 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     int64_t byteBase = m_liveTimeshiftStream.segments[dropCount].byteOffset;
     int64_t timeBase = m_liveTimeshiftStream.segments[dropCount].timeOffsetMs;
     m_liveTimeshiftStream.segments.erase(m_liveTimeshiftStream.segments.begin(),
-                                          m_liveTimeshiftStream.segments.begin() + dropCount);
+                                         m_liveTimeshiftStream.segments.begin() + dropCount);
     for (auto& seg : m_liveTimeshiftStream.segments)
     {
       seg.byteOffset -= byteBase;
@@ -3148,11 +3098,9 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
   // fewer than kLiveEdgeMarginSegments segments still needs the tail
   // fallback below.)
   size_t segmentCount = m_liveTimeshiftStream.segments.size();
-  size_t marginIndex =
-      segmentCount > kLiveEdgeMarginSegments ? segmentCount - kLiveEdgeMarginSegments : 0;
-  m_liveTimeshiftStream.position = marginIndex < segmentCount
-                                        ? m_liveTimeshiftStream.segments[marginIndex].byteOffset
-                                        : m_liveTimeshiftStream.totalBytes;
+  size_t marginIndex = segmentCount > kLiveEdgeMarginSegments ? segmentCount - kLiveEdgeMarginSegments : 0;
+  m_liveTimeshiftStream.position = marginIndex < segmentCount ? m_liveTimeshiftStream.segments[marginIndex].byteOffset
+                                                              : m_liveTimeshiftStream.totalBytes;
   return true;
 }
 
@@ -3232,11 +3180,10 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
     // escalate to the full budget rather than repeating the short one
     // indefinitely against the same stuck position.
     constexpr auto kSeekProbeWindow = std::chrono::milliseconds(800);
-    bool sameAsLastShortGiveUp =
-        m_liveTimeshiftStream.position == m_liveTimeshiftStream.lastShortGiveUpPosition;
-    bool likelySeekProbe =
-        !sameAsLastShortGiveUp && m_liveTimeshiftStream.lastSeekTime.time_since_epoch().count() != 0 &&
-        std::chrono::steady_clock::now() - m_liveTimeshiftStream.lastSeekTime < kSeekProbeWindow;
+    bool sameAsLastShortGiveUp = m_liveTimeshiftStream.position == m_liveTimeshiftStream.lastShortGiveUpPosition;
+    bool likelySeekProbe = !sameAsLastShortGiveUp &&
+                           m_liveTimeshiftStream.lastSeekTime.time_since_epoch().count() != 0 &&
+                           std::chrono::steady_clock::now() - m_liveTimeshiftStream.lastSeekTime < kSeekProbeWindow;
 
     // Segment-duration estimate (averaged + floored) and the resulting
     // attempt budget (3x margin) are shared with
@@ -3247,16 +3194,14 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
     // timeshift_buffer plugin's own history) was the dominant cause of the
     // *worst*, multi-second stalls on this particular path, but the margin
     // was measurably too tight even independent of that.
-    int64_t segmentDurationEstimateMs = EstimateSegmentDurationMs(
-        m_liveTimeshiftStream.totalDurationMs, m_liveTimeshiftStream.segments);
-    int catchUpAttempts =
-        ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
+    int64_t segmentDurationEstimateMs =
+        EstimateSegmentDurationMs(m_liveTimeshiftStream.totalDurationMs, m_liveTimeshiftStream.segments);
+    int catchUpAttempts = ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs, kCatchUpSleepMs);
 
     auto catchUpStart = std::chrono::steady_clock::now();
     int attemptsUsed = 0;
-    for (int attempt = 0; attempt < catchUpAttempts &&
-                           m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes;
-         ++attempt)
+    for (int attempt = 0;
+         attempt < catchUpAttempts && m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes; ++attempt)
     {
       attemptsUsed = attempt + 1;
       std::string refreshError;
@@ -3291,17 +3236,14 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
     m_liveTimeshiftStream.lastShortGiveUpPosition =
         (likelySeekProbe && !caughtUp) ? m_liveTimeshiftStream.position : -1;
 
-    double elapsedSec =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
+    double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharrai: ReadLiveTimeshiftStream: catch-up-to-tail loop used %d/%d "
               "attempts, %.3fs (budget %.1fs off ~%lldms/segment estimate), position=%lld "
               "totalBytes=%lld -> %s",
               attemptsUsed, catchUpAttempts, elapsedSec, catchUpAttempts * kCatchUpSleepMs / 1000.0,
-              static_cast<long long>(segmentDurationEstimateMs),
-              static_cast<long long>(m_liveTimeshiftStream.position),
-              static_cast<long long>(m_liveTimeshiftStream.totalBytes),
-              caughtUp ? "caught up" : "gave up");
+              static_cast<long long>(segmentDurationEstimateMs), static_cast<long long>(m_liveTimeshiftStream.position),
+              static_cast<long long>(m_liveTimeshiftStream.totalBytes), caughtUp ? "caught up" : "gave up");
   }
   if (m_liveTimeshiftStream.position >= m_liveTimeshiftStream.totalBytes)
     return 0; // genuinely nothing new yet
@@ -3309,8 +3251,7 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   const LiveTimeshiftSegmentInfo* seg = nullptr;
   for (const auto& s : m_liveTimeshiftStream.segments)
   {
-    if (m_liveTimeshiftStream.position >= s.byteOffset &&
-        m_liveTimeshiftStream.position < s.byteOffset + s.byteSize)
+    if (m_liveTimeshiftStream.position >= s.byteOffset && m_liveTimeshiftStream.position < s.byteOffset + s.byteSize)
     {
       seg = &s;
       break;
@@ -3322,15 +3263,14 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
               "pvr.dispatcharrai: ReadLiveTimeshiftStream: position=%lld is a gap (totalBytes=%lld, "
               "segments=%zu, first seg byteOffset=%lld, last seg end=%lld)",
               static_cast<long long>(m_liveTimeshiftStream.position),
-              static_cast<long long>(m_liveTimeshiftStream.totalBytes),
-              m_liveTimeshiftStream.segments.size(),
+              static_cast<long long>(m_liveTimeshiftStream.totalBytes), m_liveTimeshiftStream.segments.size(),
               m_liveTimeshiftStream.segments.empty()
                   ? -1LL
                   : static_cast<long long>(m_liveTimeshiftStream.segments.front().byteOffset),
               m_liveTimeshiftStream.segments.empty()
                   ? -1LL
                   : static_cast<long long>(m_liveTimeshiftStream.segments.back().byteOffset +
-                                            m_liveTimeshiftStream.segments.back().byteSize));
+                                           m_liveTimeshiftStream.segments.back().byteSize));
     return 0; // position points into a gap/rolled-off region -- nothing safely readable here
   }
 
@@ -3343,8 +3283,8 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   // ?token=... is required by the plugin's own file server (see
   // StartTimeshiftBuffer()/CallTimeshiftPluginAction()'s own comment for
   // where accessToken comes from and why it needs no URL-escaping).
-  std::string url = m_liveTimeshiftStream.segmentBaseUrl + seg->filename + "?token=" +
-                     m_liveTimeshiftStream.accessToken;
+  std::string url =
+      m_liveTimeshiftStream.segmentBaseUrl + seg->filename + "?token=" + m_liveTimeshiftStream.accessToken;
 
   CURL* curl = static_cast<CURL*>(m_liveTimeshiftStream.curl);
   if (!curl)
@@ -3416,8 +3356,8 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
               "(%lld, from Content-Range) disagrees with the manifest-reported size this "
               "session cached (%lld) -- every later segment's computed offset may already be "
               "misaligned; giving up on this stream rather than risk silent corruption",
-              seg->filename.c_str(), static_cast<long long>(seg->sequence),
-              static_cast<long long>(serverReportedTotal), static_cast<long long>(seg->byteSize));
+              seg->filename.c_str(), static_cast<long long>(seg->sequence), static_cast<long long>(serverReportedTotal),
+              static_cast<long long>(seg->byteSize));
     m_liveTimeshiftStream.fatal = true;
     return -1;
   }
@@ -3448,17 +3388,17 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
   int64_t newPos;
   switch (whence)
   {
-    case SEEK_SET:
-      newPos = position;
-      break;
-    case SEEK_CUR:
-      newPos = m_liveTimeshiftStream.position + position;
-      break;
-    case SEEK_END:
-      newPos = m_liveTimeshiftStream.totalBytes + position;
-      break;
-    default:
-      return -1;
+  case SEEK_SET:
+    newPos = position;
+    break;
+  case SEEK_CUR:
+    newPos = m_liveTimeshiftStream.position + position;
+    break;
+  case SEEK_END:
+    newPos = m_liveTimeshiftStream.totalBytes + position;
+    break;
+  default:
+    return -1;
   }
   bool clampedNegative = newPos < 0;
   if (clampedNegative)
@@ -3466,8 +3406,7 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
     kodi::Log(ADDON_LOG_DEBUG,
               "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
               "current=%lld -> computed newPos=%lld < 0, failing",
-              static_cast<long long>(position), whence,
-              static_cast<long long>(m_liveTimeshiftStream.position),
+              static_cast<long long>(position), whence, static_cast<long long>(m_liveTimeshiftStream.position),
               static_cast<long long>(newPos));
     return -1;
   }
@@ -3486,9 +3425,8 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
   // live players (HLS, DASH) keep for exactly this reason -- imperceptibly
   // behind true live, but enough to absorb normal segment-to-segment
   // timing jitter instead of stuttering on essentially every seek-to-live.
-  int64_t liveBackoffBytes = m_liveTimeshiftStream.segments.empty()
-                                 ? 0
-                                 : m_liveTimeshiftStream.segments.back().byteSize;
+  int64_t liveBackoffBytes =
+      m_liveTimeshiftStream.segments.empty() ? 0 : m_liveTimeshiftStream.segments.back().byteSize;
   int64_t tailTarget = std::max<int64_t>(0, m_liveTimeshiftStream.totalBytes - liveBackoffBytes);
   bool clampedToTail = newPos > tailTarget;
   if (clampedToTail)
@@ -3497,10 +3435,9 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
   kodi::Log(ADDON_LOG_DEBUG,
             "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
             "current=%lld, totalBytes=%lld -> newPos=%lld%s",
-            static_cast<long long>(position), whence,
-            static_cast<long long>(m_liveTimeshiftStream.position),
-            static_cast<long long>(m_liveTimeshiftStream.totalBytes),
-            static_cast<long long>(newPos), clampedToTail ? " (clamped to tail)" : "");
+            static_cast<long long>(position), whence, static_cast<long long>(m_liveTimeshiftStream.position),
+            static_cast<long long>(m_liveTimeshiftStream.totalBytes), static_cast<long long>(newPos),
+            clampedToTail ? " (clamped to tail)" : "");
 
   m_liveTimeshiftStream.position = newPos;
   return newPos;
