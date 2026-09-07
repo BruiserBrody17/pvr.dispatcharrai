@@ -1855,8 +1855,8 @@ distinct things share the same ffmpeg log signature:
 here rather than closed out, per the live-testing session's own
 recommendation: it's the *same symptom* that started this whole
 investigation, just not currently fatal, and "harmless so far" isn't
-the same as "understood." Tracked in
-`docs/RELEASE_1.0_CHECKLIST.md`'s Open items.
+the same as "understood." Tracked in `docs/OPEN_ITEMS.md`'s Ongoing
+section.
 
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
@@ -1948,7 +1948,7 @@ every ~2.5s" item above** -- that one never triggered this diagnostic
 across 134 occurrences in a single, continuously-running buffer
 instance (no channel switch involved), so it isn't explained by this
 fix and remains open, untouched, tracked separately in
-`docs/RELEASE_1.0_CHECKLIST.md`.
+`docs/OPEN_ITEMS.md`.
 
 **Update -- the pid-based version above wasn't good enough; verified
 live it still failed under heavy testing churn.** Retested (macOS,
