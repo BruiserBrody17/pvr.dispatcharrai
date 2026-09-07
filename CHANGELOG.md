@@ -10,6 +10,27 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [1.0.6] - 2026-09-07
+
+Addon only -- `timeshift_buffer` didn't change for this fix.
+
+### Fixed
+
+- **1.0.5 regression:** Live TV server-side timeshift could get
+  permanently stuck in "buffering" and never recover, reproduced on the
+  very first playback attempt after upgrading to 1.0.5. Caused by the new
+  per-viewer heartbeat (added in 1.0.5) riding along on the same thread
+  Kodi's own demuxer depends on for continuous reads, with no bound on
+  how long that call could take -- an ordinary transient network hiccup
+  at the wrong moment (roughly every 4 minutes, whenever the access token
+  needed a routine refresh) could stack into minutes of blocking on a
+  single read call, long enough to permanently stall playback even after
+  the slow call eventually completed. Fixed by bounding the heartbeat to
+  a short, fixed 2-second timeout and never letting it trigger a token
+  refresh or re-login itself. See `docs/TIMESHIFT.md`'s "1.0.5
+  regression: the new per-viewer heartbeat could stall playback
+  permanently" section for the full root cause.
+
 ## [1.0.5] - 2026-09-07
 
 Addon only. `timeshift_buffer` also bumped, to its own independent
