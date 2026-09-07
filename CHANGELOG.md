@@ -12,7 +12,7 @@ compare against.
 
 ## [1.0.7] - 2026-09-07
 
-`timeshift_buffer` also bumped, to its own independent `1.0.3` -- this
+`timeshift_buffer` also bumped, to its own independent `1.0.4` -- this
 release **requires redeploying the updated plugin to Dispatcharr** for
 the plugin-side half to take effect.
 
@@ -34,6 +34,18 @@ the plugin-side half to take effect.
   as an immediate, clearly-logged failure instead of silent corruption.
   See `docs/TIMESHIFT.md`'s "1.0.6 follow-up: a second, distinct freeze"
   section for the full investigation, including what was ruled out.
+- `timeshift_buffer`: found via the diagnostic above actually catching a
+  real, live disagreement -- switching away from a channel and back
+  could still hit the same "wrong cached segment size" failure, this
+  time because the plugin's own manifest cache wasn't invalidated
+  reliably across a buffer restart in a multi-worker deployment (a
+  channel's new ffmpeg process reuses the same segment filenames and
+  sequence numbers as its previous instance, and a worker holding a
+  stale cache entry from the old instance had no way to know it was
+  gone). Fixed by tying every cache entry to the specific buffer
+  instance (its ffmpeg process ID) it was built from -- a mismatch now
+  discards the whole entry outright rather than partially trusting it.
+  See `docs/TIMESHIFT.md`'s "1.0.7 follow-up #2" section.
 
 ## [1.0.6] - 2026-09-07
 

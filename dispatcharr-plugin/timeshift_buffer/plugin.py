@@ -818,18 +818,34 @@ def _get_live_manifest(state: dict, logger) -> dict:
     it (checked via the playlist file's own mtime/size -- confirmed cheap
     and sufficient, no need for content hashing), and even when it has
     changed, only stat()s segments genuinely new since last time -- a
-    sequence number is never reused for the life of a buffer (HLS media
-    sequence is monotonic, even though -segment_wrap does recycle
-    filenames), so a cache hit by sequence is guaranteed to be the exact
-    same bytes, the same invariant pvr.dispatcharrai's own
-    RefreshLiveManifest() already relies on client-side -- with one
-    deliberate exception: the newest (last-listed) segment on any given
-    call is always re-stat()'d even if it matches a cached entry, since a
-    size sampled the very first moment a segment becomes visible could
-    race a not-yet-fully-flushed write, and unlike every other cached
-    entry, that risk can't yet have been disproven by a later segment
-    having since appeared after it (see the inline comment where this is
-    checked). Matters because
+    sequence number is never reused for the life of *one buffer instance*
+    (HLS media sequence is monotonic, even though -segment_wrap does
+    recycle filenames), so a cache hit by sequence is guaranteed to be the
+    exact same bytes, the same invariant pvr.dispatcharrai's own
+    RefreshLiveManifest() already relies on client-side -- with two
+    deliberate exceptions, both confirmed live to matter, not just
+    theoretical:
+
+    - The newest (last-listed) segment on any given call is always
+      re-stat()'d even if it matches a cached entry, since a size sampled
+      the very first moment a segment becomes visible could race a
+      not-yet-fully-flushed write, and unlike every other cached entry,
+      that risk can't yet have been disproven by a later segment having
+      since appeared after it (see the inline comment where this is
+      checked).
+    - The *whole cache entry* for a channel_uuid is discarded outright,
+      not partially trusted, if `state["pid"]` (the buffer's own ffmpeg
+      process) doesn't match what the cache was built from -- "a sequence
+      number is never reused" is only true *within* one continuously-
+      running buffer instance; a channel stopped and later restarted
+      (e.g. a channel switch away and back) gets a brand-new ffmpeg
+      process whose live.m3u8 restarts numbering from scratch, reusing
+      the exact same (sequence, filename) pairs for completely different,
+      unrelated file content. See the inline comment where `buffer_pid`
+      is read for the live incident (a channel switched away from and
+      back, "Packet corrupt" within seconds) that found this.
+
+    Matters because
     this is called far more often than the buffer could possibly have
     grown -- the addon's own catch-up-to-tail loop and throttled length
     checks call this repeatedly while waiting, not just once per new
@@ -897,8 +913,37 @@ def _get_live_manifest(state: dict, logger) -> dict:
     except OSError:
         raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
 
+    # Ties every cache entry to the specific ffmpeg process (buffer
+    # *instance*) it was built from -- confirmed live this matters, not
+    # just theoretical: a channel stopped and later restarted (e.g. a
+    # channel switch away and back) gets a brand-new ffmpeg process whose
+    # live.m3u8 restarts numbering from scratch, so its early segments
+    # have the exact same (sequence, filename) pairs as the *previous*
+    # buffer instance's -- despite being completely different files with
+    # different real content. _delete_buffer_state() clears this same
+    # worker process's own cache on a clean stop, but that alone isn't a
+    # sufficient guarantee across a multi-worker deployment: the stop_buffer
+    # call that tears down the old instance can land on a *different*
+    # worker than the one that cached get_live_manifest data for it, in
+    # which case that worker's own stale cache never gets cleared at all,
+    # and would otherwise be trusted again the moment it next handles a
+    # request for the *new* instance of the same channel_uuid -- reusing a
+    # completely wrong size for a same-named, same-sequenced, but
+    # genuinely different segment (confirmed live: a channel switched away
+    # from and back produced exactly this, "Packet corrupt" within
+    # seconds of the fresh buffer starting, caught by pvr.dispatcharrai's
+    # own Content-Range cross-check -- see docs/TIMESHIFT.md's "1.0.7
+    # follow-up #2"). Comparing the buffer's own pid (already tracked in
+    # `state` for dead-buffer detection) closes this regardless of which
+    # worker built the stale entry or whether any cache-clearing message
+    # ever reached it: a pid mismatch is treated exactly like a cold
+    # cache, full stop, no partial trust of anything in it.
+    buffer_pid = state.get("pid")
+
     with _manifest_cache_lock:
         cached = _manifest_cache.get(channel_uuid)
+        if cached is not None and cached.get("pid") != buffer_pid:
+            cached = None
         if (cached is not None and cached["playlist_mtime_ns"] == playlist_stat.st_mtime_ns and
                 cached["playlist_size"] == playlist_stat.st_size):
             # Nothing on disk has changed since our own last read of this
@@ -997,6 +1042,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
                 ordered.append((sequence,) + entry)
 
             _manifest_cache[channel_uuid] = {
+                "pid": buffer_pid,
                 "playlist_mtime_ns": playlist_stat.st_mtime_ns,
                 "playlist_size": playlist_stat.st_size,
                 "media_sequence": media_sequence,
@@ -1148,7 +1194,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "1.0.3"
+    version = "1.0.4"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
