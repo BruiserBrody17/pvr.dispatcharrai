@@ -62,6 +62,65 @@ platform.
   workarounds for specific bugs -- not a restatement of the code. Match
   that style; don't add narrative comments describing what a block of
   code obviously does.
+- **Pre-1.0 (`0.x`) versioning on purpose, as of 2026-09-07** -- this
+  project briefly reached `1.0.x` (addon) but stepped back down to `0.x`
+  across all three pieces once it became clear that signaled more
+  stability than actually existed: single-user, still turning up real
+  playback bugs in testing, and depending on Dispatcharr itself, which is
+  still pre-1.0 (`0.30.0` as of this writing) and can still make breaking
+  changes of its own. Per SemVer's own convention, `0.x` means "anything
+  may still change" -- an honest signal here. Move to `1.0.0` later based
+  on *this project's own* track record (real testing beyond one person,
+  no more of the kind of playback-breaking bugs still turning up as of
+  this writing) -- not gated on Dispatcharr's own version number reaching
+  `1.0.0`. Dispatcharr staying pre-1.0 is one reason this felt premature
+  right now, not a literal dependency: Dispatcharr could stay `0.x` for
+  years while being perfectly API-stable, or hit `1.0.0` while this addon
+  still has open bugs -- either way, judge this project on its own merits.
+- **Branch for anything nontrivial, as of 2026-09-07.** A trivial,
+  low-risk, one-line-shaped fix can still go straight to `master`, same
+  as this project has done so far. Anything bigger -- a real bug
+  investigation, a new feature, a risky refactor -- gets its own
+  short-lived branch, merged back to `master` once verified, then
+  deleted. This is deliberately not full GitFlow (no perpetual `develop`/
+  `release` branches) -- there's only one person working on this repo
+  right now, so there's no multi-contributor coordination problem to
+  solve; the only goal is keeping `master` in a known-good state and
+  having a diff to review before a change becomes permanent, given there
+  is no automated test suite to catch a half-finished change otherwise.
+  A branch that lives for a while (a real feature, not a quick fix)
+  drifts out of sync with `master` as unrelated work merges in around
+  it -- periodically run `git merge master` into it along the way rather
+  than letting the gap grow for weeks and facing one large reconciliation
+  at the end. This matters more here than on a project with real test
+  coverage: a dependency whose *signature* changed underneath the branch
+  fails loudly (won't compile) the moment master's changes are merged
+  in, but a dependency whose *behavior* changed without its signature
+  changing won't -- nothing will flag it except actually re-testing the
+  branch after syncing, since there's no test suite to catch it instead.
+- **Batch fixes into releases -- don't tag/release per individual fix.**
+  Early on this project tagged and released (including the full manual
+  CoreELEC build-and-upload dance) after nearly every single bug fix,
+  which was far more release overhead than the project's single-user,
+  actively-testing phase warrants. Commit fixes to `master` as they land;
+  only cut an actual tag/release when a meaningful batch has accumulated
+  or a real test pass is about to happen against a batch of changes.
+- **Merge branches with squash-merge, as of 2026-09-07** -- when a
+  nontrivial branch (see above) is done, squash it into one commit on
+  `master` rather than preserving every individual commit from the
+  branch. Keeps `master`'s history readable as "one commit = one logical
+  change" instead of a trail of in-progress "wip"/"fix typo" commits.
+- **Code formatting/linting, as of 2026-09-07**: `.clang-format`
+  (C++, `src/`) and `ruff.toml` (Python, `dispatcharr-plugin/`). Run
+  `clang-format -i src/*.cpp src/*.h` and `ruff format
+  dispatcharr-plugin/` before committing nontrivial C++ or Python
+  changes; `ruff check dispatcharr-plugin/` catches some real bugs
+  (unused variables, etc.), not just style. Both configs are
+  deliberately conservative -- `.clang-format` has `SortIncludes: false`
+  since a couple of files rely on include order for platform-conditional
+  (`#if defined(_WIN32)`) blocks, and neither config imposes an
+  unrelated style; both were derived from the codebase's own existing
+  conventions rather than a generic preset.
 - **Three independent version numbers, decoupled since 1.0.1** -- the
   addon and each of the two companion plugins version separately. Bump
   only the piece whose own files actually changed in a given release;

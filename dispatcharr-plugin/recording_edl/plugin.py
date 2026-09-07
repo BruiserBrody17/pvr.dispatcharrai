@@ -312,8 +312,7 @@ def _scrub_orphaned_recording_sidecars(logger):
                 continue
 
             has_owning_recording = any(
-                other != path and other.is_file() and _sidecar_base_name(other.name) is None
-                and other.stem == base
+                other != path and other.is_file() and _sidecar_base_name(other.name) is None and other.stem == base
                 for other in siblings
             )
             if has_owning_recording:
@@ -500,7 +499,9 @@ class Plugin:
             ),
         },
         {
-            "id": "test_recording_id", "label": "Test recording ID", "type": "string",
+            "id": "test_recording_id",
+            "label": "Test recording ID",
+            "type": "string",
             "default": "",
             "help_text": (
                 "Only used by the manual-test button below (plugin action "
@@ -557,11 +558,11 @@ class Plugin:
             "description": (
                 "Read-only diagnostic: finds every .dvr_*_hls staging "
                 "directory under /data/recordings and reports its best-"
-                "effort classification -- \"active\" (a recording in "
-                "progress), \"preserved_failure\" (concat failed, kept as "
-                "the only surviving copy), \"referenced\" (a Recording row "
+                'effort classification -- "active" (a recording in '
+                'progress), "preserved_failure" (concat failed, kept as '
+                'the only surviving copy), "referenced" (a Recording row '
                 "points at it but neither of the above is confirmed -- "
-                "needs manual review), or \"orphaned\" (no Recording row "
+                'needs manual review), or "orphaned" (no Recording row '
                 "with that id exists at all). Never deletes anything -- "
                 "for manual review before deciding what, if anything, is "
                 "actually safe to clean up."
@@ -572,9 +573,9 @@ class Plugin:
             "label": "Delete Orphaned DVR HLS Directories",
             "description": (
                 "Deletes only the .dvr_*_hls directories List DVR HLS "
-                "Staging Directories classifies as \"orphaned\" -- no "
+                'Staging Directories classifies as "orphaned" -- no '
                 "Recording row with that id exists at all. Never touches "
-                "\"active\", \"preserved_failure\", or \"referenced\" "
+                '"active", "preserved_failure", or "referenced" '
                 "directories, empty or not. Does not prune parent "
                 "directories left empty by a deletion -- run Scrub "
                 "Orphaned EDL/Logo Files for that."
@@ -667,7 +668,11 @@ class Plugin:
             # Nothing to fetch -- comskip hasn't run, found nothing, or ran
             # in "cut" mode and already deleted the .edl file (see module
             # docstring). Not an error: just no markers for this recording.
-            return {"status": "ok", "message": "No EDL file for this recording (comskip hasn't run, or ran in \"cut\" mode)", "entries": []}
+            return {
+                "status": "ok",
+                "message": 'No EDL file for this recording (comskip hasn\'t run, or ran in "cut" mode)',
+                "entries": [],
+            }
 
         edl_path = Path(file_path).parent / edl_filename
         try:
@@ -683,5 +688,9 @@ class Plugin:
         # ever rendered anywhere in that UI, same finding that led to
         # timeshift_buffer's own diagnostic actions all getting one too.
         entries = _parse_edl(text)
-        message = "No EDL entries found" if not entries else f"{len(entries)} EDL entr{'y' if len(entries) == 1 else 'ies'} found"
+        message = (
+            "No EDL entries found"
+            if not entries
+            else f"{len(entries)} EDL entr{'y' if len(entries) == 1 else 'ies'} found"
+        )
         return {"status": "ok", "message": message, "entries": entries}

@@ -121,9 +121,8 @@ void AppendCredit(std::string& joined, const std::string& name)
 
 } // namespace
 
-bool XmlTvParser::Parse(const std::string& xmlContent,
-                         std::unordered_map<std::string, std::vector<EpgEntry>>& out,
-                         std::string& error)
+bool XmlTvParser::Parse(const std::string& xmlContent, std::unordered_map<std::string, std::vector<EpgEntry>>& out,
+                        std::string& error)
 {
   pugi::xml_document doc;
   pugi::xml_parse_result result = doc.load_buffer(xmlContent.data(), xmlContent.size());
