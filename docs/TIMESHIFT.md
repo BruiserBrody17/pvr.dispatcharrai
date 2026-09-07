@@ -1851,6 +1851,49 @@ distinct things share the same ffmpeg log signature:
    continuity-counter discontinuity at the exact splice point is the
    leading guess, not confirmed.
 
+**Update -- refined hypothesis, still not confirmed, deliberately not
+pursued further.** `_start_ffmpeg()` invokes `ffmpeg -c copy -f segment
+...` ([plugin.py](../dispatcharr-plugin/timeshift_buffer/plugin.py)).
+Every time the `segment` muxer starts a new output file, it opens a
+**fresh `AVFormatContext`** -- a new muxer session, not a continuation
+of the previous one. `-c copy` skips re-*encoding* the codec payload,
+but the TS *muxing* layer (packetization, PAT/PMT insertion, and each
+PID's 4-bit continuity counter) is regenerated fresh per file -- normal,
+correct behavior for HLS-style segmenting, where each segment is meant
+to be independently playable, not byte-concatenated with its neighbors.
+This addon's whole design treats the rolling buffer as *one continuous
+raw byte stream* fed to a single demuxer instance instead (a deliberate,
+effective workaround for `ffmpegdirect`'s broken HLS seeking -- see "The
+actual fix" section above), so a byte-level discontinuity at each seam
+becomes the demuxer's problem to survive, not something this
+architecture actively smooths over.
+
+Real corroborating precedent already exists in this same file: `-reset
+-timestamps 1` was deliberately removed specifically because a
+*different* piece of per-segment muxer state resetting broke something
+(PTS continuity for seeking -- see the "Fix attempted and confirmed NOT
+to work" section higher up, and the comment directly above `_start_
+ffmpeg`'s own `cmd` construction). Continuity counters are a sibling
+piece of the exact same underlying phenomenon -- per-segment muxer
+reinitialization -- just never addressed, since nothing forced the
+question until this investigation went looking for it.
+
+Deliberately left unconfirmed and unfixed for now, by explicit
+decision rather than time running out: a real fix would mean either
+finding an ffmpeg flag to suppress the reset (no such flag is known to
+exist -- carrying continuity-counter state across independent muxer
+sessions isn't a normal use case ffmpeg is expected to expose a knob
+for) or binary-patching each segment's continuity counters at the
+splice point in this addon's own hot read path (technically
+straightforward -- a well-defined 4-bit field at a fixed offset in
+every 188-byte packet -- but real complexity and real risk added to
+live playback, for a symptom currently confirmed cosmetic: Kodi's own
+demuxer resyncs cleanly every time, no visible playback impact
+confirmed over a 4+ minute real session). Revisit if it ever stops
+being cosmetic, or if a lower-risk way to confirm the hypothesis
+directly (e.g. capturing raw bytes on both sides of a real splice)
+becomes worth the effort.
+
 **Deliberately left open, not chased further this pass** -- flagged
 here rather than closed out, per the live-testing session's own
 recommendation: it's the *same symptom* that started this whole
