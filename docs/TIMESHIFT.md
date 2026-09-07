@@ -1950,3 +1950,53 @@ instance (no channel switch involved), so it isn't explained by this
 fix and remains open, untouched, tracked separately in
 `docs/RELEASE_1.0_CHECKLIST.md`.
 
+**Update -- the pid-based version above wasn't good enough; verified
+live it still failed under heavy testing churn.** Retested (macOS,
+plugin 1.0.4) both with the exact repro sequence (no failure that time)
+and, after a methodology mistake was caught and the test redone on a
+genuinely fresh Kodi log, a cold open of ESPN with *no* channel-
+switching involved at all -- the diagnostic fired anyway, on
+`seg_00000.ts`, the very first segment of a freshly-created buffer. A
+retry on the same fresh session fired again, on a different segment,
+with different size values -- twice in a row, no channel switch either
+time.
+
+The size direction was the tell again: cached larger than real in both
+new firings, the same pattern as the original incident and, like that
+one, incompatible with a "sampled before the write settled" race
+(which can only ever produce cached *smaller*). Still a cross-instance
+identity confusion -- but the pid-based check should have caught it.
+The report itself flagged the likely cause: "many hours of repeated
+start_buffer/stop_buffer API calls... across many earlier test
+rounds" that day. **OS pids get recycled.** Under that much churn (each
+`start_buffer` spawning a new ffmpeg process, each `stop_buffer` or
+idle-timeout killing one), the pid counter can and reproducibly did
+wrap far enough that a stale `_manifest_cache` entry from hours
+earlier -- tagged with a pid the OS has since reassigned to a
+genuinely new, unrelated ffmpeg instance -- passed the pid-equality
+check it should have failed. Not a scenario an ordinary user's normal
+viewing pattern would produce (that much buffer churn in one session is
+inherently a heavy-testing artifact), but the fix needed to not depend
+on that being true.
+
+Fixed by keying identity on `access_token` instead of `pid` -- already
+a fresh, cryptographically random value (`secrets.token_urlsafe(24)`)
+minted for every genuine new buffer instance (see `_start_buffer`'s own
+comment), with no OS-level recycling risk at any timescale, however
+much churn a session produces. Also fails closed: a missing/empty
+token (state predating the access-token feature, or anything else
+going wrong establishing identity) is never treated as matching another
+missing token, unlike the pid version's implicit "unknown == unknown"
+gap.
+
+Verified via a functional test extending the same suite: the exact
+pid-reuse scenario (same pid, different `access_token`, different real
+file content) is now correctly treated as a new instance and returns
+the real, current sizes -- including the literal 3,097,112-byte value
+from the live report. A separate test confirms a missing token never
+wrongly matches a prior missing-token entry. Not yet re-verified live
+(would need another macOS pass, ideally including the same kind of
+heavy same-day buffer churn that exposed the pid gap, to be confident
+this specific failure mode is actually closed and not just harder to
+hit).
+
