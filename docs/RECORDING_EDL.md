@@ -196,3 +196,42 @@ is empty, since a brand-new recording's own staging directory is created
 before ffmpeg writes its first segment, so a genuinely active recording
 can legitimately look empty for its first few seconds. Emptiness was
 never the safety signal; a real, current Recording row is.
+
+## A malformed `.edl` line could take down the whole result, not just itself
+
+Found via a comparative architecture review (the same pass that also
+reviewed `timeshift_buffer`), not a user report -- `_parse_edl()`
+guards its `float()`/`int()` parsing of each line's three columns
+inside a `try`/`except ValueError`, but the *conversion* of the parsed
+start/end seconds into milliseconds (`int(round(start_sec * 1000))`)
+happened **outside** that block. `float("nan")` and `float("inf")`
+both parse successfully (no `ValueError`), but `round()`/`int()` on
+either raises afterward -- `ValueError` for `nan`, `OverflowError` for
+`inf` -- uncaught, since it's past the `try`, and with no `try`/`except`
+around `_parse_edl()`'s own call site in `run()` either. One bad line
+anywhere in the file took down the *entire* `get_edl` result for that
+recording, showing zero commercial markers instead of just skipping
+the one malformed line and returning whatever other entries were
+valid. The type-column conversion (which *is* inside the `try` block)
+had a narrower version of the same gap: `int(float("inf"))` raises
+`OverflowError`, which the `except ValueError:` clause didn't catch
+either.
+
+comskip is the only realistic producer of this file and isn't expected
+to ever emit `nan`/`inf` timestamps -- this was a defensive gap, not a
+reproduced live failure. Fixed by widening the `except` clause to
+`(ValueError, OverflowError)` and adding an explicit `math.isfinite()`
+check on the parsed start/end seconds before the millisecond
+conversion. Verified with a test reproducing the exact pre-fix crash
+(`round(float("nan"))` raising uncaught) and confirming the fixed
+parser now skips each malformed variant (`nan`/`inf` in any of the
+three columns) while still returning every other valid entry in the
+same file.
+
+The rest of this plugin held up well under the same review pass: no
+HTTP server of its own (a smaller attack surface than `timeshift_buffer`
+entirely), and the destructive actions already carry real,
+incident-driven safety scoping from earlier sessions (see the orphaned-
+sidecar scan-root section above, and `.dvr_*_hls` classification just
+above this one) that a fresh read didn't find anything further to add
+to.
