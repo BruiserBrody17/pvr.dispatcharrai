@@ -1,0 +1,21 @@
+---
+# Matches this codebase's existing style (2-space indent, braces on their
+# own line) rather than imposing an unrelated style wholesale. Deliberately
+# conservative: SortIncludes/IncludeBlocks are off since several files rely
+# on include order for platform-conditional (#if defined(_WIN32)) blocks --
+# an automated reorder could silently change which header wins on a given
+# platform.
+BasedOnStyle: LLVM
+IndentWidth: 2
+ColumnLimit: 120
+BreakBeforeBraces: Allman
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortLambdasOnASingleLine: All
+AlignAfterOpenBracket: Align
+NamespaceIndentation: None
+SortIncludes: false
+IncludeBlocks: Preserve
+DerivePointerAlignment: false
+PointerAlignment: Left

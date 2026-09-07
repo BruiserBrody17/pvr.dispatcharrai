@@ -44,14 +44,12 @@ int PVRDispatcharr::EffectiveRecurringRuleUtcOffsetMinutes() const
 }
 
 PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
-    : CInstancePVRClient(instance), m_lastAppliedConfig(LoadConfigFromSettings()),
-      m_client(LoadConfigFromSettings())
+    : CInstancePVRClient(instance), m_lastAppliedConfig(LoadConfigFromSettings()), m_client(LoadConfigFromSettings())
 {
   m_channelRefreshHours = kodi::addon::GetSettingInt("channel_refresh_hours", 12);
   m_epgRefreshHours = kodi::addon::GetSettingInt("epg_refresh_hours", 4);
   m_liveTimeshiftMode = kodi::addon::GetSettingInt("live_timeshift_mode", kLiveTimeshiftOff);
-  m_enableCatchupFfmpegdirectSeek =
-      kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
+  m_enableCatchupFfmpegdirectSeek = kodi::addon::GetSettingBoolean("enable_catchup_ffmpegdirect_seek", false);
   m_recordingRefreshMinutes = kodi::addon::GetSettingInt("recording_refresh_minutes", 5);
   m_recurringRuleUtcOffsetMinutes = kodi::addon::GetSettingInt("recurring_rule_utc_offset_minutes", 0);
   m_sportsExtraPaddingMinutes = kodi::addon::GetSettingInt("sports_extra_padding_minutes", 0);
@@ -102,8 +100,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG,
-                "pvr.dispatcharrai: could not read Dispatcharr's DVR padding settings: %s",
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: could not read Dispatcharr's DVR padding settings: %s",
                 offsetError.c_str());
     }
   }
@@ -147,8 +144,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG,
-                "pvr.dispatcharrai: could not read Dispatcharr's system timezone: %s",
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: could not read Dispatcharr's system timezone: %s",
                 tzError.c_str());
     }
   }
@@ -221,8 +217,7 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
   {
     m_sportsExtraPaddingMinutes = settingValue.GetInt();
   }
-  else if (settingName == "recording_pre_offset_minutes" ||
-           settingName == "recording_post_offset_minutes")
+  else if (settingName == "recording_pre_offset_minutes" || settingName == "recording_post_offset_minutes")
   {
     // Global-only on Dispatcharr's side (see DispatcharrClient::
     // SetDvrOffsetMinutes()'s own comment) -- always push both current
@@ -242,15 +237,17 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
     // best-effort, with the constructor's own sync-from-Dispatcharr on
     // the next restart as a natural retry if this particular push
     // silently fails.
-    std::thread([this, pre, post]() {
-      std::string offsetError;
-      if (!m_client.SetDvrOffsetMinutes(pre, post, offsetError))
-      {
-        kodi::Log(ADDON_LOG_ERROR,
-                  "pvr.dispatcharrai: failed to update Dispatcharr's DVR padding: %s",
-                  offsetError.c_str());
-      }
-    }).detach();
+    std::thread(
+        [this, pre, post]()
+        {
+          std::string offsetError;
+          if (!m_client.SetDvrOffsetMinutes(pre, post, offsetError))
+          {
+            kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to update Dispatcharr's DVR padding: %s",
+                      offsetError.c_str());
+          }
+        })
+        .detach();
   }
   else if (settingName == "debug_logging")
   {
@@ -274,9 +271,9 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
     m_enableRealtimeUpdates = value;
     return changed ? ADDON_STATUS_NEED_RESTART : ADDON_STATUS_OK;
   }
-  else if (settingName == "host" || settingName == "port" || settingName == "use_https" ||
-           settingName == "username" || settingName == "password" ||
-           settingName == "verify_ssl" || settingName == "timeout" || settingName == "api_key")
+  else if (settingName == "host" || settingName == "port" || settingName == "use_https" || settingName == "username" ||
+           settingName == "password" || settingName == "verify_ssl" || settingName == "timeout" ||
+           settingName == "api_key")
   {
     // Baked into DispatcharrClient's Config at construction (see
     // LoadConfigFromSettings()) -- changing the connection this addon
@@ -345,20 +342,21 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
 
 void PVRDispatcharr::StartRecordingRefreshThread()
 {
-  m_recordingRefreshThread = std::thread([this]() {
-    std::unique_lock<std::mutex> lock(m_recordingRefreshMutex);
-    while (!m_stopRecordingRefreshThread)
-    {
-      bool stopped = m_recordingRefreshCv.wait_for(
-          lock, std::chrono::minutes(m_recordingRefreshMinutes),
-          [this]() { return m_stopRecordingRefreshThread.load(); });
-      if (stopped)
-        break;
-      RenewRecurringRules();
-      TriggerRecordingUpdate();
-      TriggerTimerUpdate();
-    }
-  });
+  m_recordingRefreshThread = std::thread(
+      [this]()
+      {
+        std::unique_lock<std::mutex> lock(m_recordingRefreshMutex);
+        while (!m_stopRecordingRefreshThread)
+        {
+          bool stopped = m_recordingRefreshCv.wait_for(lock, std::chrono::minutes(m_recordingRefreshMinutes),
+                                                       [this]() { return m_stopRecordingRefreshThread.load(); });
+          if (stopped)
+            break;
+          RenewRecurringRules();
+          TriggerRecordingUpdate();
+          TriggerTimerUpdate();
+        }
+      });
 }
 
 void PVRDispatcharr::RenewRecurringRules()
@@ -391,9 +389,7 @@ void PVRDispatcharr::RenewRecurringRules()
       {
         if (rec.recurringRuleId != rule.id)
           continue;
-        if (rec.isInProgress ||
-            (rec.isUpcoming &&
-             rec.startTime - now < kRecurringRuleRenewalSafetyMarginSeconds))
+        if (rec.isInProgress || (rec.isUpcoming && rec.startTime - now < kRecurringRuleRenewalSafetyMarginSeconds))
         {
           hasActiveOrImminentOccurrence = true;
           break;
@@ -407,62 +403,62 @@ void PVRDispatcharr::RenewRecurringRules()
     std::string extendError;
     if (!m_client.ExtendRecurringRuleEndDate(rule.id, newEndDate, extendError))
     {
-      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to renew recurring rule %d: %s",
-               rule.id, extendError.c_str());
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to renew recurring rule %d: %s", rule.id,
+                extendError.c_str());
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG,
-               "pvr.dispatcharrai: renewed recurring rule %d end_date forward", rule.id);
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: renewed recurring rule %d end_date forward", rule.id);
     }
   }
 }
 
 void PVRDispatcharr::StartChannelEpgRefreshThread()
 {
-  m_channelEpgRefreshThread = std::thread([this]() {
-    while (true)
-    {
-      // Checked (and, if stale, fetched) immediately on every wake,
-      // starting with the very first one -- this is what actually
-      // pre-warms the cache ahead of Kodi's own first GetChannels() call,
-      // rather than only reacting after channel_refresh_hours/
-      // epg_refresh_hours has already elapsed once.
-      if (EnsureChannelsLoaded())
+  m_channelEpgRefreshThread = std::thread(
+      [this]()
       {
-        if (m_debugLogging)
-          kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: background thread refreshed channels/groups");
-        TriggerChannelGroupsUpdate();
-        TriggerChannelUpdate();
-      }
-      if (EnsureEpgLoaded())
-      {
-        if (m_debugLogging)
-          kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: background thread refreshed EPG");
-        // No bulk/whole-guide equivalent exists in Kodi's PVR API --
-        // TriggerEpgUpdate() is per-channel only (confirmed in
-        // kodi-dev-kit's PVR.h). Channel/EPG refreshes are already coarse
-        // (hours, not minutes), so iterating every known channel here
-        // isn't a hot path.
-        std::vector<int> channelUids;
+        while (true)
         {
-          std::lock_guard<std::mutex> lock(m_dataMutex);
-          channelUids.reserve(m_channels.size());
-          for (const auto& ch : m_channels)
-            channelUids.push_back(ch.id);
-        }
-        for (int uid : channelUids)
-          TriggerEpgUpdate(static_cast<unsigned int>(uid));
-      }
+          // Checked (and, if stale, fetched) immediately on every wake,
+          // starting with the very first one -- this is what actually
+          // pre-warms the cache ahead of Kodi's own first GetChannels() call,
+          // rather than only reacting after channel_refresh_hours/
+          // epg_refresh_hours has already elapsed once.
+          if (EnsureChannelsLoaded())
+          {
+            if (m_debugLogging)
+              kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: background thread refreshed channels/groups");
+            TriggerChannelGroupsUpdate();
+            TriggerChannelUpdate();
+          }
+          if (EnsureEpgLoaded())
+          {
+            if (m_debugLogging)
+              kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: background thread refreshed EPG");
+            // No bulk/whole-guide equivalent exists in Kodi's PVR API --
+            // TriggerEpgUpdate() is per-channel only (confirmed in
+            // kodi-dev-kit's PVR.h). Channel/EPG refreshes are already coarse
+            // (hours, not minutes), so iterating every known channel here
+            // isn't a hot path.
+            std::vector<int> channelUids;
+            {
+              std::lock_guard<std::mutex> lock(m_dataMutex);
+              channelUids.reserve(m_channels.size());
+              for (const auto& ch : m_channels)
+                channelUids.push_back(ch.id);
+            }
+            for (int uid : channelUids)
+              TriggerEpgUpdate(static_cast<unsigned int>(uid));
+          }
 
-      std::unique_lock<std::mutex> lock(m_channelEpgRefreshMutex);
-      bool stopped = m_channelEpgRefreshCv.wait_for(
-          lock, std::chrono::minutes(kChannelEpgRefreshCheckMinutes),
-          [this]() { return m_stopChannelEpgRefreshThread.load(); });
-      if (stopped)
-        break;
-    }
-  });
+          std::unique_lock<std::mutex> lock(m_channelEpgRefreshMutex);
+          bool stopped = m_channelEpgRefreshCv.wait_for(lock, std::chrono::minutes(kChannelEpgRefreshCheckMinutes),
+                                                        [this]() { return m_stopChannelEpgRefreshThread.load(); });
+          if (stopped)
+            break;
+        }
+      });
 }
 
 void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
@@ -476,9 +472,8 @@ void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
   // (EPG matching progress, M3U refresh, stream stats, ...) is irrelevant
   // here and should be silently ignored, not treated as an error.
   static const std::unordered_set<std::string> kRelevantEventTypes = {
-      "recording_started",   "recording_ended",     "recording_stopped",
-      "recording_extended",  "recording_updated",   "recording_cancelled",
-      "recordings_refreshed"};
+      "recording_started", "recording_ended",     "recording_stopped",   "recording_extended",
+      "recording_updated", "recording_cancelled", "recordings_refreshed"};
   try
   {
     nlohmann::json parsed = nlohmann::json::parse(message);
@@ -505,89 +500,90 @@ void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
 
 void PVRDispatcharr::StartRealtimeUpdateThread()
 {
-  m_realtimeUpdateThread = std::thread([this]() {
-    constexpr int kInitialBackoffSeconds = 2;
-    constexpr int kMaxBackoffSeconds = 60;
-    constexpr int kMessageReadTimeoutSeconds = 5; // bounds how quickly a stop request is noticed
-    int backoffSeconds = kInitialBackoffSeconds;
-
-    auto shouldStop = [this]() {
-      std::lock_guard<std::mutex> lock(m_realtimeUpdateMutex);
-      return m_stopRealtimeUpdateThread.load();
-    };
-
-    while (!shouldStop())
-    {
-      Config config = LoadConfigFromSettings();
-      std::string token, error;
-      if (m_client.GetAccessToken(token, error))
+  m_realtimeUpdateThread = std::thread(
+      [this]()
       {
-        WebSocketClient ws;
-        std::string pathAndQuery = "/ws/?token=" + token;
-        if (ws.Connect(config.host, config.port, config.useHttps, pathAndQuery, config.verifySsl,
-                       config.timeoutSeconds, error))
-        {
-          if (m_debugLogging)
-            kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: connected");
-          backoffSeconds = kInitialBackoffSeconds; // reset now that a connection actually worked
+        constexpr int kInitialBackoffSeconds = 2;
+        constexpr int kMaxBackoffSeconds = 60;
+        constexpr int kMessageReadTimeoutSeconds = 5; // bounds how quickly a stop request is noticed
+        int backoffSeconds = kInitialBackoffSeconds;
 
-          while (!shouldStop())
+        auto shouldStop = [this]()
+        {
+          std::lock_guard<std::mutex> lock(m_realtimeUpdateMutex);
+          return m_stopRealtimeUpdateThread.load();
+        };
+
+        while (!shouldStop())
+        {
+          Config config = LoadConfigFromSettings();
+          std::string token, error;
+          if (m_client.GetAccessToken(token, error))
           {
-            std::string message;
-            int result = ws.ReceiveTextMessage(message, kMessageReadTimeoutSeconds, error);
-            if (result == 1)
-              HandleRealtimeUpdateMessage(message);
-            else if (result < 0)
+            WebSocketClient ws;
+            std::string pathAndQuery = "/ws/?token=" + token;
+            if (ws.Connect(config.host, config.port, config.useHttps, pathAndQuery, config.verifySsl,
+                           config.timeoutSeconds, error))
             {
               if (m_debugLogging)
-                kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: %s", error.c_str());
-              break; // reconnect
+                kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: connected");
+              backoffSeconds = kInitialBackoffSeconds; // reset now that a connection actually worked
+
+              while (!shouldStop())
+              {
+                std::string message;
+                int result = ws.ReceiveTextMessage(message, kMessageReadTimeoutSeconds, error);
+                if (result == 1)
+                  HandleRealtimeUpdateMessage(message);
+                else if (result < 0)
+                {
+                  if (m_debugLogging)
+                    kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: %s", error.c_str());
+                  break; // reconnect
+                }
+                // result == 0: just a read timeout with nothing new -- loop and
+                // re-check shouldStop().
+              }
+              ws.Close();
             }
-            // result == 0: just a read timeout with nothing new -- loop and
-            // re-check shouldStop().
+            else if (m_debugLogging)
+            {
+              kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: connect failed: %s", error.c_str());
+            }
           }
-          ws.Close();
-        }
-        else if (m_debugLogging)
-        {
-          kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: connect failed: %s",
-                    error.c_str());
-        }
-      }
-      else if (m_debugLogging)
-      {
-        kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: could not get an access token: %s",
-                  error.c_str());
-      }
+          else if (m_debugLogging)
+          {
+            kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime updates: could not get an access token: %s",
+                      error.c_str());
+          }
 
-      if (shouldStop())
-        break;
+          if (shouldStop())
+            break;
 
-      std::unique_lock<std::mutex> lock(m_realtimeUpdateMutex);
-      // Also wakes on m_wakeRealtimeUpdateThread (see OnSystemWake()) --
-      // wait_for()'s return tells the two apart from a natural timeout:
-      // true means the predicate was satisfied early (stop or wake), false
-      // means the full backoffSeconds actually elapsed.
-      bool predicateSatisfied = m_realtimeUpdateCv.wait_for(
-          lock, std::chrono::seconds(backoffSeconds), [this]() {
-            return m_stopRealtimeUpdateThread.load() || m_wakeRealtimeUpdateThread.load();
-          });
-      if (m_stopRealtimeUpdateThread)
-        break;
-      if (predicateSatisfied && m_wakeRealtimeUpdateThread.exchange(false))
-      {
-        // Cut short by a deliberate OnSystemWake() nudge, not a natural
-        // timeout -- retry right away with a fresh backoff instead of
-        // continuing to double whatever it had already climbed to before
-        // sleep.
-        backoffSeconds = kInitialBackoffSeconds;
-      }
-      else
-      {
-        backoffSeconds = std::min(backoffSeconds * 2, kMaxBackoffSeconds);
-      }
-    }
-  });
+          std::unique_lock<std::mutex> lock(m_realtimeUpdateMutex);
+          // Also wakes on m_wakeRealtimeUpdateThread (see OnSystemWake()) --
+          // wait_for()'s return tells the two apart from a natural timeout:
+          // true means the predicate was satisfied early (stop or wake), false
+          // means the full backoffSeconds actually elapsed.
+          bool predicateSatisfied = m_realtimeUpdateCv.wait_for(
+              lock, std::chrono::seconds(backoffSeconds),
+              [this]() { return m_stopRealtimeUpdateThread.load() || m_wakeRealtimeUpdateThread.load(); });
+          if (m_stopRealtimeUpdateThread)
+            break;
+          if (predicateSatisfied && m_wakeRealtimeUpdateThread.exchange(false))
+          {
+            // Cut short by a deliberate OnSystemWake() nudge, not a natural
+            // timeout -- retry right away with a fresh backoff instead of
+            // continuing to double whatever it had already climbed to before
+            // sleep.
+            backoffSeconds = kInitialBackoffSeconds;
+          }
+          else
+          {
+            backoffSeconds = std::min(backoffSeconds * 2, kMaxBackoffSeconds);
+          }
+        }
+      });
 }
 
 // ---------------------------------------------------------------------
@@ -695,9 +691,8 @@ bool PVRDispatcharr::EnsureChannelsLoaded()
   std::unordered_set<int> groupIdsWithChannels;
   for (const auto& ch : channels)
     groupIdsWithChannels.insert(ch.groupId);
-  groups.erase(std::remove_if(groups.begin(), groups.end(),
-                               [&](const ChannelGroup& g)
-                               { return groupIdsWithChannels.find(g.id) == groupIdsWithChannels.end(); }),
+  groups.erase(std::remove_if(groups.begin(), groups.end(), [&](const ChannelGroup& g)
+                              { return groupIdsWithChannels.find(g.id) == groupIdsWithChannels.end(); }),
                groups.end());
 
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -710,8 +705,8 @@ bool PVRDispatcharr::EnsureChannelsLoaded()
 bool PVRDispatcharr::EnsureEpgLoaded()
 {
   auto now = std::chrono::steady_clock::now();
-  bool stale = m_epgLoadedAt.time_since_epoch().count() == 0 ||
-               now - m_epgLoadedAt > std::chrono::hours(m_epgRefreshHours);
+  bool stale =
+      m_epgLoadedAt.time_since_epoch().count() == 0 || now - m_epgLoadedAt > std::chrono::hours(m_epgRefreshHours);
   if (!stale)
     return false;
 
@@ -775,7 +770,7 @@ PVR_ERROR PVRDispatcharr::GetChannelGroups(bool radio, kodi::addon::PVRChannelGr
 }
 
 PVR_ERROR PVRDispatcharr::GetChannelGroupMembers(const kodi::addon::PVRChannelGroup& group,
-                                                  kodi::addon::PVRChannelGroupMembersResultSet& results)
+                                                 kodi::addon::PVRChannelGroupMembersResultSet& results)
 {
   EnsureChannelsLoaded();
   std::lock_guard<std::mutex> lock(m_dataMutex);
@@ -840,7 +835,7 @@ PVR_ERROR PVRDispatcharr::GetChannels(bool radio, kodi::addon::PVRChannelsResult
 }
 
 PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChannel& channel,
-                                                      std::vector<kodi::addon::PVRStreamProperty>& properties)
+                                                     std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   std::string streamUrl;
   {
@@ -1112,8 +1107,7 @@ bool MapCategoriesToGenreType(const std::vector<std::string>& categories, int& g
   for (const std::string& category : categories)
   {
     std::string lower = category;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                    [](unsigned char c) { return std::tolower(c); });
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
     for (const auto& [keyword, mask] : kKeywordToMask)
     {
       if (lower.find(keyword) != std::string::npos)
@@ -1128,10 +1122,8 @@ bool MapCategoriesToGenreType(const std::vector<std::string>& categories, int& g
 
 } // namespace
 
-PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
-                                            time_t start,
-                                            time_t end,
-                                            kodi::addon::PVREPGTagsResultSet& results)
+PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t end,
+                                           kodi::addon::PVREPGTagsResultSet& results)
 {
   EnsureChannelsLoaded();
   EnsureEpgLoaded();
@@ -1169,7 +1161,7 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
     // constant) rather than shifting it also avoids the same class of
     // truncation once a channel id exceeds 16 bits.
     tag.SetUniqueBroadcastId(static_cast<unsigned int>(channelUid) * 2654435761u +
-                              static_cast<uint32_t>(entry.startTime));
+                             static_cast<uint32_t>(entry.startTime));
     tag.SetUniqueChannelId(static_cast<unsigned int>(channelUid));
     tag.SetTitle(entry.title);
     tag.SetPlotOutline(entry.subtitle);
@@ -1219,7 +1211,7 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
     if (entry.isLive)
       flags |= EPG_TAG_FLAG_IS_LIVE;
     bool categorySaysSeries = std::any_of(entry.categories.begin(), entry.categories.end(),
-                                           [](const std::string& c) { return c.find("Series") != std::string::npos; });
+                                          [](const std::string& c) { return c.find("Series") != std::string::npos; });
     if (entry.seasonNumber > 0 || entry.episodeNumber > 0 || categorySaysSeries)
       flags |= EPG_TAG_FLAG_IS_SERIES;
     tag.SetFlags(flags);
@@ -1249,8 +1241,8 @@ PVR_ERROR PVRDispatcharr::IsEPGTagPlayable(const kodi::addon::PVREPGTag& tag, bo
   return PVR_ERROR_NO_ERROR;
 }
 
-PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(
-    const kodi::addon::PVREPGTag& tag, std::vector<kodi::addon::PVRStreamProperty>& properties)
+PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag& tag,
+                                                    std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   std::string channelUuid;
   {
@@ -1395,8 +1387,8 @@ PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
   // recording. Omitting in-progress ones here (as an earlier version of
   // this code did) made them show up only as an uneditable timer entry,
   // with nothing to actually click and play.
-  amount = static_cast<int>(std::count_if(
-      recordings.begin(), recordings.end(), [](const Recording& r) { return !r.isUpcoming; }));
+  amount = static_cast<int>(
+      std::count_if(recordings.begin(), recordings.end(), [](const Recording& r) { return !r.isUpcoming; }));
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -1449,7 +1441,7 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
 }
 
 PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
-                                                        std::vector<kodi::addon::PVRStreamProperty>& properties)
+                                                       std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
   // Confirmed against a real failed playback (a live kodi.log showed
   // Kodi's generic CCurlFile opening a populated STREAMURL directly,
@@ -1578,8 +1570,8 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
             "pvr.dispatcharrai: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0, hlsDirStillPresent ? 1 : 0);
-  bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, error)
-                                  : m_client.OpenRecordingStream(id, error);
+  bool opened =
+      useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, error) : m_client.OpenRecordingStream(id, error);
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
             opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (!opened)
@@ -1689,22 +1681,19 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
   kodi::addon::PVRTimerType oneTimeEpg;
   oneTimeEpg.SetId(kTimerTypeOneTimeEpgBased);
   oneTimeEpg.SetAttributes(PVR_TIMER_TYPE_SUPPORTS_CHANNELS | PVR_TIMER_TYPE_SUPPORTS_START_TIME |
-                           PVR_TIMER_TYPE_SUPPORTS_END_TIME |
-                           PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
+                           PVR_TIMER_TYPE_SUPPORTS_END_TIME | PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH);
   oneTimeEpg.SetDescription("One-time recording (from guide)");
   types.push_back(oneTimeEpg);
 
   kodi::addon::PVRTimerType series;
   series.SetId(kTimerTypeSeries);
   series.SetAttributes(PVR_TIMER_TYPE_IS_REPEATING | PVR_TIMER_TYPE_SUPPORTS_CHANNELS |
-                       PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH |
-                       PVR_TIMER_TYPE_SUPPORTS_RECORD_ONLY_NEW_EPISODES);
+                       PVR_TIMER_TYPE_SUPPORTS_TITLE_EPG_MATCH | PVR_TIMER_TYPE_SUPPORTS_RECORD_ONLY_NEW_EPISODES);
   series.SetDescription("Record series (via Dispatcharr series rule)");
   // Maps to Dispatcharr's SeriesRuleRequest.mode ("all" vs "new") --
   // confirmed against the live schema. Kodi shows this as a normal
   // per-timer setting when creating/editing a series rule.
-  series.SetPreventDuplicateEpisodes({{0, "Record all episodes"}, {1, "Record only new episodes"}},
-                                     0);
+  series.SetPreventDuplicateEpisodes({{0, "Record all episodes"}, {1, "Record only new episodes"}}, 0);
   types.push_back(series);
 
   // Backed by Dispatcharr's own RecurringRecordingRule model/scheduler
@@ -1738,9 +1727,8 @@ PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
   m_client.GetRecordings(recordings, error);
   m_client.GetTimerRules(rules, error);
   m_client.GetRecurringRules(recurringRules, error);
-  int scheduled = static_cast<int>(std::count_if(
-      recordings.begin(), recordings.end(),
-      [](const Recording& r) { return r.isInProgress || r.isUpcoming; }));
+  int scheduled = static_cast<int>(std::count_if(recordings.begin(), recordings.end(),
+                                                 [](const Recording& r) { return r.isInProgress || r.isUpcoming; }));
   amount = scheduled + static_cast<int>(rules.size()) + static_cast<int>(recurringRules.size());
   return PVR_ERROR_NO_ERROR;
 }
@@ -1772,8 +1760,7 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
       // SetParentClientIndex()'s own default, so this is a plain
       // stand-alone one-time timer when recurringRuleId is 0).
       if (rec.recurringRuleId != 0)
-        timer.SetParentClientIndex(static_cast<unsigned int>(rec.recurringRuleId) |
-                                   kRecurringRuleIndexFlag);
+        timer.SetParentClientIndex(static_cast<unsigned int>(rec.recurringRuleId) | kRecurringRuleIndexFlag);
       results.Add(timer);
     }
   }
@@ -1817,8 +1804,7 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
       // hashed series-rule index.
       timer.SetClientIndex(static_cast<unsigned int>(rule.id) | kRecurringRuleIndexFlag);
       timer.SetTimerType(kTimerTypeRecurring);
-      timer.SetTitle(rule.name.empty() ? ("Recurring recording " + std::to_string(rule.id))
-                                       : rule.name);
+      timer.SetTitle(rule.name.empty() ? ("Recurring recording " + std::to_string(rule.id)) : rule.name);
       timer.SetClientChannelUid(rule.channelId);
       // Dispatcharr's days_of_week (0=Monday..6=Sunday) already matches
       // Kodi's own PVR_WEEKDAY_MONDAY=(1<<0)..SUNDAY=(1<<6) bit order --
@@ -1848,10 +1834,9 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   return PVR_ERROR_NO_ERROR;
 }
 
-bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer,
-                                                std::vector<int>& daysOfWeekOut,
-                                                int& startSecondsOut, int& endSecondsOut,
-                                                time_t& startDateOut, std::string& error)
+bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer, std::vector<int>& daysOfWeekOut,
+                                                int& startSecondsOut, int& endSecondsOut, time_t& startDateOut,
+                                                std::string& error)
 {
   // Pure integer-arithmetic UTC day/time-of-day math -- every value here
   // (Kodi's GetStartTime()/GetEndTime()/GetFirstDay()) is already UTC
@@ -1870,8 +1855,7 @@ bool PVRDispatcharr::ComputeRecurringRuleFields(const kodi::addon::PVRTimer& tim
   constexpr time_t kSecondsPerDay = 86400;
   auto floorMod = [](time_t a, time_t m) { return ((a % m) + m) % m; };
   auto utcMidnight = [&](time_t t) { return t - floorMod(t, kSecondsPerDay); };
-  auto secondsSinceUtcMidnight = [&](time_t t)
-  { return static_cast<int>(floorMod(t, kSecondsPerDay)); };
+  auto secondsSinceUtcMidnight = [&](time_t t) { return static_cast<int>(floorMod(t, kSecondsPerDay)); };
 
   int offsetSeconds = EffectiveRecurringRuleUtcOffsetMinutes() * 60;
   startSecondsOut = secondsSinceUtcMidnight(timer.GetStartTime()) + offsetSeconds;
@@ -1927,12 +1911,9 @@ time_t PVRDispatcharr::ComputeOneTimeRecordingEndTime(const kodi::addon::PVRTime
     // matched here, while a same-title/same-time duplicate feed from a
     // different upstream source had none at all and legitimately didn't
     // (correct behavior, not a bug: nothing here to detect sports from).
-    bool isSports =
-        MapCategoriesToGenreType(entry.categories, genreType) && genreType == EPG_EVENT_CONTENTMASK_SPORTS;
-    kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharrai: ComputeOneTimeRecordingEndTime: \"%s\" isSports=%d -> %s",
-              entry.title.c_str(), isSports ? 1 : 0,
-              isSports ? "extending end time" : "leaving end time as-is");
+    bool isSports = MapCategoriesToGenreType(entry.categories, genreType) && genreType == EPG_EVENT_CONTENTMASK_SPORTS;
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: ComputeOneTimeRecordingEndTime: \"%s\" isSports=%d -> %s",
+              entry.title.c_str(), isSports ? 1 : 0, isSports ? "extending end time" : "leaving end time as-is");
     if (isSports)
       return endTime + static_cast<time_t>(extraMinutes) * 60;
     break; // matched the entry but it isn't sports -- no need to keep looking
@@ -1949,9 +1930,8 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     std::lock_guard<std::mutex> lock(m_dataMutex);
     const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
     std::string tvgId = ch ? ch->tvgId : "";
-    ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId,
-                                   timer.GetTitle(), timer.GetPreventDuplicateEpisodes() != 0,
-                                   error);
+    ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId, timer.GetTitle(),
+                                   timer.GetPreventDuplicateEpisodes() != 0, error);
   }
   else if (timer.GetTimerType() == kTimerTypeRecurring)
   {
@@ -1965,16 +1945,14 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     else
     {
       time_t endDate = startDate + static_cast<time_t>(kRecurringRuleWindowDays) * 86400;
-      ok = m_client.CreateRecurringRule(static_cast<int>(timer.GetClientChannelUid()),
-                                        timer.GetTitle(), daysOfWeek, startSeconds, endSeconds,
-                                        startDate, endDate, error);
+      ok = m_client.CreateRecurringRule(static_cast<int>(timer.GetClientChannelUid()), timer.GetTitle(), daysOfWeek,
+                                        startSeconds, endSeconds, startDate, endDate, error);
     }
   }
   else
   {
-    ok = m_client.CreateOneTimeRecording(static_cast<int>(timer.GetClientChannelUid()),
-                                         timer.GetStartTime(), ComputeOneTimeRecordingEndTime(timer),
-                                         timer.GetTitle(), error);
+    ok = m_client.CreateOneTimeRecording(static_cast<int>(timer.GetClientChannelUid()), timer.GetStartTime(),
+                                         ComputeOneTimeRecordingEndTime(timer), timer.GetTitle(), error);
   }
 
   if (!ok)
@@ -2007,10 +1985,13 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   // materializes it, not synchronously here.
   if (timer.GetTimerType() != kTimerTypeSeries && timer.GetTimerType() != kTimerTypeRecurring)
   {
-    std::thread([this]() {
-      std::this_thread::sleep_for(std::chrono::seconds(5));
-      TriggerRecordingUpdate();
-    }).detach();
+    std::thread(
+        [this]()
+        {
+          std::this_thread::sleep_for(std::chrono::seconds(5));
+          TriggerRecordingUpdate();
+        })
+        .detach();
   }
   return PVR_ERROR_NO_ERROR;
 }
@@ -2039,9 +2020,8 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
     // key is title+tvg_id+epg_source_id by design, and Kodi's own series
     // timer dialog doesn't meaningfully support "rename this rule" as a
     // normal workflow to begin with.
-    ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId,
-                                   timer.GetTitle(), timer.GetPreventDuplicateEpisodes() != 0,
-                                   error);
+    ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId, timer.GetTitle(),
+                                   timer.GetPreventDuplicateEpisodes() != 0, error);
   }
   else if (isRecurring)
   {
@@ -2062,9 +2042,8 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
       // calling UpdateTimer() with everything else unchanged and just
       // GetState() flipped, not a separate dedicated call.
       bool enabled = timer.GetState() != PVR_TIMER_STATE_DISABLED;
-      ok = m_client.UpdateRecurringRule(ruleId, static_cast<int>(timer.GetClientChannelUid()),
-                                        timer.GetTitle(), daysOfWeek, startSeconds, endSeconds,
-                                        startDate, enabled, error);
+      ok = m_client.UpdateRecurringRule(ruleId, static_cast<int>(timer.GetClientChannelUid()), timer.GetTitle(),
+                                        daysOfWeek, startSeconds, endSeconds, startDate, enabled, error);
     }
   }
   else

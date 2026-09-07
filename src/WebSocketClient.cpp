@@ -107,8 +107,7 @@ bool WebSocketClient::SendAll(const uint8_t* data, size_t len, int timeoutSecond
         error = "Timed out waiting for the WebSocket send buffer to drain";
         return false;
       }
-      auto remainingMs =
-          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+      auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
       curl_socket_t sockfd = CURL_SOCKET_BAD;
       curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sockfd);
       fd_set writeFds;
@@ -170,8 +169,7 @@ int WebSocketClient::FillBuffer(int timeoutSeconds, std::string& error)
       auto now = std::chrono::steady_clock::now();
       if (now >= deadline)
         return 0;
-      auto remainingMs =
-          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+      auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
       fd_set readFds;
       FD_ZERO(&readFds);
       FD_SET(sockfd, &readFds);
@@ -217,13 +215,8 @@ int WebSocketClient::ReadExact(uint8_t* out, size_t len, int timeoutSeconds, std
   return 1;
 }
 
-bool WebSocketClient::Connect(const std::string& host,
-                              int port,
-                              bool useTls,
-                              const std::string& pathAndQuery,
-                              bool verifySsl,
-                              int connectTimeoutSeconds,
-                              std::string& error)
+bool WebSocketClient::Connect(const std::string& host, int port, bool useTls, const std::string& pathAndQuery,
+                              bool verifySsl, int connectTimeoutSeconds, std::string& error)
 {
   Close();
 
@@ -259,20 +252,19 @@ bool WebSocketClient::Connect(const std::string& host,
   std::string key = Base64Encode(nonce, sizeof(nonce));
 
   std::string request = "GET " + pathAndQuery +
-                         " HTTP/1.1\r\n"
-                         "Host: " +
-                         host + ":" + std::to_string(port) +
-                         "\r\n"
-                         "Upgrade: websocket\r\n"
-                         "Connection: Upgrade\r\n"
-                         "Sec-WebSocket-Key: " +
-                         key +
-                         "\r\n"
-                         "Sec-WebSocket-Version: 13\r\n"
-                         "\r\n";
+                        " HTTP/1.1\r\n"
+                        "Host: " +
+                        host + ":" + std::to_string(port) +
+                        "\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        "Sec-WebSocket-Key: " +
+                        key +
+                        "\r\n"
+                        "Sec-WebSocket-Version: 13\r\n"
+                        "\r\n";
 
-  if (!SendAll(reinterpret_cast<const uint8_t*>(request.data()), request.size(), connectTimeoutSeconds,
-               error))
+  if (!SendAll(reinterpret_cast<const uint8_t*>(request.data()), request.size(), connectTimeoutSeconds, error))
   {
     Close();
     return false;
@@ -306,8 +298,8 @@ bool WebSocketClient::Connect(const std::string& host,
   }
 
   std::string headerLower = ToLower(headerText);
-  bool got101 = headerLower.find(" 101 ") != std::string::npos ||
-                headerLower.rfind("http/1.1 101", 0) == 0 || headerLower.rfind("http/1.0 101", 0) == 0;
+  bool got101 = headerLower.find(" 101 ") != std::string::npos || headerLower.rfind("http/1.1 101", 0) == 0 ||
+                headerLower.rfind("http/1.0 101", 0) == 0;
   bool gotUpgrade = headerLower.find("upgrade: websocket") != std::string::npos;
   if (!got101 || !gotUpgrade)
   {
@@ -425,31 +417,31 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
 
     switch (opcode)
     {
-      case 0x9: // ping
-        if (!SendPong(payload, timeoutSeconds, error))
-          return -1;
-        continue;
-      case 0xA: // pong
-        continue;
-      case 0x8: // close
-        SendClose(timeoutSeconds, error);
-        error = "WebSocket connection closed by peer (close frame)";
+    case 0x9: // ping
+      if (!SendPong(payload, timeoutSeconds, error))
         return -1;
-      case 0x1: // text
-      case 0x0: // continuation
-        assembled.insert(assembled.end(), payload.begin(), payload.end());
-        assembling = true;
-        if (fin)
-        {
-          message.assign(reinterpret_cast<const char*>(assembled.data()), assembled.size());
-          return 1;
-        }
-        continue;
-      case 0x2: // binary -- unexpected for this server's event payloads; skip it
-      default:
-        if (fin && !assembling)
-          continue; // a standalone, uninteresting frame -- keep listening
-        continue;
+      continue;
+    case 0xA: // pong
+      continue;
+    case 0x8: // close
+      SendClose(timeoutSeconds, error);
+      error = "WebSocket connection closed by peer (close frame)";
+      return -1;
+    case 0x1: // text
+    case 0x0: // continuation
+      assembled.insert(assembled.end(), payload.begin(), payload.end());
+      assembling = true;
+      if (fin)
+      {
+        message.assign(reinterpret_cast<const char*>(assembled.data()), assembled.size());
+        return 1;
+      }
+      continue;
+    case 0x2: // binary -- unexpected for this server's event payloads; skip it
+    default:
+      if (fin && !assembling)
+        continue; // a standalone, uninteresting frame -- keep listening
+      continue;
     }
   }
 }

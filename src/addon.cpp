@@ -11,8 +11,7 @@ class CAddonDispatcharr : public kodi::addon::CAddonBase
 public:
   CAddonDispatcharr() = default;
 
-  ADDON_STATUS CreateInstance(const kodi::addon::IInstanceInfo& instance,
-                              KODI_ADDON_INSTANCE_HDL& hdl) override
+  ADDON_STATUS CreateInstance(const kodi::addon::IInstanceInfo& instance, KODI_ADDON_INSTANCE_HDL& hdl) override
   {
     if (instance.IsType(ADDON_INSTANCE_PVR))
     {
@@ -36,8 +35,7 @@ public:
   // forbid it, and other PVR addons have hit concurrent-instance requests
   // for things like recording-thumbnail generation), destroying one
   // instance can't wipe the tracking for a still-alive other one.
-  void DestroyInstance(const kodi::addon::IInstanceInfo& instance,
-                       const KODI_ADDON_INSTANCE_HDL hdl) override
+  void DestroyInstance(const kodi::addon::IInstanceInfo& instance, const KODI_ADDON_INSTANCE_HDL hdl) override
   {
     std::lock_guard<std::mutex> lock(m_instancesMutex);
     auto* pvr = static_cast<PVRDispatcharr*>(hdl);
@@ -59,8 +57,7 @@ public:
   // shared config for the whole addon, not per-instance) -- broadcasting
   // to every tracked instance is the only correct behavior if more than
   // one ever exists, not a "pick one" choice.
-  ADDON_STATUS SetSetting(const std::string& settingName,
-                          const kodi::addon::CSettingValue& settingValue) override
+  ADDON_STATUS SetSetting(const std::string& settingName, const kodi::addon::CSettingValue& settingValue) override
   {
     std::lock_guard<std::mutex> lock(m_instancesMutex);
     // No instance yet (or already destroyed): nothing to apply live to --

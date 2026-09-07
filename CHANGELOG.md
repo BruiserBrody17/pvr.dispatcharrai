@@ -10,6 +10,18 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.9.0] - 2026-09-07
+
+Versioning scheme change only -- no code changed in this entry. All three
+pieces stepped back from `1.0.x` to `0.x`: addon `1.0.8` -> `0.9.0`,
+`timeshift_buffer` `1.0.6` -> `0.6.0`, `recording_edl` `1.0.2` -> `0.2.0`.
+This project is still single-user and still turning up real bugs in
+testing, and depends on Dispatcharr, which is itself still pre-1.0
+(`0.30.0`) -- `1.0.x` signaled more stability than actually existed. Per
+SemVer, `0.x` means "still changing," which is the honest state of things
+right now. Future `1.0.0` releases (for any of the three pieces) will
+happen once that's genuinely true, not on a fixed schedule.
+
 ## [1.0.8] - 2026-09-07
 
 Addon only -- neither companion plugin changed for this pass.
