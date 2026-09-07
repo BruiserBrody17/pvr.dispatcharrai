@@ -34,8 +34,7 @@ public:
   // DispatcharrClient's Config at construction, and
   // enable_realtime_updates, which would need to dynamically start/stop a
   // background thread -- deliberately left out of scope here).
-  ADDON_STATUS OnAddonSettingChanged(const std::string& settingName,
-                                     const kodi::addon::CSettingValue& settingValue);
+  ADDON_STATUS OnAddonSettingChanged(const std::string& settingName, const kodi::addon::CSettingValue& settingValue);
 
   // --- General ---
   PVR_ERROR GetCapabilities(kodi::addon::PVRCapabilities& capabilities) override;
@@ -95,9 +94,7 @@ public:
   PVR_ERROR GetStreamReadChunkSize(int& chunksize) override;
 
   // --- EPG ---
-  PVR_ERROR GetEPGForChannel(int channelUid,
-                             time_t start,
-                             time_t end,
+  PVR_ERROR GetEPGForChannel(int channelUid, time_t start, time_t end,
                              kodi::addon::PVREPGTagsResultSet& results) override;
   // "Play from guide" for a past/currently-airing programme, backed by
   // Dispatcharr's catch-up/archive feature (see docs/API_NOTES.md) --
@@ -268,9 +265,8 @@ private:
   // UTC-midnight start date). Returns false (with error set) only when no
   // weekday is selected at all -- everything else here is pure,
   // infallible conversion.
-  bool ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer,
-                                  std::vector<int>& daysOfWeekOut, int& startSecondsOut,
-                                  int& endSecondsOut, time_t& startDateOut, std::string& error);
+  bool ComputeRecurringRuleFields(const kodi::addon::PVRTimer& timer, std::vector<int>& daysOfWeekOut,
+                                  int& startSecondsOut, int& endSecondsOut, time_t& startDateOut, std::string& error);
 
   // AddTimer()'s one-time-recording branch only. Returns timer.GetEndTime()
   // unchanged unless: the timer's own channel/start/end exactly match a

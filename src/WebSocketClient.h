@@ -45,13 +45,8 @@ public:
   // may include a query string, e.g. "/ws/?token=..."). Returns false
   // (with `error` set) if the TCP/TLS connect or the HTTP Upgrade
   // handshake fails.
-  bool Connect(const std::string& host,
-               int port,
-               bool useTls,
-               const std::string& pathAndQuery,
-               bool verifySsl,
-               int connectTimeoutSeconds,
-               std::string& error);
+  bool Connect(const std::string& host, int port, bool useTls, const std::string& pathAndQuery, bool verifySsl,
+               int connectTimeoutSeconds, std::string& error);
 
   // Blocks until a complete text message is received, the connection is
   // closed (by either side) or fails, or `timeoutSeconds` elapses with no
@@ -64,7 +59,10 @@ public:
   int ReceiveTextMessage(std::string& message, int timeoutSeconds, std::string& error);
 
   void Close();
-  bool IsConnected() const { return m_curl != nullptr; }
+  bool IsConnected() const
+  {
+    return m_curl != nullptr;
+  }
 
 private:
   // Blocks until all `len` bytes are handed to the OS (not necessarily
