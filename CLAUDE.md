@@ -88,6 +88,16 @@ platform.
   solve; the only goal is keeping `master` in a known-good state and
   having a diff to review before a change becomes permanent, given there
   is no automated test suite to catch a half-finished change otherwise.
+  A branch that lives for a while (a real feature, not a quick fix)
+  drifts out of sync with `master` as unrelated work merges in around
+  it -- periodically run `git merge master` into it along the way rather
+  than letting the gap grow for weeks and facing one large reconciliation
+  at the end. This matters more here than on a project with real test
+  coverage: a dependency whose *signature* changed underneath the branch
+  fails loudly (won't compile) the moment master's changes are merged
+  in, but a dependency whose *behavior* changed without its signature
+  changing won't -- nothing will flag it except actually re-testing the
+  branch after syncing, since there's no test suite to catch it instead.
 - **Batch fixes into releases -- don't tag/release per individual fix.**
   Early on this project tagged and released (including the full manual
   CoreELEC build-and-upload dance) after nearly every single bug fix,
