@@ -1426,3 +1426,192 @@ server, not done this pass) -- confidence here comes from reusing the
 exact same `fatalOut` mechanism already proven correct for the
 cold-start case, not a fresh, untested code path.
 
+### A crashed viewer's own reference-count entry never got cleaned up, silently defeating fast teardown
+
+Found via a comparative architecture review of this plugin's own
+implementation (not a user report). `plugin.py`'s viewer reference
+counting (`_start_buffer`/`_stop_buffer`, see the "Concurrent viewers"
+section above) tracks who's watching in a plain `viewers` list, but
+liveness itself -- `last_heartbeat` -- was buffer-wide, not per-viewer:
+*any* successful file fetch from *any* viewer refreshed the same single
+timestamp (see `_touch_heartbeat`'s own comment for why that design
+exists at all -- it's what lets a client with no viewer_id lifecycle,
+like plain `inputstream.ffmpegdirect` passthrough, still work as a
+liveness signal).
+
+That's fine for the buffer-wide idle reaper, but it meant a specific
+viewer's own entry in the `viewers` list was never independently
+checked for staleness. If one viewer (device A) crashed hard enough to
+never call `stop_buffer` -- a force-quit, a network drop, a power loss,
+exactly the case the idle-timeout backstop exists for -- its `viewer_id`
+just sat in the list forever, kept looking "alive" by device B's own
+ordinary segment fetches continuing to refresh the buffer-wide
+heartbeat. When B *later* stopped cleanly, `_stop_buffer` removed B's
+own id, saw A's phantom id still present, and returned "viewer removed;
+buffer still active for other viewers" -- so the underlying ffmpeg
+process was never actually stopped and the provider's concurrent-stream
+slot stayed occupied, even though nobody was left watching. That
+silently defeated the entire point of the reference-counted fast-
+teardown fix (and the provider-concurrent-stream-limit fast-fail fix
+that depends on slots actually freeing up promptly), for precisely the
+failure mode -- an ungraceful client exit -- most likely to trigger it.
+
+Fixed by tracking a last-seen timestamp *per viewer_id*
+(`viewer_heartbeats`, a parallel dict alongside `viewers`), not just one
+buffer-wide value. `_prune_stale_viewers()` drops any viewer whose own
+last-seen exceeds `idle_timeout_seconds`, called from `_stop_buffer()`
+right before it decides whether the buffer is still in use by anyone
+else, and from the reaper loop on every tick for ongoing hygiene (so
+`list_buffers`'s reported viewer counts stay accurate too, not just the
+teardown decision). A viewer with no recorded heartbeat yet -- state
+written by a pre-upgrade plugin version, or a `start_buffer` call that
+landed the same instant -- is treated as fresh as of "now", not already
+stale, so a rolling upgrade can't mass-prune viewers that simply haven't
+had a chance to report in.
+
+Per-viewer liveness needs an explicit signal, since ordinary segment/
+playlist fetches carry no `viewer_id` at all (they're plain HTTP GETs --
+the plugin has no way to attribute one to a specific caller). The
+`heartbeat` action already existed but was previously undifferentiated
+(refreshed only the buffer-wide timestamp); extended to also accept an
+optional `viewer_id` and refresh that viewer's own entry. The addon side
+(`pvr.dispatcharrai`) now calls it periodically -- every 10s, piggybacked
+on `ReadLiveTimeshiftStream()` rather than a dedicated thread, since
+that function already runs continuously for as long as playback
+continues -- comfortably under the 30s default `idle_timeout_seconds`,
+so a genuinely-still-watching viewer's own entry never goes stale
+between heartbeats. A client that doesn't send one (an older addon
+build, or any client using plain passthrough with no viewer_id at all)
+just doesn't participate in per-viewer pruning, same as it never
+participated in reference counting to begin with -- no regression for
+that case, since the buffer-wide heartbeat mechanism is untouched.
+
+Verified via isolated logic testing (the crashed-viewer scenario, the
+ordinary both-fresh case, and the pre-upgrade-state case that must NOT
+mass-prune, all confirmed to behave correctly) and confirmed live that
+the addon-side change compiles and the addon loads and runs normally
+(Windows, `Addons.GetAddonDetails` reports `broken: false` after
+reload). The server-side half needs the updated plugin redeployed to a
+live Dispatcharr instance to exercise end-to-end (a real second-viewer-
+crash scenario isn't something this pass triggered against a live
+buffer) -- not yet done as of this writing.
+
+### The plugin's own file server had no access control at all
+
+Found via the same comparative architecture review, not a user report or
+a live incident. `_BufferRequestHandler` (the plugin's own minimal HTTP
+server -- see the module docstring's "Since plugins can't register their
+own URL routes" bullet for why it exists at all) only ever guarded
+against path traversal; it had no concept of *who* was asking. Unlike
+every other way into this data -- Dispatcharr's own stream endpoints
+(gated by `network_access_allowed(request, "STREAMS")`), its API
+(session/API-key auth), this plugin's own `run/` actions (admin-account
+gated, confirmed via `apps/accounts/permissions.py`) -- this server had
+none of that. The plugin's own docs ask users to expose `http_port`
+through their container config "the same way 9191 already is", which in
+practice often means the whole LAN and sometimes further (port-forwarded
+for remote access). Anyone who could reach that port could read any
+channel's currently-buffered live segments with zero Dispatcharr
+credentials at all -- a real broken-access-control gap (OWASP A01), not
+just a theoretical one, given how routinely this exact port gets opened
+up per the plugin's own setup instructions.
+
+Fixed by requiring a per-buffer access token (`secrets.token_urlsafe(24)`,
+compared with `secrets.compare_digest` to avoid a timing side-channel) on
+every request to `_BufferRequestHandler`. The token is generated once
+when a buffer is first created (`_start_buffer`'s fresh-start branch) and
+handed back in that same authenticated action's response -- the only way
+to ever learn it is to already have Dispatcharr admin credentials, same
+gate as everything else server-side. Checked in `_check_access_token`,
+called from both `do_GET` and `do_HEAD` before touching the filesystem or
+refreshing any heartbeat. A buffer already running under a pre-upgrade
+plugin version (Redis state predates the `access_token` field) gets one
+retrofitted the next time `start_buffer` reattaches to it, rather than
+being permanently unreachable -- self-healing across an upgrade, the
+same design principle as the crashed-viewer fix above.
+
+Addon-side (`pvr.dispatcharrai`), the token comes back in
+`StartTimeshiftBuffer()`'s own response (`CallTimeshiftPluginAction()`),
+gets appended to the playlist URL there, cached on
+`LiveTimeshiftStreamState::accessToken`, and reused for every later
+segment range-read (`ReadLiveTimeshiftStream()`) -- no need for
+`get_live_manifest`'s own response to carry it separately, since the
+token doesn't change for the life of the buffer.
+`secrets.token_urlsafe()`'s output is already URL-safe base64
+(`[A-Za-z0-9_-]`, no padding), so it needs no escaping to sit directly in
+a query string.
+
+Confirmed live (Windows): the addon-side change compiles and the addon
+loads and runs normally after reload (`Addons.GetAddonDetails` reports
+`broken: false`). The full request-gets-rejected-without-a-token and
+retrofitted-token-on-reattach paths need the updated plugin deployed to
+a live Dispatcharr instance to exercise end-to-end -- not yet done as of
+this writing.
+
+### `get_live_manifest` rebuilt its whole response from scratch on every call
+
+Found via the same comparative architecture review, not a live incident
+-- this was a genuine inefficiency, not a correctness bug (the manifest
+returned was always accurate). `_get_live_manifest()` read and parsed the
+entire `live.m3u8` playlist and called `stat()` on every currently-
+visible segment on every single call, with no memory of what a previous
+call already found. At this plugin's own defaults (`buffer_minutes=60`,
+`segment_seconds=2`), the visible window is 1800 segments -- so a call
+that found nothing new still cost up to 1800 `stat()` syscalls plus a
+full playlist re-parse, and this function is called far more often than
+the buffer could possibly have grown: pvr.dispatcharrai's own catch-up-
+to-tail loop and throttled length checks (`RefreshLiveManifest()`) call
+it repeatedly while waiting, not just once per new segment. Notably, the
+*client*-side counterpart of this exact function (the addon's own
+`RefreshLiveManifest()`) already only merges segments newer than what it
+has cached -- this function just wasn't applying the same principle to
+its own internal work.
+
+Fixed with a per-worker-process, in-memory cache (`_manifest_cache`,
+keyed by `channel_uuid`), not a Redis-backed one -- deliberately, to
+avoid adding a second, differently-shaped piece of Redis-persisted state
+alongside the buffer's own lifecycle state for what's purely a
+performance optimization, and to avoid the JSON-(de)serialization cost
+of round-tripping up to 1800 entries through Redis on every call, which
+could plausibly have eaten into the very savings being chased. Freshness
+is checked cheaply via the playlist file's own `mtime`/`size` (one
+`stat()` call, unavoidable and cheap) rather than a content hash:
+
+- If unchanged since this same worker process's own last read: the
+  entire previous response is reused outright -- no re-parse, no
+  re-stat, not even a re-read of the playlist text.
+- If changed: the playlist is re-parsed (cheap -- a small text file), but
+  each segment is looked up in the cache **by its `sequence` number**
+  before deciding whether to `stat()` it again. A sequence number is
+  never reused for the life of a buffer (HLS media sequence is
+  monotonic) even though `-segment_wrap` does recycle *filenames* -- so
+  a cache hit by sequence is guaranteed to be the exact same bytes, the
+  same invariant the addon's own client-side merge logic already relies
+  on. Only genuinely new segments (normally just one, in steady state)
+  pay for a `stat()` call. Byte/time offsets are still recomputed on
+  every call regardless of cache hits -- cheap, in-memory-only
+  arithmetic, not themselves cacheable, since they're deliberately
+  window-relative (see this function's own docstring).
+
+Being per-worker rather than cross-worker means the benefit depends on
+how consistently Dispatcharr's WSGI layer routes one viewer's repeated
+`get_live_manifest` calls to the same worker process -- not something
+this pass confirmed either way. Worst case (a cold worker, or requests
+bouncing across workers with no affinity) is identical to the old
+behavior, never worse; it only helps, and how *much* it helps in
+practice depends on that routing behavior. The buffer-lifecycle Redis
+state itself is untouched by this change.
+
+Verified via a functional test against the real, unmodified
+`_get_live_manifest()` function (imported directly, not reimplemented)
+against real files in a temp directory, with `Path.stat()` calls counted
+via monkeypatching: confirmed a cold call stats every segment (3/3), an
+unchanged-playlist call stats zero segments and returns a byte-identical
+manifest, a call with exactly one new segment stats exactly that one
+segment, and -- the trickiest case -- a call where the sliding window
+drops a segment and a *new* segment recycles that dropped segment's
+*filename* correctly treats it as genuinely new (stats it fresh, keyed
+by its new sequence number) rather than incorrectly reusing the old
+cached size for the reused filename. Not yet exercised against a live
+Dispatcharr instance or measured for actual wall-clock savings.
+

@@ -10,6 +10,48 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [1.0.5] - 2026-09-07
+
+Addon only. `timeshift_buffer` also bumped, to its own independent
+`1.0.2` (per the decoupled versioning policy) -- the addon-side and
+plugin-side halves below are paired, so this release **requires
+redeploying the updated `timeshift_buffer` plugin to Dispatcharr** for
+any of it to take effect server-side. All three items found via a
+comparative architecture review of the plugin's own implementation, not
+user reports or live incidents.
+
+### Fixed
+
+- Live TV server-side timeshift: a viewer that crashed (force-quit,
+  network drop) without cleanly stopping could leave its own reference-
+  count entry stuck on the shared buffer forever, silently preventing the
+  *next* viewer's clean stop from actually tearing the buffer down --
+  defeating the fast-teardown guarantee the whole viewer reference-
+  counting design depends on. Fixed by tracking each viewer's own
+  last-seen time separately instead of one buffer-wide heartbeat; the
+  addon now pings the plugin with a per-viewer heartbeat every 10s while
+  a stream is open. See `docs/TIMESHIFT.md`'s "A crashed viewer's own
+  reference-count entry never got cleaned up" section.
+- Live TV server-side timeshift: the plugin's own segment/playlist file
+  server (a separate port from Dispatcharr's own, exposed the same way
+  per the plugin's own setup instructions) had no access control at all
+  -- anyone who could reach that port could read any channel's currently-
+  buffered live segments with zero Dispatcharr credentials. Fixed by
+  requiring a per-buffer access token, issued only via the already
+  admin-gated `start_buffer` action. See `docs/TIMESHIFT.md`'s "The
+  plugin's own file server had no access control at all" section.
+
+### Changed
+
+- `timeshift_buffer`'s `get_live_manifest` action no longer rebuilds its
+  entire response from scratch on every call -- at this plugin's own
+  defaults that was up to 1,800 `stat()` syscalls and a full playlist
+  re-parse for a call that found nothing new, and it's called far more
+  often than the buffer could possibly have grown. Now caches per-worker-
+  process and only re-stats genuinely new segments. See
+  `docs/TIMESHIFT.md`'s "`get_live_manifest` rebuilt its whole response
+  from scratch on every call" section.
+
 ## [1.0.4] - 2026-09-06
 
 Addon bumped to 1.0.4. Both companion plugins also bumped, to their own
