@@ -245,7 +245,21 @@ to its original settings and left running normally.
   `docs/TIMESHIFT.md`'s "1.0.6 follow-up" section's "Update -- verified
   live against the real failure" note for the full account. Not
   blocking any release -- flagged so it doesn't get lost, not because
-  it's currently causing visible harm.
+  it's currently causing visible harm. (Not the same bug as the next
+  item below -- that one *did* trigger the size-disagreement
+  diagnostic; this one still hasn't, across 134+ occurrences.)
+- [x] **A second, related `Packet corrupt`/freeze, this one confirmed
+  root-caused and fixed (2026-09-07).** Switching away from a channel
+  and back could reproduce a real segment-size disagreement -- this one
+  *did* trigger the 1.0.7 diagnostic live. Root cause: the plugin's
+  per-worker manifest cache wasn't invalidated across a buffer restart
+  in a multi-worker deployment (a new ffmpeg process reuses the same
+  segment filenames/sequence numbers as its predecessor). Fixed by
+  tying cache entries to the buffer's own process ID; a mismatch now
+  discards the whole entry. See `docs/TIMESHIFT.md`'s "1.0.7 follow-up
+  #2" section. Not yet re-verified live against the exact repro (would
+  need another macOS pass) -- if it recurs, the diagnostic will still
+  catch and log it.
 - **All four platforms now have a completed smoke-test pass** (Windows,
   Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
   confirmed live on all four, closing out what was the last real gap in
