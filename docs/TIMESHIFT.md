@@ -1706,3 +1706,102 @@ the chain that was capable of blocking longer than 2 seconds, verified
 by re-reading the rewritten function against this same root-cause
 analysis, plus a clean compile and a normal (non-stalled) reload in Kodi.
 
+### 1.0.6 follow-up: a second, distinct freeze -- corrupt packets within seconds of open
+
+Reported live (macOS, addon 1.0.6, plugin 1.0.2, confirmed both actually
+running) immediately after the heartbeat fix above shipped: ESPN
+(1080p) still froze, but with a different signature ruling out a
+recurrence of the heartbeat bug -- stalled in ~10s with zero successful
+`ReadLiveTimeshiftStream` catch-up cycles logged first (the heartbeat
+incident had several successful cycles before it hung), and the first
+sign of trouble was ffmpeg's own `[mpegts] Packet corrupt` at ~4.7s,
+well before even one 10s heartbeat interval could have elapsed. The
+report ruled out the data itself first: segments fetched directly from
+the plugin's file server (via a real access token) had 100% correct TS
+packet alignment across ~54,000 packets checked and correct
+`Content-Length` on every fetch.
+
+`Packet corrupt` at the mpegts-demuxer level is a byte-structure error
+(a PES length mismatch or continuity-counter break), not a "haven't
+found a keyframe yet" situation -- combined with the underlying files
+being provably intact, this means the wrong bytes were requested, not
+that corrupt bytes existed on disk. Two candidates were investigated
+with source access, as the report itself suggested would settle it
+faster than further black-box log analysis:
+
+**Investigated and not the cause: the addon's cold-start read position.**
+`OpenLiveTimeshiftStream()`'s trim step (kLiveEdgeMarginSegments) and
+its cold-start retry loop (`RefreshLiveManifest()` retried up to 30
+times, breaking on the first response with at least one segment) were
+read in full. Starting mid-GOP on a freshly-opened `-c copy` buffer is
+inherent to how any live TS proxy works and isn't new -- and a mid-GOP
+start produces missing-reference-frame warnings at the codec level
+followed by a clean resync at the next keyframe, not TS-packet-level
+corruption. Ruled out as the mechanism, though not necessarily unrelated
+to why decode looked as bad as it did once real corruption was already
+present.
+
+**Root cause: a wrong segment size, once locked in, permanently
+misaligns every later segment's computed offset.** This addon's own
+`RefreshLiveManifest()` merges each newly-seen segment's `byte_size`
+into its own cumulative address space exactly once (its own comment:
+"an already-known segment's size can't legitimately change"), and every
+*later* segment's `byteOffset` is computed by adding onto that same
+running total -- never recomputed from the plugin's own response
+offsets, which are deliberately window-relative (see the top of this
+file). If the plugin ever reports a `byte_size` smaller than a
+segment's real size, the addon requests exactly that (smaller) range,
+gets a clean, fully valid 206 response for it (no error anywhere -- it's
+genuinely a truthful subset of real, correctly-encoded bytes), advances
+past what it believes is the segment's end, and starts reading the
+*next* segment's file from byte 0 -- silently skipping however many
+real bytes were missed at the end of the previous one. That skip lands
+wherever it lands relative to TS packet boundaries, which is almost
+certainly mid-packet, producing exactly a `Packet corrupt` signature at
+the seam -- and unlike a clean read error, it's undetectable by fetching
+either file whole and checking it in isolation (exactly what the
+report's own verification did, and exactly why it couldn't have caught
+this).
+
+Whether `get_live_manifest` can *actually* report a wrong size
+under real conditions wasn't conclusively proven live (a deliberate
+attempt to force the exact race wasn't made this pass), but a plausible
+mechanism exists in the manifest cache added for the "rebuilt its whole
+response from scratch" fix above: a segment's size is cached the first
+time it's observed and trusted from then on. Two changes address this,
+at both ends independently, rather than betting on pinning down the
+exact trigger:
+
+- **Plugin side:** `_get_live_manifest()` now always re-`stat()`s the
+  newest (last-listed) segment on any call that reparses the playlist,
+  even if it matches a cached entry -- never trusting a cache hit for
+  the one entry that could conceivably have been observed before a
+  write was fully settled. Every other cached entry remains trusted
+  outright, since a *later* segment having since appeared after it is
+  itself proof it's done. Verified via a functional test against the
+  real function: a cache entry deliberately poisoned with a wrong size
+  for a still-newest segment is correctly discarded and re-verified the
+  next time that segment's entry is touched by a reparse.
+- **Addon side:** `ReadLiveTimeshiftStream()` now captures the real
+  segment size the plugin's file server reports on every read (the
+  `Content-Range: bytes X-Y/TOTAL` header any Range GET already
+  receives, previously read and discarded) and compares it against the
+  size this session cached for that segment. Any disagreement -- from
+  this exact mechanism or any other future cause -- is now a loud,
+  immediate, diagnosable failure (`ADDON_LOG_ERROR` naming the segment,
+  its sequence, and both sizes, then `fatal = true`) instead of silent,
+  permanent misalignment for the rest of the session. This is the more
+  load-bearing of the two changes: it doesn't depend on correctly
+  guessing the plugin-side trigger, and turns any future recurrence
+  (from this cause or a new one) into an actionable log line instead of
+  another multi-hour investigation.
+
+Confirmed live (Windows): both changes compile cleanly and the addon
+reloads normally. The plugin-side fix is verified via a functional test
+against the real, unmodified function. Neither change was verified
+against the exact original failure (would need the real ESPN 1080p
+stream and a way to force the underlying race, not available from this
+session) -- if this recurs after both ship, the new addon-side
+diagnostic should name the exact segment and size disagreement, which
+would be the fastest path to a fully confirmed root cause.
+
