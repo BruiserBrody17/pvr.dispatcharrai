@@ -240,16 +240,26 @@ to its original settings and left running normally.
   worked fine. Ruled out as the *same* mechanism as 1.0.7's
   permanent-freeze fix (that fix's own diagnostic, which directly
   detects a segment-size disagreement, never fired once across 134
-  occurrences of this). Leading, unconfirmed guess: something about
-  concatenating independently-produced segment *files* into one
-  continuous raw byte stream for a non-HLS-aware demuxer (a PCR/
-  continuity-counter discontinuity at each splice point). See
-  `docs/TIMESHIFT.md`'s "1.0.6 follow-up" section's "Update -- verified
-  live against the real failure" note for the full account. Not
-  blocking any release -- flagged so it doesn't get lost, not because
-  it's currently causing visible harm. (Not the same bug as the next
-  item below -- that one *did* trigger the size-disagreement
-  diagnostic; this one still hasn't, across 134+ occurrences.)
+  occurrences of this). **Refined hypothesis (2026-09-07, still not
+  confirmed, deliberately not pursued further):** ffmpeg's `-f segment`
+  muxer opens a fresh `AVFormatContext` per segment file -- `-c copy`
+  skips re-encoding, but the TS *muxing* layer (including each PID's
+  continuity counter) is regenerated fresh per file, normal for
+  independently-playable HLS segments but not for this addon's own
+  design of concatenating them into one raw byte stream. Real
+  corroborating precedent already in this codebase: `-reset_timestamps
+  1` was deliberately removed for the exact same class of problem
+  (per-segment muxer state resetting), just for PTS continuity instead
+  of continuity counters. Deliberately left unfixed: no known ffmpeg
+  flag suppresses the reset, and the alternative (binary-patching
+  continuity counters at each splice in the live read path) is real
+  complexity/risk for a symptom still confirmed cosmetic. See
+  `docs/TIMESHIFT.md`'s "1.0.6 follow-up" section's second "Update" note
+  for the full reasoning. Not blocking any release -- flagged so it
+  doesn't get lost, not because it's currently causing visible harm.
+  (Not the same bug as the next item below -- that one *did* trigger
+  the size-disagreement diagnostic; this one still hasn't, across 134+
+  occurrences.)
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
