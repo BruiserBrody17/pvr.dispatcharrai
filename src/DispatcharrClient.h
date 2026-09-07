@@ -319,7 +319,12 @@ public:
   // Best-effort: a failure here is logged, not surfaced to the caller --
   // losing one heartbeat isn't worth interrupting playback over, since the
   // buffer-wide heartbeat from this same read's own manifest/segment
-  // fetches already keeps the buffer itself alive regardless.
+  // fetches already keeps the buffer itself alive regardless. Bounded by
+  // design to a small, fixed worst-case duration and never touches
+  // EnsureAuthenticated()/Login()/RefreshAccessToken() -- see this
+  // method's own .cpp comment for the live-reproduced stall this fixes:
+  // riding along on ReadLiveTimeshiftStream()'s own thread means an
+  // unbounded call here is an unbounded stall of Kodi's own demuxer read.
   void SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);

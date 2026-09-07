@@ -1615,3 +1615,94 @@ by its new sequence number) rather than incorrectly reusing the old
 cached size for the reused filename. Not yet exercised against a live
 Dispatcharr instance or measured for actual wall-clock savings.
 
+### 1.0.5 regression: the new per-viewer heartbeat could stall playback permanently
+
+Reported live (macOS, 1.0.5, first playback attempt after upgrading),
+with real diagnostic work already done before this was even looked at:
+a channel glitched on open with a burst of decode errors, then sat in
+Kodi's "buffering" state for several minutes straight and never
+recovered. The report itself ruled out the server side first --
+fetching the three newest segments directly from the plugin's file
+server while Kodi was stuck came back 200 with correct sizes and zero
+MPEG-TS sync-byte misalignment across ~54,000 packets checked, and the
+buffer was actively producing new segments throughout. `kodi.log` showed
+`ReadLiveTimeshiftStream`/`SeekLiveTimeshiftStream` simply stopped
+logging anything at all for the rest of the session -- only
+`GetStreamTimes` kept polling.
+
+Root cause: `SendTimeshiftHeartbeat()`, added this same release (see "A
+crashed viewer's own reference-count entry never got cleaned up" above),
+called the shared `Request()`/`EnsureAuthenticated()` path. On a cache
+miss, `EnsureAuthenticated()` triggers a full synchronous token refresh
+or re-login (each its own `Request()` call, each allowed up to
+`m_config.timeoutSeconds` -- default 30s), and `Request()`'s own
+401-retry logic can trigger *another* refresh-or-login round before
+retrying the original call once more. Stacked worst case: on the order
+of 150s of possible blocking from a single call, entirely plausible from
+an ordinary transient network hiccup landing at the wrong moment (right
+as the access token needed refreshing) -- nothing exotic or rare about
+the trigger condition. Confirmed via reading `Request()`/
+`EnsureAuthenticated()`/`RefreshAccessToken()`/`Login()` directly (not
+independently reproduced live in this pass) that this chain is real:
+`Request()` defaults to `withAuth=true, retryOnAuthFailure=1`, `m_authMutex`
+is recursive (rules out same-thread self-deadlock, but does nothing about
+the sheer duration of the chain), and `m_accessTokenExpiry` is set to
+only 4 minutes past each login/refresh (`Login()`/`RefreshAccessToken()`'s
+own comment: SimpleJWT's default token lifetime is short), so this isn't
+a rare edge -- every real playback session hits at least one "cache
+miss" heartbeat roughly every 4 minutes it stays open.
+
+The reason this was invisible to this project's own reasoning when the
+heartbeat was first added: the design comment at the time explicitly
+called the extra round trip "bounded and infrequent enough... well
+within the waits this same function already tolerates from the catch-up
+-to-tail logic" -- true for an *ordinary* fast round trip, but that
+assumption was never actually checked against `SendTimeshiftHeartbeat()`'s
+own worst-case call chain, which was unbounded in practice. Piggybacking
+the heartbeat directly onto `ReadLiveTimeshiftStream()` -- the exact
+thread Kodi's own demuxer depends on for continuous reads -- turns any
+unbounded call on that path into an unbounded stall of live playback
+itself; a stall long enough apparently trips something in Kodi's own
+player/demuxer layer that doesn't self-recover even once the slow call
+eventually completes and fresh data resumes (consistent with the
+`ReadLiveTimeshiftStream` logging simply stopping rather than resuming
+with a delay).
+
+Fixed by rewriting `SendTimeshiftHeartbeat()` to never call
+`EnsureAuthenticated()`/`Login()`/`RefreshAccessToken()` at all: it reads
+whatever access token is already cached (a mutex lock, no network call)
+and skips the heartbeat outright if that's empty, using its own
+dedicated `curl` handle with a short, fixed 2000ms timeout instead of
+`Request()`'s shared `m_config.timeoutSeconds`/retry logic -- the same
+"build a lightweight call directly instead of going through the shared
+`Request()` helper" pattern this file already uses for
+`WaitForTimeshiftPlaylistReady()`, for the same reason (different timeout
+needs than the general-purpose helper provides). Relies on
+`RefreshLiveManifest()` -- called far more often than the heartbeat's
+10s interval, every read-loop iteration -- to keep the cached token
+fresh via the normal path in practice; a heartbeat skipped because the
+cached token happened to be stale is simply retried 10s later, never
+worth blocking a live read to guarantee.
+
+A background thread (so the read path never waits on the heartbeat call
+at all, bounded or not) was considered and deliberately not used: every
+`m_liveTimeshiftStream = LiveTimeshiftStreamState()` reset (three call
+sites -- open, failed-open cleanup, close) would need to first join any
+in-flight heartbeat thread from the outgoing state, or a still-joinable
+`std::thread` destructor call embedded in that assignment calls
+`std::terminate()` and crashes the whole process outright -- a real,
+easy-to-get-subtly-wrong hazard for a project that has already hit real
+threading bugs before (the JWT token pair/API key data races, see
+`CHANGELOG.md`'s `[0.3.0]` entry). A bounded 2000ms worst case on the
+existing synchronous path is a smaller, provably-safe change that
+directly removes the actual root cause (the *unbounded* nested
+refresh/login chain) without introducing a new lifetime hazard to get
+right instead.
+
+Not yet re-confirmed live against the exact original repro (would need
+deliberately forcing a slow/failing token refresh mid-playback, not done
+this pass) -- confidence here comes from the fix removing every call in
+the chain that was capable of blocking longer than 2 seconds, verified
+by re-reading the rewritten function against this same root-cause
+analysis, plus a clean compile and a normal (non-stalled) reload in Kodi.
+
