@@ -10,6 +10,31 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [1.0.7] - 2026-09-07
+
+`timeshift_buffer` also bumped, to its own independent `1.0.3` -- this
+release **requires redeploying the updated plugin to Dispatcharr** for
+the plugin-side half to take effect.
+
+### Fixed
+
+- Live TV server-side timeshift: a second, distinct freeze from the
+  1.0.6 fix above, reported immediately after upgrading -- playback
+  could still stall permanently, this time within seconds of opening,
+  with `ffmpeg`'s own demuxer logging `Packet corrupt`. Root cause: if
+  the plugin ever reports a segment's byte size before a write has
+  fully settled, this addon locks that size in permanently and every
+  *later* segment's computed position silently drifts out of alignment
+  with its real file for the rest of the session -- producing
+  corrupted-looking playback with no error anywhere, since each
+  individual read still "succeeds." Fixed at both ends: the plugin no
+  longer trusts a cached size for the newest segment on any given call,
+  and the addon now cross-checks the real size the file server reports
+  on every read against what it has cached, treating any disagreement
+  as an immediate, clearly-logged failure instead of silent corruption.
+  See `docs/TIMESHIFT.md`'s "1.0.6 follow-up: a second, distinct freeze"
+  section for the full investigation, including what was ruled out.
+
 ## [1.0.6] - 2026-09-07
 
 Addon only -- `timeshift_buffer` didn't change for this fix.

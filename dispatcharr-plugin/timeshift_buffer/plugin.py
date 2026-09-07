@@ -822,7 +822,14 @@ def _get_live_manifest(state: dict, logger) -> dict:
     sequence is monotonic, even though -segment_wrap does recycle
     filenames), so a cache hit by sequence is guaranteed to be the exact
     same bytes, the same invariant pvr.dispatcharrai's own
-    RefreshLiveManifest() already relies on client-side. Matters because
+    RefreshLiveManifest() already relies on client-side -- with one
+    deliberate exception: the newest (last-listed) segment on any given
+    call is always re-stat()'d even if it matches a cached entry, since a
+    size sampled the very first moment a segment becomes visible could
+    race a not-yet-fully-flushed write, and unlike every other cached
+    entry, that risk can't yet have been disproven by a later segment
+    having since appeared after it (see the inline comment where this is
+    checked). Matters because
     this is called far more often than the buffer could possibly have
     grown -- the addon's own catch-up-to-tail loop and throttled length
     checks call this repeatedly while waiting, not just once per new
@@ -914,9 +921,11 @@ def _get_live_manifest(state: dict, logger) -> dict:
                         pass
                     break
 
-            old_by_sequence = cached["by_sequence"] if cached else {}
-            new_by_sequence = {}
-            ordered = []
+            # First pass: pure text parsing, no filesystem access yet --
+            # just the (sequence, filename, duration_ms) triples in
+            # playlist order. Kept separate from size resolution below
+            # so that step can tell which entry is the newest one.
+            parsed = []
             list_index = 0  # position within the m3u8's own segment list, before any drops
             i = 0
             while i < len(lines):
@@ -929,36 +938,63 @@ def _get_live_manifest(state: dict, logger) -> dict:
                         duration_ms = int(round(float(line[len("#EXTINF:"):].rstrip(",")) * 1000))
                     except ValueError:
                         duration_ms = 0
-
-                    # A sequence number is never reused for the life of a
-                    # buffer, so a hit here (same sequence, same filename)
-                    # is guaranteed to be the exact same bytes -- see this
-                    # function's own docstring. Only genuinely new segments
-                    # (or ones this worker process hasn't seen before) pay
-                    # for a stat() call.
-                    reusable = old_by_sequence.get(sequence)
-                    if reusable is not None and reusable[0] == seg_name:
-                        size = reusable[1]
-                    else:
-                        try:
-                            size = (channel_dir / seg_name).stat().st_size
-                        except OSError:
-                            # Recycled (by the live buffer's own
-                            # -segment_wrap) between the playlist listing it
-                            # and this stat -- drop it rather than fail the
-                            # whole manifest over one segment (but
-                            # list_index/sequence still advanced above, so
-                            # later segments keep their true, stable
-                            # sequence numbers).
-                            i += 2
-                            continue
-
-                    entry = (seg_name, size, duration_ms)
-                    new_by_sequence[sequence] = entry
-                    ordered.append((sequence,) + entry)
+                    parsed.append((sequence, seg_name, duration_ms))
                     i += 2
                 else:
                     i += 1
+
+            old_by_sequence = cached["by_sequence"] if cached else {}
+            new_by_sequence = {}
+            ordered = []
+            newest_index = len(parsed) - 1
+            for idx, (sequence, seg_name, duration_ms) in enumerate(parsed):
+                # A sequence number is never reused for the life of a
+                # buffer, so a hit here (same sequence, same filename) is
+                # guaranteed to be the exact same bytes -- see this
+                # function's own docstring -- with one deliberate
+                # exception: the newest (last-listed) segment is never
+                # trusted from cache, even on a match. ffmpeg only adds a
+                # segment to the playlist once it's done writing it, but
+                # confirming that "done" is visible to a stat() from a
+                # separate process, on every filesystem, the *instant* the
+                # entry first appears, isn't something this function
+                # should assume -- a size sampled on that very first call
+                # could plausibly race a not-yet-fully-flushed write.
+                # Before this cache existed, that risk was harmless: the
+                # *next* manifest call (of which pvr.dispatcharrai's own
+                # cold-start retry loop issues several before ever reading
+                # a byte) would simply re-stat and self-correct. Caching
+                # turned a harmless, self-healing transient into a size
+                # that, once wrong, stayed wrong for the rest of that
+                # segment's time in the window -- exactly the shape of a
+                # real, reproducible corrupt-playback report on a freshly
+                # opened live-timeshift stream, which starts right at the
+                # live edge (see pvr.dispatcharrai's own
+                # kLiveEdgeMarginSegments) where the newest segment is
+                # most likely to still be this fresh. Re-verifying just
+                # the one newest entry costs at most one extra stat() per
+                # call with something new -- in the common case (exactly
+                # one new segment since last call) it costs nothing extra
+                # at all, since that segment wasn't cached yet anyway.
+                reusable = None if idx == newest_index else old_by_sequence.get(sequence)
+                if reusable is not None and reusable[0] == seg_name:
+                    size = reusable[1]
+                else:
+                    try:
+                        size = (channel_dir / seg_name).stat().st_size
+                    except OSError:
+                        # Recycled (by the live buffer's own
+                        # -segment_wrap) between the playlist listing it
+                        # and this stat -- drop it rather than fail the
+                        # whole manifest over one segment (sequence
+                        # numbers for surviving entries are unaffected,
+                        # since they were assigned from list position
+                        # above, not from what survives here).
+                        continue
+
+                entry = (seg_name, size, duration_ms)
+                new_by_sequence[sequence] = entry
+                ordered.append((sequence,) + entry)
 
             _manifest_cache[channel_uuid] = {
                 "playlist_mtime_ns": playlist_stat.st_mtime_ns,
@@ -1112,7 +1148,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "1.0.2"
+    version = "1.0.3"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
