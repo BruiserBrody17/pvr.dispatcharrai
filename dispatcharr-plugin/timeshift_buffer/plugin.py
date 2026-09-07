@@ -272,7 +272,7 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         is unsatisfiable (caller sends 416)."""
         if not range_header or not range_header.startswith("bytes="):
             return None
-        spec = range_header[len("bytes="):].split(",")[0].strip()  # first range only; multi-range unsupported
+        spec = range_header[len("bytes=") :].split(",")[0].strip()  # first range only; multi-range unsupported
         if "-" not in spec:
             return None
         start_str, _, end_str = spec.partition("-")
@@ -598,22 +598,32 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     cmd = [
         "ffmpeg",
         "-nostdin",
-        "-loglevel", "warning",
+        "-loglevel",
+        "warning",
     ]
     if attribution_headers:
         # Must precede -i: ffmpeg applies -headers to the input that
         # follows it, not globally.
         cmd += ["-headers", attribution_headers]
     cmd += [
-        "-i", _proxy_url(channel_uuid, base_url),
-        "-c", "copy",
-        "-f", "segment",
-        "-segment_time", str(segment_seconds),
-        "-segment_wrap", str(wrap_segments),
-        "-segment_list", str(playlist_path),
-        "-segment_list_size", str(visible_segments),
-        "-segment_list_flags", "+live",
-        "-segment_list_type", "m3u8",
+        "-i",
+        _proxy_url(channel_uuid, base_url),
+        "-c",
+        "copy",
+        "-f",
+        "segment",
+        "-segment_time",
+        str(segment_seconds),
+        "-segment_wrap",
+        str(wrap_segments),
+        "-segment_list",
+        str(playlist_path),
+        "-segment_list_size",
+        str(visible_segments),
+        "-segment_list_flags",
+        "+live",
+        "-segment_list_type",
+        "m3u8",
         segment_pattern,
     ]
 
@@ -630,7 +640,12 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
 
     logger.info(
         "timeshift_buffer: started ffmpeg pid=%s for channel %s (buffer=%dmin, segment=%ds, visible=%d, wrap=%d)",
-        proc.pid, channel_uuid, buffer_minutes, segment_seconds, visible_segments, wrap_segments,
+        proc.pid,
+        channel_uuid,
+        buffer_minutes,
+        segment_seconds,
+        visible_segments,
+        wrap_segments,
     )
 
     return {
@@ -683,7 +698,9 @@ def _stop_ffmpeg(state: dict, logger):
             os.killpg(pid, 0)  # signal 0: check it's still alive, don't actually signal
         except ProcessLookupError:
             logger.debug(
-                "timeshift_buffer: ffmpeg pid %s exited %.1fs after SIGTERM", pid, time.time() - start,
+                "timeshift_buffer: ffmpeg pid %s exited %.1fs after SIGTERM",
+                pid,
+                time.time() - start,
             )
             return
         time.sleep(0.2)
@@ -791,8 +808,12 @@ def _scrub_orphaned_dirs(storage_path: str, min_age_seconds: int, logger) -> lis
         except OSError:
             logger.exception("timeshift_buffer: couldn't scrub orphaned directory %s", entry)
     if removed:
-        logger.info("timeshift_buffer: scrubbed %d orphaned buffer director%s: %s",
-                    len(removed), "y" if len(removed) == 1 else "ies", ", ".join(removed))
+        logger.info(
+            "timeshift_buffer: scrubbed %d orphaned buffer director%s: %s",
+            len(removed),
+            "y" if len(removed) == 1 else "ies",
+            ", ".join(removed),
+        )
     return removed
 
 
@@ -911,8 +932,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
             raise BufferFailedError(
                 "ffmpeg exited before producing any segments -- it will not "
                 "recover on its own (a provider-side concurrent-stream limit "
-                "is the most common cause)"
-                + (f"; last ffmpeg.log lines: {log_tail}" if log_tail else "")
+                "is the most common cause)" + (f"; last ffmpeg.log lines: {log_tail}" if log_tail else "")
             )
         raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
 
@@ -966,8 +986,11 @@ def _get_live_manifest(state: dict, logger) -> dict:
         # "unknown" instances comparing equal.
         if cached is not None and (not buffer_token or cached.get("instance_token") != buffer_token):
             cached = None
-        if (cached is not None and cached["playlist_mtime_ns"] == playlist_stat.st_mtime_ns and
-                cached["playlist_size"] == playlist_stat.st_size):
+        if (
+            cached is not None
+            and cached["playlist_mtime_ns"] == playlist_stat.st_mtime_ns
+            and cached["playlist_size"] == playlist_stat.st_size
+        ):
             # Nothing on disk has changed since our own last read of this
             # exact playlist file -- reuse it outright, no re-parse, no
             # re-stat, not even a re-read of the (small but non-zero) text
@@ -983,7 +1006,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
             for line in lines:
                 if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
                     try:
-                        media_sequence = int(line[len("#EXT-X-MEDIA-SEQUENCE:"):].strip())
+                        media_sequence = int(line[len("#EXT-X-MEDIA-SEQUENCE:") :].strip())
                     except ValueError:
                         pass
                     break
@@ -1014,7 +1037,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
                         # of this file and isn't expected to ever emit
                         # "inf", but a parser reading generated content
                         # shouldn't assume that.
-                        duration_ms = int(round(float(line[len("#EXTINF:"):].rstrip(",")) * 1000))
+                        duration_ms = int(round(float(line[len("#EXTINF:") :].rstrip(",")) * 1000))
                     except (ValueError, OverflowError):
                         duration_ms = 0
                     parsed.append((sequence, seg_name, duration_ms))
@@ -1093,14 +1116,16 @@ def _get_live_manifest(state: dict, logger) -> dict:
     cumulative_bytes = 0
     cumulative_ms = 0
     for sequence, seg_name, size, duration_ms in ordered:
-        segments.append({
-            "filename": seg_name,
-            "sequence": sequence,
-            "byte_offset": cumulative_bytes,
-            "byte_size": size,
-            "time_offset_ms": cumulative_ms,
-            "duration_ms": duration_ms,
-        })
+        segments.append(
+            {
+                "filename": seg_name,
+                "sequence": sequence,
+                "byte_offset": cumulative_bytes,
+                "byte_size": size,
+                "time_offset_ms": cumulative_ms,
+                "duration_ms": duration_ms,
+            }
+        )
         cumulative_bytes += size
         cumulative_ms += duration_ms
 
@@ -1178,13 +1203,15 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                     if _prune_stale_viewers(state, idle_timeout, now):
                         logger.info(
                             "timeshift_buffer: pruned stale viewer(s) for channel %s (no heartbeat for %ds)",
-                            state["channel_uuid"], idle_timeout,
+                            state["channel_uuid"],
+                            idle_timeout,
                         )
                         _set_buffer_state(state["channel_uuid"], state)
                     if now - state.get("last_heartbeat", 0) > idle_timeout:
                         logger.info(
                             "timeshift_buffer: reaping idle buffer for channel %s (no heartbeat for %ds)",
-                            state["channel_uuid"], int(now - state.get("last_heartbeat", 0)),
+                            state["channel_uuid"],
+                            int(now - state.get("last_heartbeat", 0)),
                         )
                         _stop_ffmpeg(state, logger)
                         _remove_channel_files(state, logger)
@@ -1247,7 +1274,9 @@ class Plugin:
     # an identical plugin listing.
     fields = [
         {
-            "id": "about", "label": "About", "type": "info",
+            "id": "about",
+            "label": "About",
+            "type": "info",
             "description": (
                 "Started/stopped per channel by a client (e.g. "
                 "pvr.dispatcharrai's live-timeshift setting) via the plugin "
@@ -1256,7 +1285,9 @@ class Plugin:
             ),
         },
         {
-            "id": "storage_path", "label": "Buffer storage path", "type": "string",
+            "id": "storage_path",
+            "label": "Buffer storage path",
+            "type": "string",
             "default": "/data/timeshift",
             "help_text": (
                 "Container path where segment files are written. Point this "
@@ -1267,7 +1298,9 @@ class Plugin:
             ),
         },
         {
-            "id": "buffer_minutes", "label": "Buffer length (minutes)", "type": "number",
+            "id": "buffer_minutes",
+            "label": "Buffer length (minutes)",
+            "type": "number",
             "default": 60,
             "help_text": (
                 "How far back a viewer can rewind. Drives both "
@@ -1276,7 +1309,9 @@ class Plugin:
             ),
         },
         {
-            "id": "segment_seconds", "label": "Segment length (seconds)", "type": "number",
+            "id": "segment_seconds",
+            "label": "Segment length (seconds)",
+            "type": "number",
             "default": 2,
             "help_text": (
                 "ffmpeg -segment_time. A client only sees new content once a "
@@ -1290,7 +1325,9 @@ class Plugin:
             ),
         },
         {
-            "id": "idle_timeout_seconds", "label": "Idle timeout (seconds)", "type": "number",
+            "id": "idle_timeout_seconds",
+            "label": "Idle timeout (seconds)",
+            "type": "number",
             "default": 30,
             "help_text": (
                 "Stops a channel's buffer if no heartbeat arrives for this "
@@ -1303,12 +1340,16 @@ class Plugin:
             ),
         },
         {
-            "id": "max_concurrent_buffers", "label": "Max concurrent channel buffers", "type": "number",
+            "id": "max_concurrent_buffers",
+            "label": "Max concurrent channel buffers",
+            "type": "number",
             "default": 4,
             "help_text": "Safety cap -- each active buffer is a real ffmpeg process plus continuous disk writes.",
         },
         {
-            "id": "internal_base_url", "label": "Internal base URL", "type": "string",
+            "id": "internal_base_url",
+            "label": "Internal base URL",
+            "type": "string",
             "default": "http://127.0.0.1:9191",
             "help_text": (
                 "How the plugin reaches Dispatcharr's own live proxy from "
@@ -1319,7 +1360,9 @@ class Plugin:
             ),
         },
         {
-            "id": "http_port", "label": "Buffer server port", "type": "number",
+            "id": "http_port",
+            "label": "Buffer server port",
+            "type": "number",
             "default": 9192,
             "help_text": (
                 "Port this plugin's own file server listens on (playlists "
@@ -1335,7 +1378,9 @@ class Plugin:
             ),
         },
         {
-            "id": "test_channel_uuid", "label": "Test channel UUID", "type": "string",
+            "id": "test_channel_uuid",
+            "label": "Test channel UUID",
+            "type": "string",
             "default": "",
             "help_text": (
                 "Only used by the manual-test buttons below (plugin action "
@@ -1349,22 +1394,30 @@ class Plugin:
 
     actions = [
         {
-            "id": "start_buffer", "label": "Start Buffer (manual test)",
+            "id": "start_buffer",
+            "label": "Start Buffer (manual test)",
             "description": "Starts a rolling buffer for a channel. Params: channel_uuid (required).",
             "button_label": "Start Test Buffer",
         },
         {
-            "id": "stop_buffer", "label": "Stop Buffer",
+            "id": "stop_buffer",
+            "label": "Stop Buffer",
             "description": "Stops a channel's buffer and removes its segment files. Params: channel_uuid (required).",
             "button_label": "Stop Test Buffer",
-            "confirm": {"required": True, "title": "Stop buffer?", "message": "This ends the rolling buffer for the given channel and deletes its segment files."},
+            "confirm": {
+                "required": True,
+                "title": "Stop buffer?",
+                "message": "This ends the rolling buffer for the given channel and deletes its segment files.",
+            },
         },
         {
-            "id": "heartbeat", "label": "Heartbeat",
+            "id": "heartbeat",
+            "label": "Heartbeat",
             "description": "Refreshes a channel's idle timeout. Params: channel_uuid (required), viewer_id (optional). The buffer-wide timeout is refreshed by any file fetch regardless -- pass viewer_id to also refresh that specific viewer's own last-seen time, which is what lets stop_buffer tell a still-watching viewer apart from one that crashed without ever calling stop_buffer (see plugin.py's _prune_stale_viewers). A client with viewer_id lifecycle (start_buffer/stop_buffer) should call this on an interval well under idle_timeout_seconds.",
         },
         {
-            "id": "get_live_manifest", "label": "Get Live Manifest (manual test)",
+            "id": "get_live_manifest",
+            "label": "Get Live Manifest (manual test)",
             "description": (
                 "Returns a byte-addressable manifest (segment filenames, byte sizes, durations, "
                 "cumulative offsets) of the buffer's currently-listed segments (params: channel_uuid, "
@@ -1376,7 +1429,8 @@ class Plugin:
             "button_label": "Get Test Manifest",
         },
         {
-            "id": "list_buffers", "label": "List Active Buffers",
+            "id": "list_buffers",
+            "label": "List Active Buffers",
             "description": (
                 "Shows every currently-running buffer and its age, as a "
                 "one-line summary in the result notification (Dispatcharr's "
@@ -1386,15 +1440,21 @@ class Plugin:
             "button_label": "Refresh List",
         },
         {
-            "id": "stop_all", "label": "Stop All Buffers",
+            "id": "stop_all",
+            "label": "Stop All Buffers",
             "description": "Emergency cleanup: stops every active buffer and removes all segment files.",
             "button_label": "Stop Everything",
             "button_variant": "filled",
             "button_color": "red",
-            "confirm": {"required": True, "title": "Stop all buffers?", "message": "This ends every active rolling buffer right now, for every channel and every viewer currently using one."},
+            "confirm": {
+                "required": True,
+                "title": "Stop all buffers?",
+                "message": "This ends every active rolling buffer right now, for every channel and every viewer currently using one.",
+            },
         },
         {
-            "id": "scrub_orphaned_buffers", "label": "Scrub Orphaned Buffer Directories",
+            "id": "scrub_orphaned_buffers",
+            "label": "Scrub Orphaned Buffer Directories",
             "description": (
                 "Removes leftover directories under storage_path that Redis no longer has any "
                 "record of (a client killed hard enough that it never sent stop_buffer, and no "
@@ -1405,7 +1465,11 @@ class Plugin:
                 "an actively-starting buffer is left alone."
             ),
             "button_label": "Scrub Now",
-            "confirm": {"required": True, "title": "Scrub orphaned directories?", "message": "Permanently deletes any buffer directory under storage_path with no matching tracked state and no recent activity. Does not touch anything currently active."},
+            "confirm": {
+                "required": True,
+                "title": "Scrub orphaned directories?",
+                "message": "Permanently deletes any buffer directory under storage_path with no matching tracked state and no recent activity. Does not touch anything currently active.",
+            },
         },
     ]
 
@@ -1500,7 +1564,8 @@ class Plugin:
                 logger.warning(
                     "timeshift_buffer: start_buffer found a dead buffer for %s (pid %s no longer running) -- "
                     "cleaning up and starting fresh instead of reattaching",
-                    channel_uuid, existing.get("pid"),
+                    channel_uuid,
+                    existing.get("pid"),
                 )
                 _remove_channel_files(existing, logger)
                 _delete_buffer_state(channel_uuid)
@@ -1566,7 +1631,10 @@ class Plugin:
     def _stop_buffer(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
         if not channel_uuid:
-            return {"status": "error", "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)"}
+            return {
+                "status": "error",
+                "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)",
+            }
 
         state = _get_buffer_state(channel_uuid)
         if not state:
@@ -1618,7 +1686,10 @@ class Plugin:
     def _heartbeat(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
         if not channel_uuid:
-            return {"status": "error", "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)"}
+            return {
+                "status": "error",
+                "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)",
+            }
 
         state = _get_buffer_state(channel_uuid)
         if not state:
@@ -1640,7 +1711,10 @@ class Plugin:
     def _get_live_manifest_action(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
         if not channel_uuid:
-            return {"status": "error", "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)"}
+            return {
+                "status": "error",
+                "message": "channel_uuid is required (see test_channel_uuid setting for manual testing)",
+            }
 
         state = _get_buffer_state(channel_uuid)
         if not state:
@@ -1693,18 +1767,20 @@ class Plugin:
             if not raw:
                 continue
             state = json.loads(raw)
-            buffers.append({
-                "channel_uuid": state["channel_uuid"],
-                "age_seconds": int(now - state.get("started_at", now)),
-                "idle_seconds": int(now - state.get("last_heartbeat", now)),
-                "http_port": state.get("http_port"),
-                "playlist_route": state.get("playlist_route"),
-                # Reference-counted viewers (see _start_buffer()/_stop_buffer()'s
-                # own comments) -- diagnostic only, not itself load-bearing for
-                # cleanup: a caller with no viewer_id is simply never counted
-                # here even while it's genuinely watching.
-                "viewers": len(state.get("viewers", [])),
-            })
+            buffers.append(
+                {
+                    "channel_uuid": state["channel_uuid"],
+                    "age_seconds": int(now - state.get("started_at", now)),
+                    "idle_seconds": int(now - state.get("last_heartbeat", now)),
+                    "http_port": state.get("http_port"),
+                    "playlist_route": state.get("playlist_route"),
+                    # Reference-counted viewers (see _start_buffer()/_stop_buffer()'s
+                    # own comments) -- diagnostic only, not itself load-bearing for
+                    # cleanup: a caller with no viewer_id is simply never counted
+                    # here even while it's genuinely watching.
+                    "viewers": len(state.get("viewers", [])),
+                }
+            )
 
         # A human-readable summary, not just the raw buffers list above --
         # Dispatcharr's own Plugins page shows an action's "message" field
@@ -1717,10 +1793,7 @@ class Plugin:
         if not buffers:
             message = "No active buffers"
         else:
-            parts = [
-                f"{b['channel_uuid'][:8]} ({b['viewers']} viewer(s), {b['age_seconds']}s old)"
-                for b in buffers
-            ]
+            parts = [f"{b['channel_uuid'][:8]} ({b['viewers']} viewer(s), {b['age_seconds']}s old)" for b in buffers]
             message = f"{len(buffers)} active buffer(s): " + ", ".join(parts)
 
         return {"status": "ok", "message": message, "buffers": buffers}
@@ -1747,5 +1820,9 @@ class Plugin:
         # tracked state to double-check against) gets more margin than
         # ordinary heartbeat-based reaping.
         removed = _scrub_orphaned_dirs(storage_path, max(idle_timeout, 300), logger)
-        message = "No orphaned directories found" if not removed else f"Removed {len(removed)} orphaned director{'y' if len(removed) == 1 else 'ies'}"
+        message = (
+            "No orphaned directories found"
+            if not removed
+            else f"Removed {len(removed)} orphaned director{'y' if len(removed) == 1 else 'ies'}"
+        )
         return {"status": "ok", "message": message, "removed": removed}

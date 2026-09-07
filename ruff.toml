@@ -1,0 +1,14 @@
+# Formatting/linting for the two Dispatcharr server-side plugins
+# (dispatcharr-plugin/timeshift_buffer, dispatcharr-plugin/recording_edl).
+# Not the addon itself, which is C++ (see .clang-format for that).
+
+line-length = 120
+target-version = "py311"
+
+[lint]
+# Default ("E", "F") plus a few low-noise, high-value extras: unused
+# imports/variables (F), bugbear's common-mistake checks (B), and simplify
+# hints (SIM) -- deliberately not turning on stricter style-opinion rule
+# sets (e.g. "D" docstring rules) that would fight this codebase's existing
+# comment conventions rather than catch real bugs.
+select = ["E", "F", "B", "SIM"]
