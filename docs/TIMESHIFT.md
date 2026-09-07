@@ -2043,3 +2043,60 @@ heavy same-day buffer churn that exposed the pid gap, to be confident
 this specific failure mode is actually closed and not just harder to
 hit).
 
+### A malformed `#EXTINF:` duration could fail the whole manifest fetch
+
+Found via a follow-up audit prompted by an analogous bug just found and
+fixed in the companion `recording_edl` plugin (see that plugin's own
+`docs/RECORDING_EDL.md` entry) -- not a live incident, and not something
+this session's earlier reviews of this exact function happened to catch.
+Every `int()`/`float()` conversion in this file was re-checked
+specifically for the same failure shape: a value that parses
+successfully as a float but then raises on the later `round()`/`int()`
+conversion, outside (or not fully covered by) whatever `except` clause
+was guarding the parse itself.
+
+`_get_live_manifest()`'s own `#EXTINF:` duration parsing
+(`int(round(float(...) * 1000))`) had exactly this gap: the whole
+expression sits inside a single `try`/`except ValueError`, which
+correctly catches `float("nan")`'s later failure (`round(nan)` raises
+`ValueError`) but not `float("inf")`'s (`round(inf)` raises
+`OverflowError`, a different exception class `except ValueError:`
+doesn't match). An `#EXTINF:inf,` line would raise uncaught out of the
+parsing loop, with no enclosing `try`/`except` in `_get_live_manifest`
+itself either -- caught only by `_get_live_manifest_action`'s own
+broad `except Exception as exc:` further up the call stack, which
+degrades to a clean `{"status": "error", ...}` response rather than an
+unhandled 500. Better than the `recording_edl` version of this bug
+(which had no such backstop at all), but the *practical* effect is
+still worse than it should be: one malformed duration value fails the
+entire manifest fetch -- every segment, not just the one with the bad
+duration -- for a function called continuously during active playback
+(the addon's own catch-up-to-tail loop and throttled length checks).
+Repeated failures here don't hang (the addon's own bounded
+catch-up-attempts budget still applies), but they'd produce confusing,
+hard-to-diagnose retries rather than a clean per-segment fallback.
+
+ffmpeg is the only realistic writer of `live.m3u8` and isn't expected
+to ever emit `inf` as a segment duration -- this is a defensive gap,
+not a reproduced live failure, same as `recording_edl`'s. Fixed by
+widening the `except` clause to `(ValueError, OverflowError)`; the
+existing `duration_ms = 0` fallback already handles the degraded case
+correctly, so no further restructuring was needed here (unlike
+`recording_edl`, where the conversion had to be pulled inside the
+guarded block in the first place). Every other numeric conversion in
+this file was checked against the same failure shape and found safe:
+the Range-header parsing (`_parse_range`) only ever calls `int()` on a
+string directly, never `float()` followed by a separate `round()`/
+`int()`, so there's no equivalent NaN/Inf-survives-the-parse gap to
+begin with; the admin-configured settings reads (`idle_timeout_seconds`,
+`segment_seconds`, etc.) are each either individually protected by a
+call site's own broad exception handler (`_start_buffer`'s
+`except Exception` around all of `_start_ffmpeg()`) or the reaper
+loop's own per-tick `except Exception`, and are type-validated plugin
+settings rather than generated file content in the first place.
+
+Verified with a test confirming `round(float("inf"))` genuinely raises
+`OverflowError` uncaught in the pre-fix code, then confirming the fixed
+parser returns the segment with `duration_ms: 0` instead of failing the
+whole manifest.
+
