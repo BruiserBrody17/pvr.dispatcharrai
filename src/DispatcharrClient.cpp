@@ -3340,10 +3340,18 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   }
 
   FixedBufferSink sink{buffer, wantSize, 0};
+  // Cross-checked against seg->byteSize below -- see that check's own
+  // comment for why this matters (it's the addon's only independent way
+  // to catch a manifest-reported byte_size that doesn't match the real
+  // file, before that mismatch can silently misalign every later
+  // segment's computed byteOffset for the rest of this session).
+  int64_t serverReportedTotal = -1;
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, RecordingHeaderCallback);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &serverReportedTotal);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
   curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
 
@@ -3368,6 +3376,35 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   }
   if (httpCode != 200 && httpCode != 206)
     return -1;
+
+  // The plugin's own file server always answers a Range GET (which this is)
+  // with 206 + "Content-Range: bytes X-Y/TOTAL" -- TOTAL is the segment
+  // file's real, current size, independent of whatever byte_size the
+  // manifest response reported for it earlier. Those two are supposed to
+  // always agree (get_live_manifest's own byte_size comes from the exact
+  // same stat() this plugin instance would report here) -- but this
+  // addon's own cumulative address space treats a segment's byteSize as
+  // permanently fixed once merged (RefreshLiveManifest()'s own comment:
+  // "an already-known segment's size can't legitimately change"), so if
+  // that assumption is ever actually wrong for any reason, every later
+  // segment's computed byteOffset silently drifts out of alignment with
+  // its real file for the rest of this session -- reads would keep
+  // "succeeding" against the wrong bytes, with no error anywhere, until
+  // whatever got spliced together stops looking like valid MPEG-TS to
+  // Kodi's own demuxer. Catching the very first disagreement here, loudly
+  // and immediately, turns that into a clean, diagnosable failure instead.
+  if (serverReportedTotal >= 0 && serverReportedTotal != seg->byteSize)
+  {
+    kodi::Log(ADDON_LOG_ERROR,
+              "pvr.dispatcharrai: ReadLiveTimeshiftStream: segment %s (sequence %lld) real size "
+              "(%lld, from Content-Range) disagrees with the manifest-reported size this "
+              "session cached (%lld) -- every later segment's computed offset may already be "
+              "misaligned; giving up on this stream rather than risk silent corruption",
+              seg->filename.c_str(), static_cast<long long>(seg->sequence),
+              static_cast<long long>(serverReportedTotal), static_cast<long long>(seg->byteSize));
+    m_liveTimeshiftStream.fatal = true;
+    return -1;
+  }
 
   m_liveTimeshiftStream.position += static_cast<int64_t>(sink.written);
   return static_cast<int>(sink.written);
