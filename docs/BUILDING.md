@@ -278,6 +278,21 @@ called out inline so a future rebuild doesn't have to rediscover them.
    cp packaging/coreelec/pvr.dispatcharrai/package.mk \
      CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharrai/
    ```
+   **If this file was edited on Windows and copied into a WSL/Linux
+   checkout, strip CRLF line endings before building** (confirmed live,
+   2026-09-07): git's `core.autocrlf` normalizes this file to CRLF in a
+   Windows working tree, and a plain `cp` into WSL carries that over
+   byte-for-byte. The build harness's `PKG_IS_ADDON` comparison
+   (`create_addon`'s `verify_addon`/`get_addons`) then compares against
+   the literal string `"yes\r"`, not `"yes"` -- it fails silently (no
+   error, `&>/dev/null`-suppressed), and the addon is simply missing from
+   every listing (`create_addon pvr.dispatcharrai` and even `create_addon
+   --show-only binary` both just omit it, with no indication why).
+   Confirmed via `bash -x` tracing into `verify_addon`, which showed
+   exactly this comparison failing. Fix:
+   ```bash
+   sed -i 's/\r$//' CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharrai/package.mk
+   ```
 4. Build it. Both the device name *and* the arch value have changed across
    CoreELEC branches -- don't assume either is stable across branches, and
    don't assume the SoC being 64-bit means the build's `ARCH` is
