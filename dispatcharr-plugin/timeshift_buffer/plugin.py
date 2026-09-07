@@ -51,7 +51,11 @@ conversation that produced this draft for the full reasoning):
   (http_port setting) directly on files under storage_path. That port needs
   to be exposed through your container config, the same way 9191 already
   is -- this is the one real infrastructure requirement beyond installing
-  the plugin.
+  the plugin. Every request needs a per-buffer access token (see
+  _check_access_token), issued only via the authenticated start_buffer
+  action -- reachability alone doesn't grant access, since this server has
+  no other auth of its own (Dispatcharr's own session/API-key auth doesn't
+  apply to it; nothing here proxies through Dispatcharr's normal web port).
 - Idle-timeout liveness comes from the HTTP server itself, not from a
   client explicitly calling the heartbeat action: every successful file
   fetch (playlist or segment) refreshes last_heartbeat. This matters
@@ -96,6 +100,7 @@ that motivated moving off ffmpegdirect in the first place.
 import json
 import mimetypes
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -104,7 +109,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 # ---------------------------------------------------------------------------
 # Redis-backed state. A plain Python module-level dict would NOT be shared
@@ -156,6 +161,16 @@ def _set_buffer_state(channel_uuid, state):
 
 def _delete_buffer_state(channel_uuid):
     _redis().delete(_buffer_key(channel_uuid))
+    # Single choke point for every "this buffer is gone" path (stop_buffer,
+    # stop_all, the reaper, dead-buffer cleanup in start_buffer) -- drops
+    # this worker's own cached manifest state (see _get_live_manifest's
+    # _manifest_cache) too, so it doesn't outlive the buffer it was for.
+    # A future start_buffer for the same channel_uuid always begins with a
+    # fresh ffmpeg process and a fresh live.m3u8, whose mtime/size will
+    # essentially never coincidentally match a stale cache entry's, but
+    # dropping it here is cheap and removes any doubt.
+    with _manifest_cache_lock:
+        _manifest_cache.pop(channel_uuid, None)
 
 
 def _list_buffer_keys():
@@ -192,7 +207,12 @@ _http_server_storage_path = None
 class _BufferRequestHandler(BaseHTTPRequestHandler):
     """Serves GET /<channel_uuid>/<filename> straight from storage_path.
 
-    No directory listing, no write support. Does support Range requests
+    Requires a valid ?token=... query param matching that buffer's own
+    access_token (see _check_access_token) on every request -- this
+    server has no other access control, and reachability alone (this port
+    is meant to be exposed outside the container, same as Dispatcharr's
+    own) previously meant readability. No directory listing, no write
+    support. Does support Range requests
     (added for the growing-live-buffer byte-stream path -- see
     get_live_manifest below and pvr.dispatcharrai's DispatcharrClient,
     which mirrors its already-proven recording-playback Range-read pattern
@@ -273,8 +293,33 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
             return False, False
         return start, min(end, file_size - 1)
 
+    def _check_access_token(self, channel_uuid):
+        # Requires the caller to already know this specific buffer's own
+        # token, issued only via the authenticated start_buffer/heartbeat
+        # plugin actions (see _start_buffer's own comment) -- this file
+        # server has no other access control of its own (see the module
+        # docstring's "Idle-timeout liveness" bullet for why it's a plain
+        # unauthenticated-by-Dispatcharr-standards HTTP server at all).
+        # Without this, reaching this port at all (which the plugin's own
+        # docs ask users to expose the same way as Dispatcharr's main
+        # port -- often the whole LAN, sometimes further) was enough to
+        # read any channel's currently-buffered live segments with zero
+        # Dispatcharr credentials.
+        state = _get_buffer_state(channel_uuid)
+        expected = state.get("access_token") if state else None
+        if not expected:
+            return False
+        provided = parse_qs(urlparse(self.path).query).get("token", [None])[0]
+        return provided is not None and secrets.compare_digest(provided, expected)
+
     def do_GET(self):
         channel_uuid, target = self._resolve_path()
+        if channel_uuid is None:
+            self.send_error(404, "Not found")
+            return
+        if not self._check_access_token(channel_uuid):
+            self.send_error(403, "Forbidden")
+            return
         if target is None or not target.is_file():
             self.send_error(404, "Not found")
             return
@@ -328,6 +373,12 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         channel_uuid, target = self._resolve_path()
+        if channel_uuid is None:
+            self.send_error(404, "Not found")
+            return
+        if not self._check_access_token(channel_uuid):
+            self.send_error(403, "Forbidden")
+            return
         if target is None or not target.is_file():
             self.send_error(404, "Not found")
             return
@@ -745,6 +796,10 @@ def _scrub_orphaned_dirs(storage_path: str, min_age_seconds: int, logger) -> lis
     return removed
 
 
+_manifest_cache = {}
+_manifest_cache_lock = threading.Lock()
+
+
 def _get_live_manifest(state: dict, logger) -> dict:
     """Builds a byte-addressable manifest of the buffer's currently-listed
     (live.m3u8) segments -- filename, byte size, duration, and cumulative
@@ -753,9 +808,34 @@ def _get_live_manifest(state: dict, logger) -> dict:
     files directly, see _BufferRequestHandler's Range support) instead of
     going through inputstream.ffmpegdirect's HLS-seek machinery, which
     pvr.dispatcharrai's docs/TIMESHIFT.md documents as confirmed broken for
-    this kind of buffer. Read fresh from disk on every call rather than
-    cached, since the whole point is reflecting how far
-    the buffer has grown since the caller last asked.
+    this kind of buffer.
+
+    Always reflects the current state of live.m3u8 -- never stale -- but
+    doesn't necessarily redo the work of getting there: `_manifest_cache`
+    (module-global, per-worker-process, keyed by channel_uuid) skips
+    re-parsing the playlist and re-stat()-ing every visible segment when
+    nothing has actually changed on disk since this same process last read
+    it (checked via the playlist file's own mtime/size -- confirmed cheap
+    and sufficient, no need for content hashing), and even when it has
+    changed, only stat()s segments genuinely new since last time -- a
+    sequence number is never reused for the life of a buffer (HLS media
+    sequence is monotonic, even though -segment_wrap does recycle
+    filenames), so a cache hit by sequence is guaranteed to be the exact
+    same bytes, the same invariant pvr.dispatcharrai's own
+    RefreshLiveManifest() already relies on client-side. Matters because
+    this is called far more often than the buffer could possibly have
+    grown -- the addon's own catch-up-to-tail loop and throttled length
+    checks call this repeatedly while waiting, not just once per new
+    segment -- and at this plugin's default settings (buffer_minutes=60,
+    segment_seconds=2) the visible window is 1800 segments, meaning a
+    naive rebuild-from-scratch call was up to 1800 stat() syscalls just to
+    answer "did anything change". Per-worker rather than Redis-backed:
+    avoids adding a second, differently-shaped piece of Redis-persisted
+    state alongside the buffer's own lifecycle state, and a cold worker
+    (one that's never seen this channel_uuid, or a round-robin request
+    landing on a different worker than last time) just falls back to a
+    full stat() sweep once, exactly like this function always did before
+    -- never worse than the old behavior, only better when it helps.
 
     The rolling window means "byte offset 0" in THIS response corresponds
     to whatever's currently oldest -- a later call's "byte offset 0" will
@@ -766,8 +846,12 @@ def _get_live_manifest(state: dict, logger) -> dict:
     `sequence` number (HLS's own #EXT-X-MEDIA-SEQUENCE plus its position in
     the list), which is stable for the life of the buffer regardless of how
     the visible window slides, and is what a client should key its own
-    merged/cumulative table on instead of list position."""
-    channel_dir = Path(state["storage_path"]) / state["channel_uuid"]
+    merged/cumulative table on instead of list position. (Byte/time offsets
+    themselves are always recomputed from the resolved segment list on
+    every call, cache hit or not -- cheap, in-memory-only arithmetic, but
+    not themselves cacheable, precisely because they're window-relative.)"""
+    channel_uuid = state["channel_uuid"]
+    channel_dir = Path(state["storage_path"]) / channel_uuid
     live_playlist_path = channel_dir / "live.m3u8"
     if not live_playlist_path.is_file():
         # Two very different situations produce the identical symptom here
@@ -801,58 +885,108 @@ def _get_live_manifest(state: dict, logger) -> dict:
             )
         raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
 
-    lines = live_playlist_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    try:
+        playlist_stat = live_playlist_path.stat()
+    except OSError:
+        raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
 
-    media_sequence = 0
-    for line in lines:
-        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
-            try:
-                media_sequence = int(line[len("#EXT-X-MEDIA-SEQUENCE:"):].strip())
-            except ValueError:
-                pass
-            break
+    with _manifest_cache_lock:
+        cached = _manifest_cache.get(channel_uuid)
+        if (cached is not None and cached["playlist_mtime_ns"] == playlist_stat.st_mtime_ns and
+                cached["playlist_size"] == playlist_stat.st_size):
+            # Nothing on disk has changed since our own last read of this
+            # exact playlist file -- reuse it outright, no re-parse, no
+            # re-stat, not even a re-read of the (small but non-zero) text
+            # file. dict insertion order is what supplies list order here
+            # (guaranteed since Python 3.7), matching how by_sequence was
+            # built below on the call that populated this cache entry.
+            media_sequence = cached["media_sequence"]
+            ordered = [(seq,) + entry for seq, entry in cached["by_sequence"].items()]
+        else:
+            lines = live_playlist_path.read_text(encoding="utf-8", errors="replace").splitlines()
 
+            media_sequence = 0
+            for line in lines:
+                if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+                    try:
+                        media_sequence = int(line[len("#EXT-X-MEDIA-SEQUENCE:"):].strip())
+                    except ValueError:
+                        pass
+                    break
+
+            old_by_sequence = cached["by_sequence"] if cached else {}
+            new_by_sequence = {}
+            ordered = []
+            list_index = 0  # position within the m3u8's own segment list, before any drops
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                if line.startswith("#EXTINF:") and i + 1 < len(lines) and not lines[i + 1].startswith("#"):
+                    seg_name = lines[i + 1].strip()
+                    sequence = media_sequence + list_index
+                    list_index += 1
+                    try:
+                        duration_ms = int(round(float(line[len("#EXTINF:"):].rstrip(",")) * 1000))
+                    except ValueError:
+                        duration_ms = 0
+
+                    # A sequence number is never reused for the life of a
+                    # buffer, so a hit here (same sequence, same filename)
+                    # is guaranteed to be the exact same bytes -- see this
+                    # function's own docstring. Only genuinely new segments
+                    # (or ones this worker process hasn't seen before) pay
+                    # for a stat() call.
+                    reusable = old_by_sequence.get(sequence)
+                    if reusable is not None and reusable[0] == seg_name:
+                        size = reusable[1]
+                    else:
+                        try:
+                            size = (channel_dir / seg_name).stat().st_size
+                        except OSError:
+                            # Recycled (by the live buffer's own
+                            # -segment_wrap) between the playlist listing it
+                            # and this stat -- drop it rather than fail the
+                            # whole manifest over one segment (but
+                            # list_index/sequence still advanced above, so
+                            # later segments keep their true, stable
+                            # sequence numbers).
+                            i += 2
+                            continue
+
+                    entry = (seg_name, size, duration_ms)
+                    new_by_sequence[sequence] = entry
+                    ordered.append((sequence,) + entry)
+                    i += 2
+                else:
+                    i += 1
+
+            _manifest_cache[channel_uuid] = {
+                "playlist_mtime_ns": playlist_stat.st_mtime_ns,
+                "playlist_size": playlist_stat.st_size,
+                "media_sequence": media_sequence,
+                "by_sequence": new_by_sequence,
+            }
+
+    if not ordered:
+        raise RuntimeError("no segments currently available -- the buffer may be too new")
+
+    # Byte/time offsets are always recomputed here, cache hit or not --
+    # cheap, in-memory-only arithmetic, but not themselves cacheable, since
+    # they're window-relative (see this function's own docstring).
     segments = []
     cumulative_bytes = 0
     cumulative_ms = 0
-    list_index = 0  # position within the m3u8's own segment list, before any drops
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith("#EXTINF:") and i + 1 < len(lines) and not lines[i + 1].startswith("#"):
-            seg_name = lines[i + 1].strip()
-            sequence = media_sequence + list_index
-            list_index += 1
-            try:
-                size = (channel_dir / seg_name).stat().st_size
-            except OSError:
-                # Recycled (by the live buffer's own -segment_wrap) between
-                # the playlist listing it and this stat -- drop it rather
-                # than fail the whole manifest over one segment (but
-                # list_index/sequence still advanced above, so later
-                # segments keep their true, stable sequence numbers).
-                i += 2
-                continue
-            try:
-                duration_ms = int(round(float(line[len("#EXTINF:"):].rstrip(",")) * 1000))
-            except ValueError:
-                duration_ms = 0
-            segments.append({
-                "filename": seg_name,
-                "sequence": sequence,
-                "byte_offset": cumulative_bytes,
-                "byte_size": size,
-                "time_offset_ms": cumulative_ms,
-                "duration_ms": duration_ms,
-            })
-            cumulative_bytes += size
-            cumulative_ms += duration_ms
-            i += 2
-        else:
-            i += 1
-
-    if not segments:
-        raise RuntimeError("no segments currently available -- the buffer may be too new")
+    for sequence, seg_name, size, duration_ms in ordered:
+        segments.append({
+            "filename": seg_name,
+            "sequence": sequence,
+            "byte_offset": cumulative_bytes,
+            "byte_size": size,
+            "time_offset_ms": cumulative_ms,
+            "duration_ms": duration_ms,
+        })
+        cumulative_bytes += size
+        cumulative_ms += duration_ms
 
     return {
         "media_sequence": media_sequence,
@@ -860,6 +994,37 @@ def _get_live_manifest(state: dict, logger) -> dict:
         "total_bytes": cumulative_bytes,
         "total_duration_ms": cumulative_ms,
     }
+
+
+def _prune_stale_viewers(state, idle_timeout, now=None):
+    """Drops any viewer_id whose own last-seen heartbeat is older than
+    idle_timeout, in place on state["viewers"]/state["viewer_heartbeats"].
+    Returns True if anything was actually pruned.
+
+    Needed because last_heartbeat (refreshed by ANY successful file fetch,
+    see _touch_heartbeat) is buffer-wide, not per-viewer: if one viewer
+    crashes hard enough to never call stop_buffer, its viewer_id otherwise
+    stays in state["viewers"] forever, kept "alive" by other viewers'
+    ordinary segment fetches. That phantom entry then blocks stop_buffer's
+    reference count from ever reaching zero once the real remaining
+    viewers actually do stop -- the buffer (and the provider slot it
+    holds) never gets torn down. A viewer with no recorded heartbeat yet
+    (older plugin-version state from before this field existed, or a
+    start_buffer call that raced this exact instant) is treated as fresh
+    as of `now`, not as already stale, so an in-progress upgrade doesn't
+    mass-prune viewers that just haven't had a chance to report in yet.
+    """
+    now = now if now is not None else time.time()
+    viewers = state.get("viewers", [])
+    if not viewers:
+        return False
+    heartbeats = state.get("viewer_heartbeats", {})
+    fresh = [v for v in viewers if now - heartbeats.get(v, now) <= idle_timeout]
+    if len(fresh) == len(viewers):
+        return False
+    state["viewers"] = fresh
+    state["viewer_heartbeats"] = {v: heartbeats[v] for v in fresh if v in heartbeats}
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +1059,12 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                     if not raw:
                         continue
                     state = json.loads(raw)
+                    if _prune_stale_viewers(state, idle_timeout, now):
+                        logger.info(
+                            "timeshift_buffer: pruned stale viewer(s) for channel %s (no heartbeat for %ds)",
+                            state["channel_uuid"], idle_timeout,
+                        )
+                        _set_buffer_state(state["channel_uuid"], state)
                     if now - state.get("last_heartbeat", 0) > idle_timeout:
                         logger.info(
                             "timeshift_buffer: reaping idle buffer for channel %s (no heartbeat for %ds)",
@@ -941,7 +1112,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "1.0.1"
+    version = "1.0.2"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
@@ -1040,9 +1211,11 @@ class Plugin:
                 "through Dispatcharr's normal web port -- confirmed live "
                 "that Dispatcharr's /media/ static route is unreachable in "
                 "this deployment mode, see plugin.py's module docstring). "
-                "Must be mapped through your container config the same way "
-                "9191 already is, or clients outside the container can't "
-                "reach it."
+                "Every request needs a per-buffer access token, issued only "
+                "via the authenticated start_buffer action -- reachable "
+                "doesn't mean readable without one. Still must be mapped "
+                "through your container config the same way 9191 already "
+                "is, or clients outside the container can't reach it."
             ),
         },
         {
@@ -1072,7 +1245,7 @@ class Plugin:
         },
         {
             "id": "heartbeat", "label": "Heartbeat",
-            "description": "Refreshes a channel's idle timeout. Params: channel_uuid (required). Not required for normal use -- every file fetch through this plugin's HTTP server already refreshes it. Kept for a client that wants to explicitly signal 'still active' without an in-flight request (e.g. mid-pause), and for manual testing.",
+            "description": "Refreshes a channel's idle timeout. Params: channel_uuid (required), viewer_id (optional). The buffer-wide timeout is refreshed by any file fetch regardless -- pass viewer_id to also refresh that specific viewer's own last-seen time, which is what lets stop_buffer tell a still-watching viewer apart from one that crashed without ever calling stop_buffer (see plugin.py's _prune_stale_viewers). A client with viewer_id lifecycle (start_buffer/stop_buffer) should call this on an interval well under idle_timeout_seconds.",
         },
         {
             "id": "get_live_manifest", "label": "Get Live Manifest (manual test)",
@@ -1223,6 +1396,15 @@ class Plugin:
                 viewers = existing.setdefault("viewers", [])
                 if viewer_id not in viewers:
                     viewers.append(viewer_id)
+                existing.setdefault("viewer_heartbeats", {})[viewer_id] = time.time()
+            # Retrofits a token onto state left behind by a plugin version
+            # older than the access-token requirement (see
+            # _check_access_token) -- makes this self-healing across an
+            # upgrade instead of leaving a pre-existing buffer permanently
+            # unreachable (nobody could ever produce a token matching
+            # "none stored").
+            if "access_token" not in existing:
+                existing["access_token"] = secrets.token_urlsafe(24)
             _set_buffer_state(channel_uuid, existing)
             return {
                 "status": "ok",
@@ -1230,6 +1412,7 @@ class Plugin:
                 "http_port": existing["http_port"],
                 "playlist_route": existing["playlist_route"],
                 "already_running": True,
+                "access_token": existing["access_token"],
             }
 
         max_concurrent = int(settings_dict.get("max_concurrent_buffers", 4))
@@ -1248,6 +1431,12 @@ class Plugin:
             return {"status": "error", "message": str(exc)}
 
         state["viewers"] = [viewer_id] if viewer_id else []
+        state["viewer_heartbeats"] = {viewer_id: time.time()} if viewer_id else {}
+        # Required by every request this buffer's own file server serves
+        # from here on -- see _check_access_token's own comment for why.
+        # token_urlsafe() output is already safe to place directly in a
+        # URL query string (no escaping needed).
+        state["access_token"] = secrets.token_urlsafe(24)
         _set_buffer_state(channel_uuid, state)
         return {
             "status": "ok",
@@ -1255,6 +1444,7 @@ class Plugin:
             "http_port": state["http_port"],
             "playlist_route": state["playlist_route"],
             "already_running": False,
+            "access_token": state["access_token"],
         }
 
     def _stop_buffer(self, params, settings_dict, logger):
@@ -1285,6 +1475,16 @@ class Plugin:
         if viewer_id:
             if viewer_id in viewers:
                 viewers.remove(viewer_id)
+                state.get("viewer_heartbeats", {}).pop(viewer_id, None)
+            # Drops any OTHER viewer_id that's gone stale (crashed without
+            # ever calling stop_buffer) before deciding whether the buffer
+            # is genuinely still in use -- see _prune_stale_viewers' own
+            # comment. Without this, a single leftover phantom viewer_id
+            # would keep this buffer (and the provider slot it holds)
+            # alive forever after the last real viewer cleanly stops.
+            idle_timeout = int(settings_dict.get("idle_timeout_seconds", 30))
+            _prune_stale_viewers(state, idle_timeout)
+            viewers = state.get("viewers", [])
             if viewers:
                 state["viewers"] = viewers
                 _set_buffer_state(channel_uuid, state)
@@ -1308,7 +1508,16 @@ class Plugin:
         if not state:
             return {"status": "error", "message": "no buffer running for this channel"}
 
-        state["last_heartbeat"] = time.time()
+        now = time.time()
+        state["last_heartbeat"] = now
+        # An explicit per-viewer heartbeat (viewer_id passed alongside
+        # channel_uuid) is what lets _prune_stale_viewers tell a genuinely
+        # still-watching viewer apart from a crashed one -- see that
+        # function's own comment. Only recorded for a viewer_id this
+        # buffer already knows about (start_buffer registers it first).
+        viewer_id = params.get("viewer_id")
+        if viewer_id and viewer_id in state.get("viewers", []):
+            state.setdefault("viewer_heartbeats", {})[viewer_id] = now
         _set_buffer_state(channel_uuid, state)
         return {"status": "ok", "message": f"Heartbeat refreshed for channel {channel_uuid}"}
 

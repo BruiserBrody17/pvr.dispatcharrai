@@ -306,6 +306,21 @@ public:
   // "nothing was running" is success, not an error.
   bool StopTimeshiftBuffer(const std::string& channelUuid, const std::string& viewerId,
                            std::string& error);
+  // Refreshes this specific viewer's own last-seen time on the plugin side
+  // (plugin.py's heartbeat action, viewer_id param), separate from the
+  // buffer-wide liveness that ordinary segment fetches already provide.
+  // Needed so a viewer that later crashes without calling
+  // StopTimeshiftBuffer() can be told apart, by the plugin, from one still
+  // genuinely watching -- otherwise a stale viewer_id left behind by a
+  // crash blocks the reference count from ever reaching zero for the
+  // viewers who really do stop cleanly afterwards (see plugin.py's
+  // _prune_stale_viewers and docs/TIMESHIFT.md). Called periodically from
+  // ReadLiveTimeshiftStream() while a stream is open, not on every read.
+  // Best-effort: a failure here is logged, not surfaced to the caller --
+  // losing one heartbeat isn't worth interrupting playback over, since the
+  // buffer-wide heartbeat from this same read's own manifest/segment
+  // fetches already keeps the buffer itself alive regardless.
+  void SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
   // Fetches comskip-detected commercial-break markers for a completed
@@ -831,6 +846,12 @@ private:
     // (which starves a provider's concurrent-stream limit -- see
     // docs/TIMESHIFT.md's "Concurrent viewers" section for both).
     std::string viewerId;
+    // Per-buffer token the plugin's own file server requires on every
+    // request (see plugin.py's _check_access_token) -- captured once from
+    // StartTimeshiftBuffer()'s response (CallTimeshiftPluginAction()'s own
+    // comment has the full mechanism) and reused for every later segment
+    // fetch, since it doesn't change for the life of the buffer.
+    std::string accessToken;
     std::string segmentBaseUrl; // "http://host:port/<uuid>/" -- filename appended per-request
     // Ordered by sequence, append-only for the life of this open stream --
     // byteOffset/timeOffsetMs are this stream's OWN fixed-origin addressing,
@@ -858,6 +879,11 @@ private:
     // repeating the short one indefinitely. See ReadLiveTimeshiftStream()'s
     // own comment.
     int64_t lastShortGiveUpPosition = -1;
+    // Last time SendTimeshiftHeartbeat() was actually called for this
+    // viewer, not the last manifest/segment fetch -- ReadLiveTimeshiftStream()
+    // uses this to send one on an interval (kHeartbeatInterval, local to
+    // that function) instead of on every single read.
+    std::chrono::steady_clock::time_point lastHeartbeatSent{};
     void* curl = nullptr; // persistent handle, same rationale as RecordingStreamState::curl
     // Set once RefreshLiveManifest() reports the plugin's own `fatal` flag
     // during a *steady-state* refresh (not the cold-start one OpenLiveTimeshiftStream()
