@@ -90,28 +90,47 @@ void WebSocketClient::Close()
   m_recvPos = 0;
 }
 
-bool WebSocketClient::SendAll(const uint8_t* data, size_t len, std::string& error)
+bool WebSocketClient::SendAll(const uint8_t* data, size_t len, int timeoutSeconds, std::string& error)
 {
   CURL* curl = static_cast<CURL*>(m_curl);
   size_t sent = 0;
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);
   while (sent < len)
   {
     size_t n = 0;
     CURLcode res = curl_easy_send(curl, data + sent, len - sent, &n);
     if (res == CURLE_AGAIN)
     {
+      auto now = std::chrono::steady_clock::now();
+      if (now >= deadline)
+      {
+        error = "Timed out waiting for the WebSocket send buffer to drain";
+        return false;
+      }
+      auto remainingMs =
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
       curl_socket_t sockfd = CURL_SOCKET_BAD;
       curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sockfd);
       fd_set writeFds;
       FD_ZERO(&writeFds);
       FD_SET(sockfd, &writeFds);
       struct timeval tv{};
-      tv.tv_sec = 5;
+      tv.tv_sec = static_cast<long>(remainingMs / 1000);
+      tv.tv_usec = static_cast<long>((remainingMs % 1000) * 1000);
 #ifdef _WIN32
-      select(0, nullptr, &writeFds, nullptr, &tv);
+      int rc = select(0, nullptr, &writeFds, nullptr, &tv);
 #else
-      select(static_cast<int>(sockfd) + 1, nullptr, &writeFds, nullptr, &tv);
+      int rc = select(static_cast<int>(sockfd) + 1, nullptr, &writeFds, nullptr, &tv);
 #endif
+      if (rc < 0)
+      {
+        error = "WebSocket select() failed while waiting to send";
+        return false;
+      }
+      // rc == 0 (timeout) or rc > 0 (writable, or a spurious wakeup) both
+      // just loop back to curl_easy_send -- the deadline check above is
+      // what actually bounds this, not this select() call's own return
+      // value, since a spurious wakeup shouldn't be treated as an error.
       continue;
     }
     if (res != CURLE_OK)
@@ -252,7 +271,8 @@ bool WebSocketClient::Connect(const std::string& host,
                          "Sec-WebSocket-Version: 13\r\n"
                          "\r\n";
 
-  if (!SendAll(reinterpret_cast<const uint8_t*>(request.data()), request.size(), error))
+  if (!SendAll(reinterpret_cast<const uint8_t*>(request.data()), request.size(), connectTimeoutSeconds,
+               error))
   {
     Close();
     return false;
@@ -301,7 +321,7 @@ bool WebSocketClient::Connect(const std::string& host,
   return true;
 }
 
-bool WebSocketClient::SendPong(const std::vector<uint8_t>& payload, std::string& error)
+bool WebSocketClient::SendPong(const std::vector<uint8_t>& payload, int timeoutSeconds, std::string& error)
 {
   uint8_t maskKey[4];
   RandomBytes(maskKey, sizeof(maskKey));
@@ -325,15 +345,15 @@ bool WebSocketClient::SendPong(const std::vector<uint8_t>& payload, std::string&
   for (size_t i = 0; i < len; ++i)
     frame.push_back(payload[i] ^ maskKey[i % 4]);
 
-  return SendAll(frame.data(), frame.size(), error);
+  return SendAll(frame.data(), frame.size(), timeoutSeconds, error);
 }
 
-bool WebSocketClient::SendClose(std::string& error)
+bool WebSocketClient::SendClose(int timeoutSeconds, std::string& error)
 {
   uint8_t maskKey[4];
   RandomBytes(maskKey, sizeof(maskKey));
   uint8_t frame[6] = {0x80 | 0x08, 0x80, maskKey[0], maskKey[1], maskKey[2], maskKey[3]};
-  return SendAll(frame, sizeof(frame), error);
+  return SendAll(frame, sizeof(frame), timeoutSeconds, error);
 }
 
 int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds, std::string& error)
@@ -406,13 +426,13 @@ int WebSocketClient::ReceiveTextMessage(std::string& message, int timeoutSeconds
     switch (opcode)
     {
       case 0x9: // ping
-        if (!SendPong(payload, error))
+        if (!SendPong(payload, timeoutSeconds, error))
           return -1;
         continue;
       case 0xA: // pong
         continue;
       case 0x8: // close
-        SendClose(error);
+        SendClose(timeoutSeconds, error);
         error = "WebSocket connection closed by peer (close frame)";
         return -1;
       case 0x1: // text

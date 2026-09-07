@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -2074,6 +2075,21 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
       {
         pendingDurationSec = 0.0;
       }
+      // std::stod() accepts "inf"/"nan" (with an optional sign) as valid
+      // input per the standard -- unlike std::stoi, it does NOT throw for
+      // either, so the catch above can't be relied on to keep this finite.
+      // Found via a project-wide review, not reproduced live: this value
+      // later feeds a static_cast<int64_t>() below (durationSec * 1000),
+      // and casting an infinite or NaN double to an integer type is
+      // undefined behavior in C++ -- not a clean, catchable exception the
+      // way the equivalent Python-side gap in this project's companion
+      // plugins was (see docs/TIMESHIFT.md/docs/RECORDING_EDL.md for
+      // those). Dispatcharr's own HLS muxer is the only realistic writer
+      // of this playlist and isn't expected to ever emit either value,
+      // but UB is a real category of bug regardless of how unlikely the
+      // trigger is.
+      if (!std::isfinite(pendingDurationSec))
+        pendingDurationSec = 0.0;
     }
     else if (!line.empty() && line[0] != '#')
     {

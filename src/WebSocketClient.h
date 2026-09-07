@@ -67,7 +67,16 @@ public:
   bool IsConnected() const { return m_curl != nullptr; }
 
 private:
-  bool SendAll(const uint8_t* data, size_t len, std::string& error);
+  // Blocks until all `len` bytes are handed to the OS (not necessarily
+  // acknowledged by the peer) or `timeoutSeconds` elapses with the socket
+  // never becoming writable, in which case this fails with `error` set --
+  // mirrors FillBuffer()'s own deadline-tracked design below, which this
+  // originally lacked (see this project's own bug-hunt history for why
+  // that mattered: an unbounded retry loop here, on a stalled/zombie
+  // connection that accepts the TCP connect but never drains its receive
+  // buffer, would hang whatever thread called Connect()/ReceiveTextMessage()
+  // indefinitely, with nothing logged to explain why).
+  bool SendAll(const uint8_t* data, size_t len, int timeoutSeconds, std::string& error);
   // Reads at least one more byte into m_recvBuffer (from m_recvPos
   // onward), waiting up to timeoutSeconds for the socket to become
   // readable if no data is immediately available. Returns 1 on success,
@@ -77,8 +86,8 @@ private:
   // `out`, calling FillBuffer() as needed. Same return convention as
   // FillBuffer().
   int ReadExact(uint8_t* out, size_t len, int timeoutSeconds, std::string& error);
-  bool SendPong(const std::vector<uint8_t>& payload, std::string& error);
-  bool SendClose(std::string& error);
+  bool SendPong(const std::vector<uint8_t>& payload, int timeoutSeconds, std::string& error);
+  bool SendClose(int timeoutSeconds, std::string& error);
 
   void* m_curl = nullptr; // CURL*, kept as void* so this header doesn't need <curl/curl.h>
 
