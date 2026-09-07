@@ -1189,26 +1189,88 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
 
 void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId)
 {
-  // Best-effort and fire-and-forget by design -- see this method's own
-  // header comment for why a failure here shouldn't interrupt playback.
+  // Deliberately does NOT go through EnsureAuthenticated()/Request(), and
+  // deliberately does NOT use m_config.timeoutSeconds -- confirmed live
+  // (1.0.5's first version of this function used both) that this is what
+  // actually matters here: this call rides along on the exact same thread
+  // Kodi's demuxer depends on for continuous reads
+  // (ReadLiveTimeshiftStream()), so it must be bounded to a small, fixed
+  // worst case regardless of network/auth conditions, not "at most a
+  // couple of ordinary request timeouts, usually fine." EnsureAuthenticated()
+  // can trigger a full synchronous token refresh or re-login on a cache
+  // miss (each its own Request() call, each allowed up to
+  // m_config.timeoutSeconds -- default 30s), and Request()'s own
+  // withAuth/retryOnAuthFailure default retries a 401 via that same
+  // refresh-or-login path again before retrying the original call --
+  // stacking up to roughly 150s of possible blocking in the worst
+  // realistic case (a transient network hiccup right as the access token
+  // needed refreshing). That's long enough for Kodi's own player to give
+  // up on a stalled input and never recover, even once the slow call
+  // eventually completed -- reproduced live as a total, non-recovering
+  // "buffering" stall on the very first 1.0.5 playback attempt. Fixed by
+  // reading whatever access token is already cached (a mutex lock, not a
+  // network call) and using a short, fixed timeout on this call's own
+  // curl handle. If the cached token is empty or has since expired, this
+  // heartbeat is simply skipped rather than triggering a refresh itself --
+  // RefreshLiveManifest() (called far more often than this, every
+  // read-loop iteration) already keeps the token fresh via the normal
+  // path in practice, so a skipped heartbeat here just means the next
+  // one, ~10s later, tries again -- never worth blocking a live read to
+  // guarantee any single heartbeat lands.
   if (viewerId.empty())
     return;
-  std::string error;
-  if (!EnsureAuthenticated(error))
+
+  std::string token;
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: SendTimeshiftHeartbeat: not authenticated, skipping: %s",
-              error.c_str());
-    return;
+    std::lock_guard<std::recursive_mutex> lock(m_authMutex);
+    token = m_accessToken;
   }
+  if (token.empty())
+    return;
+
   json body = {
       {"action", "heartbeat"},
       {"params", {{"channel_uuid", channelUuid}, {"viewer_id", viewerId}}},
   };
-  json response;
-  if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
+  std::string bodyStr = body.dump();
+
+  CURL* curl = curl_easy_init();
+  if (!curl)
+    return;
+
+  struct curl_slist* headers = nullptr;
+  headers = curl_slist_append(headers, "Content-Type: application/json");
+  headers = curl_slist_append(headers, "Accept: application/json");
+  std::string authHeader = "Authorization: Bearer " + token;
+  headers = curl_slist_append(headers, authHeader.c_str());
+
+  std::string responseBody;
+  std::string url = BaseUrl() + kTimeshiftPluginRunPath;
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, bodyStr.c_str());
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(bodyStr.size()));
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
+  // Fixed and short, NOT m_config.timeoutSeconds -- see this function's own
+  // comment. A heartbeat that can't complete quickly is exactly as useful
+  // skipped as it is completed many seconds late.
+  constexpr long kHeartbeatTimeoutMs = 2000;
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, kHeartbeatTimeoutMs);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+
+  CURLcode res = curl_easy_perform(curl);
+  if (res != CURLE_OK)
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: SendTimeshiftHeartbeat: request failed: %s", error.c_str());
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: SendTimeshiftHeartbeat: request failed: %s",
+              curl_easy_strerror(res));
   }
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
 }
 
 bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& error)
@@ -3094,9 +3156,11 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   // ordinary reads (this function is already called continuously for as
   // long as playback continues) rather than a dedicated thread, so the
   // occasional extra round trip lands on whichever read happens to cross
-  // the interval -- bounded and infrequent enough (once per ~10s, not per
-  // read) to be well within the waits this same function already tolerates
-  // from the catch-up-to-tail logic below.
+  // the interval -- SendTimeshiftHeartbeat() is itself responsible for
+  // keeping that bounded to a small, fixed worst case (its own comment has
+  // the full story, including a live-reproduced total playback stall in
+  // 1.0.5 before it was bounded this way); this call site doesn't add any
+  // timeout of its own on top.
   {
     constexpr auto kHeartbeatInterval = std::chrono::seconds(10);
     auto now = std::chrono::steady_clock::now();
