@@ -260,6 +260,21 @@ to its original settings and left running normally.
   (Not the same bug as the next item below -- that one *did* trigger
   the size-disagreement diagnostic; this one still hasn't, across 134+
   occurrences.)
+  **Update (2026-09-07): stopped being cosmetic once.** First observed
+  real failure on macOS (a news channel, one mid-session channel
+  switch): two `Stream stalled, start buffering` events, the second with
+  a severe, sustained audio desync (`ActiveAE - large audio sync error`
+  holding at -8278ms) and `[h264]` decode errors, ending in Kodi's own
+  player tearing the stream down on its own (no permanent hang, no
+  crash). Same underlying noise, same ~2-4s rate, still not the
+  size-disagreement mechanism (zero diagnostic firings this session
+  either) -- just the first time it's caused visible harm instead of a
+  silent resync. One occurrence, not yet a reliable repro. This is now
+  a real, needs-fixing signal rather than a purely theoretical
+  "revisit if it stops being cosmetic" trigger. See `docs/TIMESHIFT.md`'s
+  "The 'cosmetic' Packet corrupt noise stopped being cosmetic once"
+  section. Next step: try to force a live repro deliberately rather
+  than waiting on another incidental occurrence.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
