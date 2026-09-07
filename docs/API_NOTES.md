@@ -110,6 +110,43 @@ off the remote session driving the test. Confidence here comes from
 tracing all three cases the modified predicate has to handle (stop,
 wake, natural timeout) by hand, not a live repro.
 
+### `WebSocketClient::SendAll()` could hang this thread indefinitely
+
+Found via a project-wide code review (not a live incident): `SendAll()`'s
+retry loop on `CURLE_AGAIN` called `select()` with a fixed 5s timeout,
+then unconditionally `continue`d back to `curl_easy_send()` regardless of
+whether `select()` actually returned because the socket became writable,
+timed out, or errored -- its return value wasn't even checked. Unlike its
+sibling `FillBuffer()` a few lines below (which does track a real
+deadline via `std::chrono::steady_clock` and returns 0 on timeout), this
+send-side loop had no overall bound at all: a stalled/zombie connection
+(one that completes the TCP connect but never drains what's sent to it)
+would retry forever, sleeping up to 5s between attempts. Since
+`Connect()`'s own handshake request and every ping/pong/close frame
+`ReceiveTextMessage()` sends all go through this same function, an
+unbounded hang here would silently freeze
+`StartRealtimeUpdateThread()`'s background thread indefinitely, with
+nothing logged to explain why -- the exact same *class* of bug as the
+1.0.5 heartbeat-blocking regression (see `docs/TIMESHIFT.md`), just in
+different code, found by deliberately going looking for the same failure
+shape elsewhere in the codebase after that one.
+
+Fixed by giving `SendAll()` its own `timeoutSeconds` parameter and the
+same deadline-tracking pattern `FillBuffer()` already uses -- `Connect()`
+passes its own `connectTimeoutSeconds`; `SendPong()`/`SendClose()` (both
+plumbed a `timeoutSeconds` parameter through from `ReceiveTextMessage()`)
+use its read timeout. `select()`'s own return value is still not treated
+as authoritative (a spurious wakeup just loops back to
+`curl_easy_send()`), only the tracked deadline actually bounds the wait,
+matching `FillBuffer()`'s own reasoning.
+
+Confirmed live (Windows): compiles cleanly and the addon reloads
+normally. Not independently live-triggered against a genuinely stalled
+connection (would need a way to simulate a TCP peer that accepts a
+connect but never drains -- not attempted this pass); confidence comes
+from the fix directly mirroring `FillBuffer()`'s already-proven pattern
+in the same file.
+
 ## Single-instance assumption: partially hardened, not fully
 
 Also found via the `pvr.hts`/Tvheadend comparison above: `pvr.hts`

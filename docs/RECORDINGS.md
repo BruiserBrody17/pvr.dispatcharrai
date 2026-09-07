@@ -1662,3 +1662,31 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   and whichever thread calls `OpenRecordedStream()`/`ReadRecordedStream()`)
   -- every other field still has exactly one.
 
+**A malformed `#EXTINF:` duration in an in-progress recording's HLS
+playlist was undefined behavior, not a clean failure.** Found via a
+project-wide code review, not a live incident. `RefreshInProgressRecordingManifest()`
+parses each segment's `#EXTINF:` duration with `std::stod()`, guarded by
+a `try`/`catch (const std::exception&)` that defaults to `0.0` on a parse
+failure -- but `std::stod()` accepts `"inf"`/`"nan"` (with an optional
+sign) as valid input per the C++ standard, so it does *not* throw for
+either. That parsed value later feeds a `static_cast<int64_t>(durationSec
+* 1000 + 0.5)` a few lines down, and casting an infinite or NaN `double`
+to an integer type is undefined behavior in C++ -- not a catchable
+exception the way the analogous gap in this project's two companion
+Python plugins was (see `docs/TIMESHIFT.md`'s "A malformed `#EXTINF:`
+duration could fail the whole manifest fetch" and
+`docs/RECORDING_EDL.md`'s "A malformed `.edl` line..." sections for
+those -- this C++ instance was found by deliberately re-checking the
+native side for the same failure shape after fixing both Python ones).
+
+Dispatcharr's own DVR ffmpeg is the only realistic writer of this
+playlist and isn't expected to ever emit either value -- a defensive
+gap, not a reproduced live failure, same as its Python-side siblings.
+Fixed by validating the parsed duration with `std::isfinite()` right
+after the `std::stod()` call and defaulting to `0.0` if it isn't,
+before the value is ever used in the later cast. Confirmed live
+(Windows): compiles cleanly and the addon reloads normally. This was
+the only `std::stod()`/`std::stof()` call anywhere in the addon's C++
+source (checked directly, not assumed), so this closes the entire class
+of this specific bug on the native side, not just this one call site.
+
