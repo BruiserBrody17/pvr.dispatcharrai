@@ -1002,8 +1002,20 @@ def _get_live_manifest(state: dict, logger) -> dict:
                     sequence = media_sequence + list_index
                     list_index += 1
                     try:
+                        # OverflowError caught alongside ValueError, not
+                        # just for symmetry: float("inf") parses fine, but
+                        # round(inf) raises OverflowError, not ValueError
+                        # -- found via the same audit that caught the
+                        # analogous gap in recording_edl's _parse_edl (see
+                        # that plugin's own docs/RECORDING_EDL.md entry).
+                        # A single malformed #EXTINF: line shouldn't fail
+                        # the *entire* manifest fetch over one segment's
+                        # duration -- ffmpeg is the only realistic writer
+                        # of this file and isn't expected to ever emit
+                        # "inf", but a parser reading generated content
+                        # shouldn't assume that.
                         duration_ms = int(round(float(line[len("#EXTINF:"):].rstrip(",")) * 1000))
-                    except ValueError:
+                    except (ValueError, OverflowError):
                         duration_ms = 0
                     parsed.append((sequence, seg_name, duration_ms))
                     i += 2
@@ -1216,7 +1228,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "1.0.5"
+    version = "1.0.6"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."

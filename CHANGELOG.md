@@ -10,6 +10,22 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `timeshift_buffer` [1.0.6] - 2026-09-07
+
+Plugin only -- the addon didn't change for this fix, per the decoupled
+versioning policy.
+
+### Fixed
+
+- A malformed `#EXTINF:` duration value (`inf`, not expected from
+  ffmpeg in practice) in a channel's live playlist could fail the
+  entire `get_live_manifest` fetch instead of just defaulting that one
+  segment's duration to zero. Found via a follow-up audit prompted by
+  an analogous fix in the companion `recording_edl` plugin (see below)
+  -- every numeric conversion in this plugin was re-checked against the
+  same failure shape. See `docs/TIMESHIFT.md`'s "A malformed `#EXTINF:`
+  duration could fail the whole manifest fetch" section.
+
 ## `recording_edl` [1.0.2] - 2026-09-07
 
 Plugin only -- the addon didn't change for this fix, per the decoupled
