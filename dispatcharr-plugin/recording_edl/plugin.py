@@ -79,6 +79,7 @@ template controls, and neither of which this action has any business
 reasoning about. See _dvr_sidecar_scan_roots and _is_under_dotted_dir.
 """
 
+import math
 import re
 import shutil
 from pathlib import Path
@@ -109,9 +110,26 @@ def _parse_edl(text: str):
             # Missing type column defaults to 3 (Kodi commercial-break
             # marker) -- matches what Dispatcharr's own comskip.ini always
             # writes anyway (edl_skip_field=3), just tolerating a file that
-            # for some reason only has two columns.
+            # for some reason only has two columns. OverflowError is caught
+            # alongside ValueError, not just for symmetry: int(float("inf"))
+            # raises OverflowError, not ValueError, and this line is the
+            # only one of the three numeric conversions actually inside
+            # this try block -- start/end's own conversion happens below,
+            # guarded separately (see the isfinite() check).
             edl_type = int(float(parts[2])) if len(parts) >= 3 else 3
-        except ValueError:
+        except (ValueError, OverflowError):
+            continue
+        # start_sec/end_sec themselves never raise here -- float("nan")
+        # and float("inf") both parse successfully -- but round()/int()
+        # below would (ValueError for nan, OverflowError for inf), and
+        # unlike the try block above, nothing here would catch that: a
+        # single such line previously took down the *entire* get_edl
+        # result for a recording (no try/except around this function's
+        # own call site either), showing zero markers instead of just
+        # skipping the one bad line. comskip is the only realistic
+        # producer of this file and isn't expected to ever emit either,
+        # but a parser reading data from a file shouldn't trust that.
+        if not (math.isfinite(start_sec) and math.isfinite(end_sec)):
             continue
         entries.append(
             {
@@ -456,7 +474,7 @@ def _delete_orphaned_dvr_hls_dirs(logger):
 
 class Plugin:
     name = "Recording EDL"
-    version = "1.0.1"
+    version = "1.0.2"
     description = (
         "Exposes a completed recording's comskip .edl (commercial break "
         "markers) over the plugin run/ API, for clients with no direct "

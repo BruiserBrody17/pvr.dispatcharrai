@@ -10,6 +10,23 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `recording_edl` [1.0.2] - 2026-09-07
+
+Plugin only -- the addon didn't change for this fix, per the decoupled
+versioning policy.
+
+### Fixed
+
+- A single malformed line in a recording's `.edl` file (a `nan` or
+  `inf` timestamp -- not expected from comskip in practice, but not
+  something a parser reading a file should assume) could take down the
+  entire `get_edl` result for that recording instead of just being
+  skipped, showing zero commercial markers rather than whatever other
+  entries were valid. Found via a comparative architecture review of
+  the plugin (the same pass that reviewed `timeshift_buffer` earlier).
+  See `docs/RECORDING_EDL.md`'s "A malformed `.edl` line could take
+  down the whole result, not just itself" section.
+
 ## [1.0.7] - 2026-09-07
 
 `timeshift_buffer` also bumped, to its own independent `1.0.5` -- this
