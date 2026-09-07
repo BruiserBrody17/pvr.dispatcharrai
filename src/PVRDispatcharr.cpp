@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <ctime>
 #include <functional>
 #include <thread>
@@ -1153,8 +1154,22 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid,
 
     kodi::addon::PVREPGTag tag;
     // Broadcast ids only need to be unique per channel/addon, not globally;
-    // combining channel id and start time is stable across refreshes.
-    tag.SetUniqueBroadcastId(static_cast<unsigned int>((channelUid << 16) ^ (entry.startTime & 0xFFFF)));
+    // combining channel id with the *full* start time (not just its low
+    // bits) is what actually keeps this stable across refreshes without
+    // colliding. Found via a project-wide review, not a live-observed
+    // mis-tagged recording: an earlier version XORed in only
+    // `entry.startTime & 0xFFFF`, so any two entries on the *same*
+    // channel whose start times differed by an exact multiple of 65536
+    // seconds (~18.2h) produced the identical id -- a real, plausible
+    // collision across a multi-day guide with a few hundred entries per
+    // channel (birthday-paradox math puts a meaningful chance of at
+    // least one such collision per channel well within a typical guide
+    // window, compounding across an entire lineup). Multiplying
+    // channelUid by a large odd constant (Knuth's multiplicative hash
+    // constant) rather than shifting it also avoids the same class of
+    // truncation once a channel id exceeds 16 bits.
+    tag.SetUniqueBroadcastId(static_cast<unsigned int>(channelUid) * 2654435761u +
+                              static_cast<uint32_t>(entry.startTime));
     tag.SetUniqueChannelId(static_cast<unsigned int>(channelUid));
     tag.SetTitle(entry.title);
     tag.SetPlotOutline(entry.subtitle);

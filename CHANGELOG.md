@@ -10,6 +10,34 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [1.0.8] - 2026-09-07
+
+Addon only -- neither companion plugin changed for this pass.
+
+### Fixed
+
+Three findings from a project-wide code review of the addon's full C++
+source (following the same review already done for both companion
+plugins), none reproduced live -- all defensive gaps caught by
+deliberately re-checking the whole codebase for failure shapes already
+found once elsewhere this cycle:
+
+- The real-time-updates WebSocket client (`WebSocketClient::SendAll()`)
+  had no overall deadline on a stalled/zombie connection, unlike its
+  sibling read-side function -- could have silently hung the background
+  update thread indefinitely. See `docs/API_NOTES.md`'s
+  "`WebSocketClient::SendAll()` could hang this thread indefinitely"
+  section.
+- EPG broadcast IDs were computed from a channel id and only the low 16
+  bits of each entry's start time, risking collisions between different
+  programmes on the same channel roughly every 18.2 hours apart -- a
+  real, non-negligible risk given how many entries a multi-day guide
+  holds per channel. See `docs/EPG.md`'s "Broadcast IDs could collide
+  across a channel's own EPG entries" section.
+- An in-progress recording's HLS playlist duration parsing could hit
+  undefined behavior (not a clean, catchable error) on a malformed
+  `inf`/`nan` value. See `docs/RECORDINGS.md`'s entry on the same.
+
 ## `timeshift_buffer` [1.0.6] - 2026-09-07
 
 Plugin only -- the addon didn't change for this fix, per the decoupled
