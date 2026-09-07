@@ -1901,6 +1901,44 @@ investigation, just not currently fatal, and "harmless so far" isn't
 the same as "understood." Tracked in `docs/OPEN_ITEMS.md`'s Ongoing
 section.
 
+### The "cosmetic" Packet corrupt noise stopped being cosmetic once -- first observed real failure
+
+Reported live (macOS, addon build from the `chore/add-formatting-config`
+branch -- a pure reformat plus a `0.x` version renumber on top of
+current `master`, no logic changes on this path either in that branch
+or predating it): live TV playback (a news channel, one mid-session
+channel switch) hit two `Stream stalled, start buffering` events, the
+second with a real, severe audio desync (`ActiveAE - large audio sync
+error` climbing to and holding at -8278ms across dozens of consecutive
+log lines) alongside `[h264] co located POCs unavailable` and `mmco:
+unref short failure` next to the usual `hardware accelerator failed to
+decode picture`. Zero occurrences of the `ReadLiveTimeshiftStream:
+segment ... disagrees with the manifest-reported size` diagnostic
+anywhere in the session, ruling out both previously-fixed mechanisms
+above (the original size-mismatch bug and the pid-recycling cache gap)
+as the cause here.
+
+The `[mpegts] Packet corrupt` noise itself fired at its normal,
+already-documented rate (172 occurrences across the session, roughly
+every 2-4s -- consistent with the per-segment-muxer-reset hypothesis
+this section already describes), so this isn't a new or different
+mechanism triggering -- it's the *same* long-documented noise, just
+this time not staying cosmetic. Unlike the original size-mismatch bug,
+this didn't hang forever: Kodi's own player eventually gave up and
+tore the stream down on its own (`Player.GetActivePlayers` came back
+empty afterward, Kodi itself stayed up throughout, no crash).
+
+This is the first observed occurrence, not yet a reliable repro -- one
+data point, on one channel, after one channel switch. Deliberately not
+chased further immediately (a formatting/version-renumber PR was the
+actual focus of that testing round); tracked here and in
+`docs/OPEN_ITEMS.md`'s Ongoing section as a real, needs-fixing signal
+now rather than a purely theoretical "revisit if it stops being
+cosmetic" trigger. Next step, whenever this gets picked back up: try to
+force a live repro deliberately (let a channel run long enough to hit
+the per-segment continuity-counter reset repeatedly) rather than
+waiting on another incidental occurrence.
+
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
 Reproduced live (macOS, addon 1.0.7, plugin 1.0.3, redeployed and
