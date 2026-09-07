@@ -197,3 +197,35 @@ channels and `PVR.GetBroadcasts` against a normal channel (not one of the
 placeholder "LIVE EVENT NN - NO EVENT" ones, which have no programming to
 return) came back with a full day-plus of real programme data.
 
+## Broadcast IDs could collide across a channel's own EPG entries
+
+Found via a project-wide code review, not a live incident.
+`GetEPGForChannel()`'s `SetUniqueBroadcastId()` combined the channel id
+and each entry's start time as `(channelUid << 16) ^ (entry.startTime &
+0xFFFF)` -- masking `startTime` down to its low 16 bits before combining.
+Any two programmes on the *same* channel whose start times differed by an
+exact multiple of 65536 seconds (~18.2h) produced the identical id.
+Given a typical multi-day EPG guide holds a few hundred entries per
+channel, birthday-paradox math puts a meaningful chance of at least one
+such collision within a single channel's own guide window, and that
+compounds across an entire lineup -- not a rare edge case for a populated
+guide.
+
+Fixed by combining the channel id (multiplied by a large odd constant --
+Knuth's multiplicative hash constant, `2654435761`, chosen over a shift
+both to avoid the exact same truncation issue once a channel id exceeds
+16 bits and to avoid simple additive collision patterns) with the *full*
+`startTime`, not just its low bits. For two entries on the same channel,
+this now collides only if their full 32-bit-truncated timestamps are
+identical outright -- differing by an exact multiple of 2^32 seconds
+(~136 years), rather than 65536.
+
+Confirmed live (Windows): compiles cleanly and the addon reloads
+normally. The actual consequence of the original collision (which Kodi-
+side EPG functionality keys off `SetUniqueBroadcastId()` versus deriving
+identity some other way, e.g. this addon's own `ComputeOneTimeRecording
+EndTime()` matches by channel+start+end time directly, unaffected either
+way) wasn't independently traced through Kodi's own source this pass --
+the fix is unambiguously correct regardless, so it shipped without first
+pinning down the exact blast radius of the bug it closes.
+
