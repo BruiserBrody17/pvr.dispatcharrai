@@ -2172,6 +2172,25 @@ not `Player.Seek` via JSON-RPC -- doesn't explain the Channel B/MLB gap
 but still an open variable for how representative these controlled
 trials are of the original repro path.
 
+**Cross-platform confirmation (Windows) -- Channel A reproduces the
+severe form here too, ruling out "macOS-specific."** Same isolated
+-60s/+600s seek method, same channel. First attempt: clean (65
+`Packet corrupt`, matching normal background rate, zero audio-sync
+errors) -- so not deterministic on the very first try even on this
+channel. Second attempt, moments later: reproduced, peaking at
+**173,669ms (~174s) of desync**, 91 combined H.264 decode errors
+(`co located POCs`/`non-existing PPS`), recovering at roughly
+real-time pace afterward (consistent with the peer's own "still
+recovering after 2 minutes" observation for their worse case -- a
+~170s desync takes on the order of ~170 real seconds to fully drain
+once it stops growing). Confirms the channel-specific finding
+independently of platform: this is genuinely about Channel A's
+stream specifically, reproducible on both macOS and Windows, not
+something tied to one OS/client. Also confirms it isn't purely
+deterministic even on the implicated channel -- it took a second
+attempt here, same as it took escalating trials before Channel B's (still
+unconfirmed) susceptibility could be ruled either way.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
