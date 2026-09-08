@@ -1984,6 +1984,38 @@ different angle: longer duration, a different channel, or looking at
 this from the Dispatcharr/plugin server side rather than the Kodi
 client side.
 
+### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
+
+Found during routine log review, not a targeted investigation (Windows
+addon 0.9.0 and Rocky Linux addon 0.9.0, two unrelated machines/
+platforms, general viewing rather than a scripted test). Both logged
+`ActiveAE - large audio sync error` readings clustered tightly around
+**-89,400 to -89,500ms** -- Windows: one isolated occurrence mid-
+playback (no channel switch nearby); Rocky Linux: three occurrences in
+pairs, all within the first ~4 minutes after Kodi's own launch, none
+after. Neither caused any visible playback impact -- no stall, no
+elevated `Packet corrupt` rate afterward, no recurrence once past the
+initial window.
+
+That specific a magnitude repeating almost exactly across two
+independent machines is too consistent to be coincidental noise, but
+also doesn't match this file's other findings: no `CPtsTracker`/
+`CDropControl` pattern-loss messages immediately preceded the Rocky
+Linux occurrences (unlike the one Windows case, which did show a
+PTS-pattern recalibration right before it -- possibly two different
+paths converging on the same downstream symptom, not necessarily one
+mechanism). Leading, unconfirmed guess: a one-time measurement
+artifact from how the addon's server-side timeshift buffer establishes
+its initial live-edge/clock reference when a stream first opens,
+plausibly related to the buffer's own configured visible-window
+duration coincidentally landing in this range -- not verified against
+the actual `timeshift_buffer` plugin settings on the Dispatcharr
+instance these sessions used. Purely informational for now: no
+playback impact observed on either machine, not chased further this
+pass. Worth a quick look if it's ever cheap to check what
+`visible_segments * segment_seconds` actually evaluates to for the
+buffers in use, to see if it lines up with ~89-90s.
+
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
 Reproduced live (macOS, addon 1.0.7, plugin 1.0.3, redeployed and
