@@ -3067,6 +3067,12 @@ bool DispatcharrClient::OpenLiveTimeshiftStream(const std::string& channelUuid, 
     m_liveTimeshiftStream.totalDurationMs -= timeBase;
   }
 
+  // See LiveTimeshiftStreamState::wallClockAnchor's own comment -- this is
+  // the real-world moment local byte 0/PTS 0 above now corresponds to,
+  // approximated as "now" (the kept margin segments span at most a few
+  // seconds, not worth tracking more precisely for what this feeds).
+  m_liveTimeshiftStream.wallClockAnchor = std::time(nullptr);
+
   // Start near the live edge, not the earliest content still known about in
   // the (now-trimmed) address space above -- position defaults to 0, which
   // without this would replay from the start of that trimmed window every
@@ -3464,6 +3470,13 @@ int64_t DispatcharrClient::GetLiveTimeshiftStreamDurationMs()
   std::string refreshError;
   RefreshLiveManifest(/*force=*/false, refreshError);
   return m_liveTimeshiftStream.totalDurationMs;
+}
+
+time_t DispatcharrClient::GetLiveTimeshiftStreamWallClockAnchor()
+{
+  if (!m_liveTimeshiftStream.open)
+    return 0;
+  return m_liveTimeshiftStream.wallClockAnchor;
 }
 
 void DispatcharrClient::CloseLiveTimeshiftStream()
