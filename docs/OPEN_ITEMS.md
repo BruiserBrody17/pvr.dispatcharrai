@@ -399,6 +399,14 @@ to its original settings and left running normally.
   more easily than on ESPN. Points at Dispatcharr's own segmenter for
   this channel's encode, not this addon/Kodi/OS. Not yet confirmed
   against a second segment-aligned channel or a second misaligned one.
+  **Update: confirmed via real GUI keypresses, not just synthetic
+  seeks.** Peer report -- `StepBack`x7 then `StepForward`x6 (real
+  remote/keyboard input, same path as the original ESPN incidents)
+  drove a live-edge seek on MLB Network and reproduced the identical
+  failure signature, peaking ~170s desync, recovering at real-time
+  pace. Closes the GUI-vs-JSON-RPC confound. Also: this buffer was
+  ~37 minutes old (not freshly opened), so reproducibility on this
+  channel doesn't depend on buffer age either.
   See `docs/TIMESHIFT.md`'s same section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
