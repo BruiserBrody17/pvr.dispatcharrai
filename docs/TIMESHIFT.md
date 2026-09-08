@@ -1962,6 +1962,28 @@ with only one switch, not rapid cycling. Narrows the next repro attempt
 toward long continuous dwell on a single channel rather than switching
 frequency.
 
+**Update -- a 30-minute continuous single-channel dwell (the other half
+of the narrowed-down approach above) also did not reproduce it
+(Windows, addon 0.9.0).** ESPN (1080p), no switching at all after the
+initial open. Result: 782 `Packet corrupt` occurrences (same benign
+rate as always, expected volume for 30 minutes), zero size-disagreement
+diagnostic firings, zero audio desync warnings, zero stream stalls,
+zero addon errors or crashes, and zero `catch-up-to-tail` "gave up"
+exhaustions across the entire 30 minutes -- the buffer never once fell
+far enough behind to need one. The only event in the whole window was a
+single `timeout waiting for buffer` warning 4 seconds after the initial
+channel open (the normal open-transition blip, same as every other
+channel-open in this investigation), followed by nothing for the
+remaining ~29.9 minutes.
+
+Two different stress angles now tried -- 15 minutes of rapid switching
+(105 switches) and 30 minutes of continuous single-channel dwell -- and
+neither reproduced the escalation. It still stands as a single,
+unreplicated occurrence. Next attempt, if pursued further, would need a
+different angle: longer duration, a different channel, or looking at
+this from the Dispatcharr/plugin server side rather than the Kodi
+client side.
+
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
 Reproduced live (macOS, addon 1.0.7, plugin 1.0.3, redeployed and
