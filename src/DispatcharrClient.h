@@ -622,14 +622,25 @@ public:
   // task keeps writing the recording regardless of whether this addon is
   // reading it, so opening always starts at true byte 0, matching normal
   // recording/VOD conventions (and the existing completed-recording
-  // behaviour).
-  bool OpenInProgressRecordingStream(int recordingId, std::string& error);
+  // behaviour). startTime is the recording's own real, known start time
+  // (kodi::addon::PVRRecording::GetRecordingTime(), the exact value
+  // PVRDispatcharr::GetRecordings() already populated it with) -- simpler
+  // than live-timeshift's own "anchor at the trim point" approach below,
+  // since a recording always starts at true byte 0 with a genuinely known
+  // start time, no cold-start trim to anchor instead.
+  bool OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error);
   int ReadInProgressRecordingStream(uint8_t* buffer, unsigned int size);
   int64_t SeekInProgressRecordingStream(int64_t position, int whence);
   int64_t GetInProgressRecordingStreamLength();
   // Mirrors GetLiveTimeshiftStreamDurationMs() -- for GetStreamTimes()'s
   // ptsEnd, which must grow as the recording does.
   int64_t GetInProgressRecordingStreamDurationMs();
+  // Mirrors GetLiveTimeshiftStreamWallClockAnchor() -- for GetStreamTimes()'s
+  // startTime, same "must not be 0/unset" requirement (see that function's
+  // own comment for the Kodi-core mechanism). The value itself is simpler
+  // here: the recording's real start time, passed in at Open() time,
+  // rather than something computed from a cold-start trim.
+  time_t GetInProgressRecordingStreamStartTime();
   void CloseInProgressRecordingStream();
   // PVRDispatcharr uses this to tell which of OpenRecordedStream()'s two
   // implementations (this one, or the plain completed-recording one) is
@@ -931,6 +942,9 @@ private:
   {
     bool open = false;
     int recordingId = -1;
+    // Real UTC wall-clock start time of the underlying recording -- see
+    // GetInProgressRecordingStreamStartTime()'s own comment.
+    time_t startTime = 0;
     // Append-only for the life of this open stream: Dispatcharr's own HLS
     // output for a recording, unlike the live-timeshift plugin's rolling
     // buffer, never evicts old segments (a recording is meant to be kept

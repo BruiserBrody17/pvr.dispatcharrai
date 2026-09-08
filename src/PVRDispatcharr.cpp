@@ -1038,12 +1038,12 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
   }
   if (m_client.IsInProgressRecordingStreamOpen())
   {
-    // startTime=0 here is the same root cause as the live-timeshift branch
-    // above (see its comment and GetLiveTimeshiftStreamWallClockAnchor()'s)
-    // -- not fixed in this pass since it wasn't the confirmed, live-tested
-    // case, but almost certainly has the identical on-screen seek bar bug.
-    // Tracked in docs/OPEN_ITEMS.md as a follow-up.
-    times.SetStartTime(0);
+    // Same root cause/mechanism as the live-timeshift branch above (see its
+    // comment and GetInProgressRecordingStreamStartTime()'s), fixed the same
+    // way -- a real, non-zero startTime here. Simpler than the live case:
+    // the recording's own actual start time, not something computed from a
+    // cold-start trim, since a recording always plays from true byte 0.
+    times.SetStartTime(m_client.GetInProgressRecordingStreamStartTime());
     times.SetPTSStart(0);
     times.SetPTSBegin(0);
     times.SetPTSEnd(m_client.GetInProgressRecordingStreamDurationMs() * 1000);
@@ -1584,8 +1584,9 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
             "pvr.dispatcharrai: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0, hlsDirStillPresent ? 1 : 0);
-  bool opened =
-      useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, error) : m_client.OpenRecordingStream(id, error);
+  bool opened = useGrowingBuffer
+                    ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error)
+                    : m_client.OpenRecordingStream(id, error);
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
             opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (!opened)
