@@ -230,6 +230,13 @@ to its original settings and left running normally.
 
 ## Ongoing (more will likely come up)
 
+- **A consistent ~89.4s audio-sync-error reading on fresh stream opens,
+  harmless (2026-09-08).** Seen independently on Windows and Rocky
+  Linux (addon 0.9.0 on both), clustered right around -89,400 to
+  -89,500ms, only near the start of a stream and never recurring. No
+  playback impact on either machine. Purely informational -- not
+  chased further. See `docs/TIMESHIFT.md`'s section of the same name
+  for the detail and a leading (unconfirmed) guess at the mechanism.
 - **In-progress recording playback never received the catch-up-budget
   hardening that live timeshift already has -- worth revisiting
   (found 2026-09-08, discarded uncommitted, not yet redone).** A real,
