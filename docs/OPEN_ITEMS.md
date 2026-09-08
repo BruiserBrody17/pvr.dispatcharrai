@@ -416,6 +416,13 @@ to its original settings and left running normally.
   in general -- reopens increasing `SeekLiveTimeshiftStream()`'s tail
   backoff margin (currently 1 segment) as a plausible, worth-trying
   client-side mitigation.
+  **Update: implemented and tested -- backing off 3 segments instead
+  of 1 eliminated the cascade across 12/12 trials on MLB Network
+  (Windows), vs. reproducing on the 2nd of 6 attempts pre-fix.** Zero
+  `large audio sync error` lines in any of 12 attempts; ordinary
+  baseline noise unchanged. Not proof it's fully eliminated (12 clean
+  trials, not exhaustive), and not yet tested against an older buffer
+  or on macOS/CoreELEC -- worth continued normal-use monitoring.
   See `docs/TIMESHIFT.md`'s same section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
