@@ -248,38 +248,26 @@ to its original settings and left running normally.
   playback impact on either machine. Purely informational -- not
   chased further. See `docs/TIMESHIFT.md`'s section of the same name
   for the detail and a leading (unconfirmed) guess at the mechanism.
-- **In-progress recording playback never received the catch-up-budget
-  hardening that live timeshift already has -- worth revisiting
-  (found 2026-09-08, discarded uncommitted, not yet redone).** A real,
-  substantial uncommitted refactor was found sitting on the Rocky Linux
-  laptop's checkout (never pushed anywhere, origin unknown -- likely
-  from a prior session that worked directly on that machine) that
-  extracted two shared helper functions,
-  `EstimateSegmentDurationMs(totalDurationMs, segments)` and
-  `ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs,
-  catchUpSleepMs)`, so both `ReadLiveTimeshiftStream()` *and*
-  `ReadInProgressRecordingStream()` share the exact same catch-up
-  budget calculation. The live path already has this hardening (see
-  the "1.0.7 follow-up" investigation in `docs/TIMESHIFT.md`, plus a
-  later, further-hardened version referenced in this diff): segment
-  duration estimated as an average of the last 5 segments (not a
-  single, noisy sample -- a real instance produced one segment just
-  151ms long against a 2s target, which alone had previously collapsed
-  the retry budget enough to make ffmpeg's demuxer read a real stall as
-  genuine end-of-stream and kick Kodi back to the main menu), floored
-  at a 1500ms minimum for a still-warming-up fresh buffer's first few
-  segments, with a 3x margin (not the original 1.5x -- confirmed live
-  that 1.5x ran too thin, with ordinary non-error catch-up cycles
-  routinely using 60-95% of that budget under normal jitter). The
-  in-progress-recording path apparently never got this same fix and
-  may have the identical vulnerability (a single noisy segment
-  collapsing its own, still-duplicated, still-1.5x budget) -- this
-  refactor would have closed that gap by sharing one hardened
-  implementation instead of two diverging copies. Discarded rather
-  than committed since its actual authorship/testing history is
-  unknown and it was found mid-unrelated-task; worth redoing properly
-  (confirm the in-progress-recording path's vulnerability is real
-  first, then share the implementation) rather than lost entirely.
+- ~~In-progress recording playback never received the catch-up-budget
+  hardening that live timeshift already has~~ -- **Already fixed;
+  this entry was stale.** When this was written (2026-09-08, after
+  finding a substantial *uncommitted* refactor sitting on the Rocky
+  Linux laptop's checkout and discarding it per instruction, since its
+  authorship/testing history was unknown), the assumption was that the
+  in-progress-recording path still had the old, unhardened
+  single-segment/1.5x-margin catch-up math. It didn't -- that exact
+  refactor (shared `EstimateSegmentDurationMs()`/
+  `ComputeCatchUpAttempts()` helpers, 5-segment average, 1500ms floor,
+  3x margin) had already been committed to `master` three days
+  earlier, in `1ddf3d9` (2026-09-05), and live-verified there (a
+  forced tail-seek showed the seek-probe path getting its fast
+  1-attempt budget and a genuine catch-up wait getting the full 3x
+  budget and succeeding). The Rocky Linux checkout that prompted this
+  entry was evidently just behind `master` at the time. That commit
+  never touched this file or `docs/TIMESHIFT.md`, which is why the
+  gap looked open later -- corrected here, and the fix itself is now
+  written up in `docs/TIMESHIFT.md`'s "Catch-up budget hardening
+  shared between live and recording playback" section.
 - **Recurring, non-fatal `Packet corrupt` on server-side live timeshift,
   post-1.0 (surfaced during 1.0.7 verification, 2026-09-07).** Confirmed
   live on macOS (ESPN 1080p): ffmpeg's mpegts demuxer logs `Packet
