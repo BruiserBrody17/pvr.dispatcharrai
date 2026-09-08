@@ -383,6 +383,22 @@ to its original settings and left running normally.
   method/client/machine -- only the channel changed. Next: more MLB
   trials to confirm, plus a same-resolution comparison channel to
   isolate whether it's resolution or this specific stream's encode.
+  **Update: likely root cause found.** A bare `ffprobe` probe of MLB
+  Network's raw Dispatcharr proxy stream -- no seek, no Kodi, no addon,
+  just a cold TCP connection -- throws ~12 `non-existing PPS 0
+  referenced`/`no frame!` errors per second, continuously, for the
+  whole 10s test window; Channel B's same probe is essentially clean (1
+  unrelated warning). Channel A's keyframe interval is a steady
+  2.002s, exactly matching this instance's `segment_seconds=2` setting;
+  Channel B's is a steady but unaligned 2.503s. Working theory: MLB's
+  segment-aligned GOP means Dispatcharr's segmenter cuts every segment
+  exactly on a keyframe, and something in that exact-alignment path
+  corrupts the PPS NAL unit at those cut points almost every time --
+  explaining both the worse baseline noise and why a live-edge seek
+  (an extra demuxer resync) tips it into the severe cascade so much
+  more easily than on Channel B. Points at Dispatcharr's own segmenter for
+  this channel's encode, not this addon/Kodi/OS. Not yet confirmed
+  against a second segment-aligned channel or a second misaligned one.
   See `docs/TIMESHIFT.md`'s same section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
