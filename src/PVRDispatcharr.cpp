@@ -1021,7 +1021,16 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
   // GetInProgressRecordingStreamDurationMs() correctly growing every call.
   if (m_client.IsLiveTimeshiftStreamOpen())
   {
-    times.SetStartTime(0);
+    // A real, non-zero startTime here is load-bearing, not cosmetic --
+    // see GetLiveTimeshiftStreamWallClockAnchor()'s own comment. A zero/
+    // falsy startTime makes Kodi-core's CPVRGUITimesInfo::UpdateTimeshiftData()
+    // substitute the current playback position for both its internal min
+    // and max time, which collapses "is timeshifting supported" to false
+    // and makes the on-screen seek bar's position silently fall back to
+    // raw wall-clock time regardless of where a seek actually landed --
+    // confirmed live via screenshots before this fix. See
+    // docs/TIMESHIFT.md's "PVR.TimeshiftProgress*"/seek bar section.
+    times.SetStartTime(m_client.GetLiveTimeshiftStreamWallClockAnchor());
     times.SetPTSStart(0);
     times.SetPTSBegin(0);
     times.SetPTSEnd(m_client.GetLiveTimeshiftStreamDurationMs() * 1000);
@@ -1029,6 +1038,11 @@ PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
   }
   if (m_client.IsInProgressRecordingStreamOpen())
   {
+    // startTime=0 here is the same root cause as the live-timeshift branch
+    // above (see its comment and GetLiveTimeshiftStreamWallClockAnchor()'s)
+    // -- not fixed in this pass since it wasn't the confirmed, live-tested
+    // case, but almost certainly has the identical on-screen seek bar bug.
+    // Tracked in docs/OPEN_ITEMS.md as a follow-up.
     times.SetStartTime(0);
     times.SetPTSStart(0);
     times.SetPTSBegin(0);

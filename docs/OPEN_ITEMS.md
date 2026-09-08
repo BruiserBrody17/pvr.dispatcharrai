@@ -230,6 +230,17 @@ to its original settings and left running normally.
 
 ## Ongoing (more will likely come up)
 
+- **In-progress recording playback likely has the same seek-bar
+  wall-clock-position bug live timeshift had, unfixed (2026-09-08).**
+  `GetStreamTimes()`'s in-progress-recording branch still hardcodes
+  `startTime=0`, the exact root cause just fixed for live timeshift
+  (see `docs/TIMESHIFT.md`'s "PVR.TimeshiftProgress*"/seek bar
+  section's "Update" for the full mechanism). Not fixed here since it
+  wasn't the confirmed/live-tested case -- would need the same
+  wall-clock-anchor treatment (a real recording has an actual known
+  start time available, likely simpler than live timeshift's own
+  "anchor at the trim point" approach) plus its own live confirmation
+  before shipping.
 - **A consistent ~89.4s audio-sync-error reading on fresh stream opens,
   harmless (2026-09-08).** Seen independently on Windows and Rocky
   Linux (addon 0.9.0 on both), clustered right around -89,400 to

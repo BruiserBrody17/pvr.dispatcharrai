@@ -789,8 +789,50 @@ tunes in partway through a show, not an edge case.
 labels specifically, this is working as Kodi-core designed it** --
 showing position within the full scheduled programme, not within the
 physical buffer -- and isn't something this addon (or any third-party
-timeshift-implementing PVR addon) can change from the addon side.
-Nothing to fix here.
+timeshift-implementing PVR addon) can change from the addon side. The
+`Duration` side of this (a round, EPG-scheduled number) genuinely is
+by-design and stands as documented above.
+
+**Update -- a second, separate, genuinely-broken mechanism was hiding
+behind the same reported symptom, and unlike the above, this one *was*
+a real bug in this addon, now fixed.** Follow-up live testing (same
+session, seeking around further) found something the analysis above
+didn't yet explain: the on-screen seek bar's *displayed position*
+didn't just show a different range (the EPG-relative behavior above,
+expected) -- it never moved backward or forward with an actual seek at
+all, in either direction. Confirmed with before/after screenshots: a
+-90s and a +80s seek both visibly changed the actual playing video
+content, but the seek bar's numeric position and its
+"Timeshift HH:MM:SS AM (-offset)" indicator just kept climbing with
+real wall-clock time regardless of seek direction.
+
+Root cause, traced into `CPVRGUITimesInfo::UpdateTimeshiftData()`
+(same file as above): this addon's `GetStreamTimes()` always reported
+`startTime=0`. That function treats a falsy `startTime` as "no real
+timeshift bounds available" and substitutes the *current playback
+position* for both its own internal min and max time -- collapsing
+them to the same value, which makes its "is timeshifting supported"
+check (`end > start`) always false and falls back to raw wall-clock
+tracking for position, independent of this addon's actual seek state.
+`PTSBegin`/`PTSEnd` (this addon's real buffer bounds) were never wrong
+-- the missing piece was that `startTime` itself has to be a genuine,
+non-zero UTC anchor for Kodi-core to trust *any* of that bounds data
+for position-tracking purposes at all.
+
+Fixed by tracking a real wall-clock anchor -- the UTC moment this
+session's local byte 0/PTS 0 corresponds to, captured once (`std::
+time(nullptr)`) at the same point `OpenLiveTimeshiftStream()`'s
+existing trim-to-live-edge-margin rebases the kept segments to local
+0 -- and reporting that instead of a hardcoded `0`. Confirmed live
+(Windows, addon 0.9.0) via before/after screenshots: pre-fix, `29:15`
+stayed climbing through both a backward and a forward seek; post-fix,
+a -90s seek moved it to `28:23` (the "Timeshift" wall-clock indicator
+correspondingly moved from `9:29:15 AM (-00:17)` to `9:28:23 AM
+(-01:49)`), and a +80s seek correctly hit the existing forward-clamp-
+to-tail behavior. The in-progress-recording branch of `GetStreamTimes()`
+has the identical `startTime=0` pattern and almost certainly the same
+bug, but wasn't the confirmed/tested case here -- see
+`docs/OPEN_ITEMS.md`.
 
 ## Buffer teardown was slow to notice a Stop
 
