@@ -576,6 +576,21 @@ public:
   // live buffer does (see kodi-dev-kit's own PVRStreamTimes doc comment:
   // "For Live TV, this must be ... point to end of the timeshift buffer").
   int64_t GetLiveTimeshiftStreamDurationMs();
+  // Real UTC wall-clock moment corresponding to this session's local byte
+  // 0/PTS 0 (see LiveTimeshiftStreamState::wallClockAnchor's own comment)
+  // -- for GetStreamTimes()'s startTime, which must NOT be 0/unset: Kodi-
+  // core's CPVRGUITimesInfo::UpdateTimeshiftData() treats a falsy start
+  // time as "no real timeshift bounds available" and substitutes the
+  // *current playback position* for both its internal min and max time
+  // instead, collapsing them to the same value. That makes its own
+  // "is timeshifting supported" check (end > start) always false, which
+  // makes the on-screen seek bar's position tracking fall back to raw
+  // wall-clock time -- confirmed live via screenshots: the displayed
+  // position kept climbing with real time regardless of where a seek
+  // actually landed, both backward and forward, while the underlying
+  // playback content genuinely did seek correctly. See
+  // docs/TIMESHIFT.md's "PVR.TimeshiftProgress*"/seek bar section.
+  time_t GetLiveTimeshiftStreamWallClockAnchor();
   void CloseLiveTimeshiftStream();
   // Genuine "is a live-timeshift stream currently open" state, as opposed to
   // just "is server-side timeshift mode enabled in settings" -- the latter
@@ -839,6 +854,17 @@ private:
     int64_t totalBytes = 0;
     int64_t totalDurationMs = 0;
     int64_t position = 0;
+    // Real UTC wall-clock moment this session's local byte 0/PTS 0
+    // corresponds to -- set once, right when OpenLiveTimeshiftStream()'s
+    // own trim-to-live-edge-margin rebases the kept segments to local 0
+    // (see that trim's own comment for why local 0 isn't the server-side
+    // buffer's true beginning), and never touched again for the life of
+    // this open stream. Approximate to within the few seconds the kept
+    // margin segments span -- good enough for GetStreamTimes()'s startTime,
+    // which only needs to be non-zero and roughly right, not
+    // sub-segment-precise; see GetLiveTimeshiftStreamWallClockAnchor()'s
+    // own comment for what actually depends on it being non-zero at all.
+    time_t wallClockAnchor = 0;
     std::chrono::steady_clock::time_point lastManifestFetch{};
     // Set by SeekLiveTimeshiftStream() on every call. ReadLiveTimeshiftStream()
     // uses this to tell "this read is likely one of ffmpeg's own internal
