@@ -230,6 +230,38 @@ to its original settings and left running normally.
 
 ## Ongoing (more will likely come up)
 
+- **In-progress recording playback never received the catch-up-budget
+  hardening that live timeshift already has -- worth revisiting
+  (found 2026-09-08, discarded uncommitted, not yet redone).** A real,
+  substantial uncommitted refactor was found sitting on the Rocky Linux
+  laptop's checkout (never pushed anywhere, origin unknown -- likely
+  from a prior session that worked directly on that machine) that
+  extracted two shared helper functions,
+  `EstimateSegmentDurationMs(totalDurationMs, segments)` and
+  `ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs,
+  catchUpSleepMs)`, so both `ReadLiveTimeshiftStream()` *and*
+  `ReadInProgressRecordingStream()` share the exact same catch-up
+  budget calculation. The live path already has this hardening (see
+  the "1.0.7 follow-up" investigation in `docs/TIMESHIFT.md`, plus a
+  later, further-hardened version referenced in this diff): segment
+  duration estimated as an average of the last 5 segments (not a
+  single, noisy sample -- a real instance produced one segment just
+  151ms long against a 2s target, which alone had previously collapsed
+  the retry budget enough to make ffmpeg's demuxer read a real stall as
+  genuine end-of-stream and kick Kodi back to the main menu), floored
+  at a 1500ms minimum for a still-warming-up fresh buffer's first few
+  segments, with a 3x margin (not the original 1.5x -- confirmed live
+  that 1.5x ran too thin, with ordinary non-error catch-up cycles
+  routinely using 60-95% of that budget under normal jitter). The
+  in-progress-recording path apparently never got this same fix and
+  may have the identical vulnerability (a single noisy segment
+  collapsing its own, still-duplicated, still-1.5x budget) -- this
+  refactor would have closed that gap by sharing one hardened
+  implementation instead of two diverging copies. Discarded rather
+  than committed since its actual authorship/testing history is
+  unknown and it was found mid-unrelated-task; worth redoing properly
+  (confirm the in-progress-recording path's vulnerability is real
+  first, then share the implementation) rather than lost entirely.
 - **Recurring, non-fatal `Packet corrupt` on server-side live timeshift,
   post-1.0 (surfaced during 1.0.7 verification, 2026-09-07).** Confirmed
   live on macOS (ESPN 1080p): ffmpeg's mpegts demuxer logs `Packet
