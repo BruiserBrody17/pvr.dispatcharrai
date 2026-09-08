@@ -10,6 +10,24 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.9.1] - 2026-09-08
+
+Addon only -- neither companion plugin changed for this pass.
+
+### Fixed
+
+- The on-screen seek bar for server-side live TV pause/rewind didn't
+  move when you seeked -- it kept climbing with real time regardless of
+  where you'd rewound or fast-forwarded to, even though the actual
+  playback position was correct. Now reflects the real position.
+- The same seek bar bug, for playback of a recording that's still in
+  progress.
+- A rare but severe playback corruption (garbled video, audio badly out
+  of sync, sometimes needing a restart) that some channels could hit
+  after fast-forwarding all the way to the live edge. Fast-forwarding to
+  live now leaves a little more buffer margin, which resolved it in
+  testing.
+
 ## [0.9.0] - 2026-09-07
 
 Versioning scheme change only -- no code changed in this entry. All three
