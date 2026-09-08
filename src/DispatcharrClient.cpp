@@ -2201,12 +2201,13 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   return true;
 }
 
-bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, std::string& error)
+bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t startTime, std::string& error)
 {
   CloseInProgressRecordingStream();
 
   m_inProgressRecordingStream.open = true;
   m_inProgressRecordingStream.recordingId = recordingId;
+  m_inProgressRecordingStream.startTime = startTime;
 
   // Reopening the same still-recording (channel switch and back, resuming
   // after a pause) shouldn't re-probe segments already sized on a previous
@@ -2580,6 +2581,13 @@ int64_t DispatcharrClient::GetInProgressRecordingStreamDurationMs()
   std::string refreshError;
   RefreshInProgressRecordingManifest(/*force=*/false, refreshError);
   return m_inProgressRecordingStream.totalDurationMs;
+}
+
+time_t DispatcharrClient::GetInProgressRecordingStreamStartTime()
+{
+  if (!m_inProgressRecordingStream.open)
+    return 0;
+  return m_inProgressRecordingStream.startTime;
 }
 
 void DispatcharrClient::CloseInProgressRecordingStream()
