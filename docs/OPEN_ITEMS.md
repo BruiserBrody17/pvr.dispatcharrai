@@ -370,6 +370,20 @@ to its original settings and left running normally.
   trigger (landing on an arbitrary point with no guaranteed clean
   H.264 keyframe/SPS-PPS boundary, unlike a seek into already-settled
   earlier segment data).
+  **Update: the segment-wraparound hypothesis is ruled out -- this is
+  channel/stream-specific.** Real segment-file-reuse threshold for the
+  affected instance is ~10 hours (`buffer_minutes=300`); both real
+  incidents happened at 1-5 minutes of buffer age, nowhere close.
+  Confirmed on Windows too: 6 live-edge seeks on a 2-minute buffer,
+  zero corruption. Controlled trials then found the real variable:
+  ESPN (1080p) resisted 4 escalating trials (up to 1,606 decode
+  errors, zero audio-sync errors); MLB Network (720p) reproduced the
+  severe form instantly on the *mildest* method (240 decode errors,
+  238 audio-sync errors, 109s peak desync, first attempt). Same
+  method/client/machine -- only the channel changed. Next: more MLB
+  trials to confirm, plus a same-resolution comparison channel to
+  isolate whether it's resolution or this specific stream's encode.
+  See `docs/TIMESHIFT.md`'s same section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
