@@ -355,6 +355,21 @@ to its original settings and left running normally.
   self-recovering), suggesting a second branch point beyond just
   cosmetic-vs-escalates. Still not enough signal to act on. See
   `docs/TIMESHIFT.md`'s same section for the full detail.
+  **Update (2026-09-08): a reliable, on-demand trigger found --
+  seeking to the live edge, reproduced 3-for-3 in one session
+  (macOS).** Severity escalated across the three reproductions,
+  peaking at 248,392ms (over 4 minutes) of desync and 439
+  hardware-decoder failures in the third one, still not fully
+  recovered when the user gave up waiting and restarted. Confirmed
+  not a regression from PR #2 (its diff doesn't touch the seek/read
+  path). This changes the situation from "wait for it to happen
+  incidentally" to "can be deliberately tested" -- worth deciding
+  whether to actually chase this now rather than keep just recording
+  occurrences. See `docs/TIMESHIFT.md`'s same section for the full
+  writeup and the reasoning for why live-edge seeks are a plausible
+  trigger (landing on an arbitrary point with no guaranteed clean
+  H.264 keyframe/SPS-PPS boundary, unlike a seek into already-settled
+  earlier segment data).
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
