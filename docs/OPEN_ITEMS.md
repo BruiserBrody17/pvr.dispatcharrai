@@ -275,6 +275,16 @@ to its original settings and left running normally.
   "The 'cosmetic' Packet corrupt noise stopped being cosmetic once"
   section. Next step: try to force a live repro deliberately rather
   than waiting on another incidental occurrence.
+  **Update (2026-09-08): a 15-minute, 105-switch rapid-channel-cycling
+  stress test (Windows, addon 0.9.0) did not reproduce it.** Same
+  benign `Packet corrupt` rate as always, zero size-disagreement
+  firings, zero errors/crashes, and every audio-sync/buffer-timeout
+  warning landed within seconds of a channel switch (normal
+  pipeline-reset noise), not a standalone problem. Rapid switching
+  specifically doesn't appear to be the trigger -- the original report
+  was continuous playback with only one switch. Next attempt should
+  try long continuous dwell on a single channel instead. See
+  `docs/TIMESHIFT.md`'s same section for the full test breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --

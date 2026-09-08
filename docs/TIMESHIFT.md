@@ -1939,6 +1939,29 @@ force a live repro deliberately (let a channel run long enough to hit
 the per-segment continuity-counter reset repeatedly) rather than
 waiting on another incidental occurrence.
 
+**Update -- a deliberate rapid-channel-switching stress test did not
+reproduce it (Windows, addon 0.9.0).** 15 minutes, 105 switches across
+six channels (Channel A, Channel B (1080p), Channel C, Channel D, Channel E,
+Channel F), random dwell 2-15s per channel. Result: 483 `Packet corrupt`
+occurrences (the same already-documented benign rate), zero
+size-disagreement diagnostic firings, zero addon errors/crashes/failed
+opens. 42 `ActiveAE - large audio sync error` warnings and 91 `timeout
+waiting for buffer` warnings (this platform's DXVA render path logs a
+different signal than the Amlogic build's `ttd`/`Level` lines) -- every
+one of the 133 checked against switch timing, and 130 landed within
+-7s to +5s of a channel switch, consistent with the ordinary
+audio/decode pipeline reset every switch causes, not a standalone
+problem. The single `Stream stalled` event was a clean cold-buffer
+catch-up blip on a freshly-switched channel, resolved in under 200ms
+with only a 109ms audio correction -- nothing resembling the original
+report's sustained -8278ms desync recurred.
+
+Rapid switching specifically does not appear to be what triggers the
+escalated failure -- the original report involved continuous playback
+with only one switch, not rapid cycling. Narrows the next repro attempt
+toward long continuous dwell on a single channel rather than switching
+frequency.
+
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
 Reproduced live (macOS, addon 1.0.7, plugin 1.0.3, redeployed and
