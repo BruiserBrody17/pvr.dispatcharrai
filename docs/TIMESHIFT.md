@@ -834,6 +834,23 @@ has the identical `startTime=0` pattern and almost certainly the same
 bug, but wasn't the confirmed/tested case here -- see
 `docs/OPEN_ITEMS.md`.
 
+**Update: fixed for in-progress recordings too, live-confirmed.** Same
+mechanism, simpler fix: a recording always plays from true byte 0 (no
+cold-start trim the way live timeshift has), and its real start time
+is already known -- `kodi::addon::PVRRecording::GetRecordingTime()`,
+the exact value `PVRDispatcharr::GetRecordings()` already populates
+the recording with. `OpenRecordedStream()` now passes that value
+through to `OpenInProgressRecordingStream()`, which stores it on
+`InProgressRecordingStreamState::startTime`; `GetStreamTimes()`'s
+recording branch reports it via the new
+`GetInProgressRecordingStreamStartTime()` instead of a hardcoded `0`.
+Confirmed live (Windows, addon 0.9.0): started an instant recording of
+Channel A, played it back while still in progress. A -45s seek from
+01:21 landed at 00:38 (matches exactly); after playback resumed and
+climbed normally for 5s to 00:56, a +90s seek landed at 02:27 (56+90=146s,
+matches within rounding) -- position tracks real seeks in both
+directions, the same result PR #2 confirmed for live timeshift.
+
 ## Buffer teardown was slow to notice a Stop
 
 **This section's own fix is itself superseded -- see "Concurrent viewers"
