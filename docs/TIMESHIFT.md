@@ -1984,6 +1984,32 @@ different angle: longer duration, a different channel, or looking at
 this from the Dispatcharr/plugin server side rather than the Kodi
 client side.
 
+**Second occurrence -- escalated again, but this time self-recovered
+(macOS, addon 0.9.0, ~20-hour continuous session, MLB Network).** Same
+underlying noise (1,825 `Packet corrupt` occurrences over the session,
+usual ~2-4s background rate, consistent with the per-segment-muxer-
+reset hypothesis above), but a burst of three `Stream stalled, start
+buffering` events in ~3.6 seconds (07:59:57.228, 08:00:00.348,
+08:00:00.887), each immediately preceded by `Packet corrupt`, with
+audio desync peaking at -5064ms. Ruled out as either previously-fixed
+mechanism: zero `disagrees with the manifest` diagnostic firings across
+the full ~20-hour session (12,159 log lines checked).
+
+The meaningful difference from the first occurrence: this one
+**self-recovered** entirely through Kodi's own normal resync machinery
+(`CVideoPlayer::SetCaching` cycling 1->2->3->0, `ActiveAE::SyncStream`
+pulling the desync from -5064ms down to -20.6ms -- back under the
+30ms threshold -- within about a second), with no manual intervention
+and no user-visible interruption. The first occurrence required the
+player to be manually stopped after Kodi's own player gave up and tore
+the stream down. Two data points now: same trigger noise, two
+different outcomes (fatal vs. self-recovering). Suggests whatever
+determines escalation-vs-cosmetic isn't the only branch point -- there
+may be a second branch determining recoverable-vs-fatal once it does
+escalate. Not enough signal yet to isolate what determines either
+branch; recording per the standing decision to track real occurrences
+rather than guess at a fix from two data points.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
