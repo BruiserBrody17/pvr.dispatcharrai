@@ -739,8 +739,58 @@ entirely. Relative seeks (`Player.Seek {"seconds": N}`, used throughout
 all the testing above) are unaffected -- confirmed via `VideoPlayer.cpp`'s
 `SeekTimeRelative()`, which computes its target from the player's own
 internal clock, not from the EPG-derived display value. For precise
-absolute-position testing, read `Player.Time`/`Player.Duration` (or the
-`PVR.Timeshift*` labels) via `XBMC.GetInfoLabels` instead.
+absolute-position testing, read `Player.Time`/`Player.Duration` via
+`XBMC.GetInfoLabels` instead -- **not** the `PVR.Timeshift*` labels
+mentioned here originally as an alternative; see the next section for
+why those aren't buffer-relative either, just in a different way.
+
+## Not a bug: the `PVR.TimeshiftProgress*` labels show programme-relative position, not buffer-relative -- by Kodi-core design
+
+Reported live (Windows, addon 0.9.0, ~80 minute continuous session):
+seeking around felt fine, but the on-screen seek bar's displayed
+duration/position looked wrong -- specifically, seeking to the true
+beginning of the buffer showed something like `01:46:46/02:00:00`
+instead of anything close to `00:00:00`.
+
+Traced end to end, confirmed against Kodi-core's actual source
+(`xbmc/pvr/guilib/guiinfo/PVRGUITimesInfo.cpp`,
+`CPVRGUITimesInfo::UpdateTimeshiftProgressData()`, `Omega` branch) --
+**not a bug in this addon.** That function's own header comment states
+the design intent directly: "General idea of the ts progress is always
+to be able to visualise both the complete ts buffer and the complete
+playing epg event (if any) side by side with the same time scale."
+Concretely: `m_iTimeshiftProgressStartTime`/`EndTime` are the *union*
+of the real timeshift buffer's bounds and the currently-playing EPG
+event's own scheduled start/end -- whichever is wider wins on each
+side. `PVR.TimeshiftProgressDuration`, `PVR.TimeshiftProgressPlayPos`,
+and `PVR.TimeshiftSeekbar` are all computed from that unioned range,
+not from this addon's actual buffer bounds alone.
+
+This addon's own `GetStreamTimes()` (which drives the real, correct
+buffer-relative values) was confirmed working perfectly throughout:
+right after a seek landing on the addon's true byte 0 (confirmed via
+its own `SeekLiveTimeshiftStream(position=0, whence=0) -> newPos=0`
+debug log), `Player.Time`/`Player.Duration` via `XBMC.GetInfoLabels`
+correctly showed `00:00:45`/`01:18:35` -- small, accurate, and
+buffer-relative, growing normally as the session continued. Only the
+`PVR.TimeshiftProgress*` family showed anything resembling the
+reported symptom (`PVR.TimeshiftProgressDuration` stuck at a round
+`02:00:00`, `PVR.TimeshiftProgressPlayPos`/`PVR.TimeshiftSeekbar` both
+empty) -- consistent with the EPG programme in question (a 2-hour
+scheduled block) being wider than the actual buffer built up so far,
+which is exactly the condition `UpdateTimeshiftProgressData()`'s own
+comment describes as intentional. "Beginning of buffer" and "beginning
+of the current EPG programme" are two different points on that unioned
+scale whenever the buffer didn't exist yet at the moment the
+programme started airing -- which is the normal case any time a viewer
+tunes in partway through a show, not an edge case.
+
+**If a skin's on-screen seek bar binds to the `PVR.TimeshiftProgress*`
+labels specifically, this is working as Kodi-core designed it** --
+showing position within the full scheduled programme, not within the
+physical buffer -- and isn't something this addon (or any third-party
+timeshift-implementing PVR addon) can change from the addon side.
+Nothing to fix here.
 
 ## Buffer teardown was slow to notice a Stop
 
