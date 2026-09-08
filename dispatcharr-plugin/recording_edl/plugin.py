@@ -473,7 +473,7 @@ def _delete_orphaned_dvr_hls_dirs(logger):
 
 class Plugin:
     name = "Recording EDL"
-    version = "1.0.2"
+    version = "0.2.0"
     description = (
         "Exposes a completed recording's comskip .edl (commercial break "
         "markers) over the plugin run/ API, for clients with no direct "
