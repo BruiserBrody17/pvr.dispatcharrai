@@ -2307,6 +2307,51 @@ current 1 segment to something larger, matching the 3-segment margin
 `OpenLiveTimeshiftStream()` already uses for its own cold-start trim)
 as a plausible, worth-trying fix rather than a discarded idea.
 
+**Update: implemented and tested -- backing off 3 segments instead of
+1 eliminated the cascade across 12/12 trials.** `SeekLiveTimeshiftStream()`
+in `src/DispatcharrClient.cpp` now sums the trailing
+`kLiveEdgeSeekBackoffSegments = 3` segments' byte sizes for its tail
+clamp instead of just the single last segment's, matching the margin
+`OpenLiveTimeshiftStream()` already keeps for its own cold-start trim.
+Tested on Channel A (Windows), same rewind-then-seek-to-live method
+used throughout this investigation, two back-to-back batches of 6
+attempts each (12 total): **zero** `large audio sync error` lines in
+any attempt, only the ordinary baseline noise (~15-25 `non-existing
+PPS 0 referenced`, ~15-17 `Packet corrupt`, occasional single `co
+located POCs` per attempt -- unchanged from the pre-fix baseline
+rate). Playback stayed healthy throughout (buffer time tracked real
+time continuously across all 12 seeks, no stalls). This is a real
+improvement over the pre-fix rate -- the original bug reproduced on
+the *2nd* of a 6-attempt batch in earlier testing on this same
+channel/machine/method (see the "Cross-platform confirmation" update
+above) -- though 12 clean trials doesn't prove it's fully eliminated,
+just meaningfully reduced; worth continued normal-use monitoring
+rather than treating this as fully closed. Not yet tested against a
+buffer as old as the ~37-minute one in the real GUI-keypress
+confirmation above, nor on macOS/CoreELEC.
+
+**Update: macOS confirmation -- clean pass, both scripted and real
+keyboard input.** Peer report (macOS, arm64):
+- 10 scripted attempts on Channel A, same JSON-RPC method used on
+  Windows (seek -60s, wait, seek +600s to force clamp-to-tail): 10/10
+  confirmed `clamped to tail`, **zero** `large audio sync error`
+  lines. Matches the Windows 0/12 result on the exact channel/method
+  that reproduced the cascade on the very first attempt before this
+  fix.
+- A second, unscripted pass using real keyboard `HandleKey`
+  left/right presses (69 total, matching the original real-world
+  incident input path rather than JSON-RPC) -- seek to buffer start,
+  a cluster of arbitrary mid-buffer jumps, then a clamped-to-tail seek
+  to the live edge. Zero `large audio sync error` lines anywhere in
+  that session either.
+
+Two platforms, two input methods (synthetic JSON-RPC and real
+keyboard), the one channel confirmed to reproduce the cascade
+instantly pre-fix -- all clean. Buffer age and CoreELEC remain
+untested. Still calling this "meaningfully reduced" rather than
+"proven eliminated," per the caveat above, but this is a strong
+result.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
