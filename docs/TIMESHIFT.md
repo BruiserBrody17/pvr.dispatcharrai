@@ -2278,6 +2278,35 @@ appear to depend on buffer age either. Both points further strengthen
 the channel/stream-specific framing above over any remaining
 "macOS + live-edge-seek" framing.
 
+**Update: mid-buffer seek control test -- the cascade is specific to
+the live edge, not a general property of the corrupted stream.**
+Direct A/B on the same MLB Network buffer/session (Windows): seeking
+to a genuine mid-buffer point (~1:46 into a ~4:42 buffer, nowhere near
+either end) produced only ordinary baseline noise -- 29 `Packet
+corrupt`, 14 `non-existing PPS 0 referenced`, 1 `co located POCs`,
+**zero** `large audio sync error` lines. Moments later, seeking to the
+live edge on that same buffer (`SeekLiveTimeshiftStream` logged
+`clamped to tail`) immediately reproduced the severe cascade -- 4
+`Packet corrupt`, 8 `non-existing PPS 0 referenced`, 2 `co located
+POCs`, and **2,393** `large audio sync error` lines in the following
+25s.
+
+This matters because the earlier cold-open `ffprobe` probe (no seek at
+all) found PPS-reference errors continuous throughout the *entire*
+raw stream, which suggested backing off further from the tail
+wouldn't help -- the same corruption seemed to be everywhere. This
+control test shows otherwise: mid-buffer seeks land in that same
+corrupted-baseline stream and self-correct fine; only the live edge
+specifically triggers the cascade. That points at something particular
+to the newest segment(s) -- most plausibly still being actively
+written/finalized server-side when the demuxer resyncs into it -- as
+the actual trigger, not a general GOP-alignment property of the whole
+stream. This reopens the client-side mitigation floated earlier
+(increasing `SeekLiveTimeshiftStream()`'s tail backoff from the
+current 1 segment to something larger, matching the 3-segment margin
+`OpenLiveTimeshiftStream()` already uses for its own cold-start trim)
+as a plausible, worth-trying fix rather than a discarded idea.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows

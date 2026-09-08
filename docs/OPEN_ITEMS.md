@@ -407,6 +407,15 @@ to its original settings and left running normally.
   pace. Closes the GUI-vs-JSON-RPC confound. Also: this buffer was
   ~37 minutes old (not freshly opened), so reproducibility on this
   channel doesn't depend on buffer age either.
+  **Update: mid-buffer seek control test says this is fixable
+  client-side.** Same MLB Network buffer, direct A/B: seeking to a
+  genuine mid-buffer point produced only ordinary baseline noise (0
+  audio-sync-error lines); seeking to the live edge moments later on
+  that same buffer immediately produced 2,393 audio-sync-error lines.
+  The cascade is specific to the live edge, not the corrupted stream
+  in general -- reopens increasing `SeekLiveTimeshiftStream()`'s tail
+  backoff margin (currently 1 segment) as a plausible, worth-trying
+  client-side mitigation.
   See `docs/TIMESHIFT.md`'s same section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
