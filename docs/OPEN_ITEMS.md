@@ -332,6 +332,18 @@ to its original settings and left running normally.
   (rapid switching and long dwell), neither reproduced it -- still a
   single, unreplicated occurrence. See `docs/TIMESHIFT.md`'s same
   section for the full breakdown.
+  **Update (2026-09-08): a second, real occurrence -- this time
+  self-recovered.** macOS, addon 0.9.0, ~20-hour continuous session
+  (Channel A): a burst of three `Stream stalled` events in ~3.6s,
+  audio desync peaking at -5064ms, but this time Kodi's own resync
+  machinery pulled it back under threshold within about a second with
+  no manual intervention and no user-visible interruption -- unlike the
+  first occurrence, which required manually stopping the player. Same
+  noise, same rate, zero size-disagreement firings across the full
+  session. Two data points now with different outcomes (fatal vs.
+  self-recovering), suggesting a second branch point beyond just
+  cosmetic-vs-escalates. Still not enough signal to act on. See
+  `docs/TIMESHIFT.md`'s same section for the full detail.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
