@@ -2253,6 +2253,31 @@ a second 720p-with-segment-aligned-GOP channel or a second
 1080p-with-misaligned-GOP channel, so "segment-boundary GOP alignment"
 is a strong correlated lead here, not yet proven causal.
 
+**Update: real-world confirmation on MLB Network via actual GUI
+keypresses, not synthetic `Player.Seek` calls.** Peer report (macOS),
+from `kodi.log` timestamps 12:56:07-12:56:51: `HandleKey: left` x7
+(`StepBack`) drove `SeekLiveTimeshiftStream` to the buffer start (time
+926s); ~13s later `HandleKey: right` x6 (`StepForward`) drove it back
+to the live edge (clamped to tail, time 199066). Immediately after the
+tail-seek: the same signature as the original ESPN incidents -- a
+storm of `[h264] vt decoder cb: output image buffer is null: -12909`
+and `non-existing PPS 0 referenced`, `ActiveAE - large audio sync
+error` climbing to a peak of ~170,000ms (170s) of desync, recovering
+at roughly real-time pace (no restart needed) -- ~169,000ms at
+12:56:51 down to ~127,500ms at 12:57:32, projecting full recovery
+~2 more minutes out.
+
+This closes the GUI-vs-JSON-RPC confound noted above: real
+`StepBack`/`StepForward` keypresses, the same input path as the
+original ESPN incidents, trigger the identical failure mode on MLB
+Network -- not an artifact of using `Player.Seek` for the controlled
+trials. Also notable: this buffer had been open ~37 minutes (since
+12:19, continuously, spanning several earlier controlled test seeks)
+rather than freshly opened, so MLB Network's reproducibility doesn't
+appear to depend on buffer age either. Both points further strengthen
+the channel/stream-specific framing above over any remaining
+"macOS + live-edge-seek" framing.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
