@@ -2102,6 +2102,35 @@ escalate. Not enough signal yet to isolate what determines either
 branch; recording per the standing decision to track real occurrences
 rather than guess at a fix from two data points.
 
+**Third occurrence, and a real breakthrough -- a reliable, on-demand
+trigger found: seeking to the live edge (macOS, addon 0.9.0, PR #2's
+seekbar fix testing session, ESPN (1080p)).** Reproduced 3-for-3 in one
+session, every time immediately after Kodi's "skip to live" seek
+(clamped to tail in the addon's own `SeekLiveTimeshiftStream` log, same
+as any other seek landing past the known tail). Ruled out as a
+regression from the seekbar fix landing in the same session (PR #2's
+own diff only adds a `wallClockAnchor = time(nullptr)` capture in
+`OpenLiveTimeshiftStream()` -- doesn't touch `SeekLiveTimeshiftStream()`
+or any read/decode path) -- same symptom as the first two occurrences,
+now with a specific, repeatable trigger instead of an incidental one.
+
+Severity escalated across the three reproductions in the same session,
+same channel: first recovered with no visible impact; second peaked at
+~15,000ms desync, recovered within ~2 minutes; third peaked at
+**248,392ms (over 4 minutes) of desync with 439 hardware-decoder
+failures in that one occurrence alone**, still not fully recovered
+after ~2 minutes (still ~190,000ms and dropping) when the user gave up
+waiting and restarted instead.
+
+Why this trigger makes sense: the live edge is, by definition, wherever
+the buffer currently happens to end -- an arbitrary point with no
+guarantee of landing on a clean H.264 keyframe/SPS-PPS boundary, unlike
+a seek to an earlier, already-settled point in fully-written segment
+data. This is a meaningfully more promising lead than anything found
+so far for reproducing this deliberately rather than waiting for it to
+happen incidentally during normal viewing -- see `docs/OPEN_ITEMS.md`
+for the decision on whether/how this gets chased next.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
