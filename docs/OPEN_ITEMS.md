@@ -285,6 +285,14 @@ to its original settings and left running normally.
   was continuous playback with only one switch. Next attempt should
   try long continuous dwell on a single channel instead. See
   `docs/TIMESHIFT.md`'s same section for the full test breakdown.
+  **Update (2026-09-08): a 30-minute continuous Channel B dwell (the
+  follow-up angle above) also did not reproduce it.** Same benign
+  `Packet corrupt` rate, zero size-disagreement firings, zero audio
+  desync, zero stalls, zero `catch-up-to-tail` "gave up" exhaustions
+  across the full 30 minutes. Two different stress angles tried now
+  (rapid switching and long dwell), neither reproduced it -- still a
+  single, unreplicated occurrence. See `docs/TIMESHIFT.md`'s same
+  section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
