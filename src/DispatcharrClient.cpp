@@ -3417,22 +3417,42 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
     return -1;
   }
   // Clamp forward seeks to the known tail -- there's nothing to seek ahead
-  // of yet for a genuinely live buffer. Deliberately backed off by roughly
-  // one segment's worth of bytes rather than landing exactly on the
-  // absolute tail: confirmed live that landing precisely at totalBytes
-  // leaves zero read-ahead margin, so playback resumes, immediately
-  // re-catches-up to the (still-)tail within a couple of seconds of real
-  // playback, and has to wait through a full segment-production cycle a
-  // second time -- long enough (up to one whole segment interval, ~5-7.5s
-  // in this instance) to exceed Kodi's own stall tolerance and trigger a
-  // visible rebuffer right after what looked like a completed seek. One
-  // segment of backoff means at least that much is already available to
-  // play immediately, the same "live edge minus a little" margin real-world
-  // live players (HLS, DASH) keep for exactly this reason -- imperceptibly
-  // behind true live, but enough to absorb normal segment-to-segment
-  // timing jitter instead of stuttering on essentially every seek-to-live.
-  int64_t liveBackoffBytes =
-      m_liveTimeshiftStream.segments.empty() ? 0 : m_liveTimeshiftStream.segments.back().byteSize;
+  // of yet for a genuinely live buffer. Deliberately backed off rather than
+  // landing exactly on the absolute tail: confirmed live that landing
+  // precisely at totalBytes leaves zero read-ahead margin, so playback
+  // resumes, immediately re-catches-up to the (still-)tail within a couple
+  // of seconds of real playback, and has to wait through a full
+  // segment-production cycle a second time -- long enough (up to one whole
+  // segment interval, ~5-7.5s in this instance) to exceed Kodi's own stall
+  // tolerance and trigger a visible rebuffer right after what looked like
+  // a completed seek. This backoff means at least that much is already
+  // available to play immediately, the same "live edge minus a little"
+  // margin real-world live players (HLS, DASH) keep for exactly this
+  // reason -- imperceptibly behind true live, but enough to absorb normal
+  // segment-to-segment timing jitter instead of stuttering on essentially
+  // every seek-to-live.
+  //
+  // Backed off by kLiveEdgeSeekBackoffSegments trailing segments (not just
+  // one) -- confirmed live (docs/TIMESHIFT.md's Packet-corrupt section)
+  // that a live-edge seek can trigger a severe, cascading H.264
+  // decode-error/audio-desync storm on some channels' streams, while an
+  // otherwise-identical seek to a genuine mid-buffer point on the same
+  // buffer does not. A direct A/B on the same buffer found zero
+  // audio-sync-error lines from a mid-buffer seek vs. thousands from a
+  // live-edge seek moments later, isolating the newest segment(s)
+  // specifically (most plausibly still being written/finalized
+  // server-side right when the demuxer resyncs into it) rather than a
+  // general property of the stream. Backing off further reduces exposure
+  // to that fragile window. 3 matches the margin OpenLiveTimeshiftStream()
+  // already keeps for its own cold-start trim.
+  constexpr size_t kLiveEdgeSeekBackoffSegments = 3;
+  int64_t liveBackoffBytes = 0;
+  {
+    size_t backoffCount = std::min(kLiveEdgeSeekBackoffSegments, m_liveTimeshiftStream.segments.size());
+    for (size_t i = m_liveTimeshiftStream.segments.size() - backoffCount; i < m_liveTimeshiftStream.segments.size();
+         ++i)
+      liveBackoffBytes += m_liveTimeshiftStream.segments[i].byteSize;
+  }
   int64_t tailTarget = std::max<int64_t>(0, m_liveTimeshiftStream.totalBytes - liveBackoffBytes);
   bool clampedToTail = newPos > tailTarget;
   if (clampedToTail)

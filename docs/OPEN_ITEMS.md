@@ -416,6 +416,31 @@ to its original settings and left running normally.
   in general -- reopens increasing `SeekLiveTimeshiftStream()`'s tail
   backoff margin (currently 1 segment) as a plausible, worth-trying
   client-side mitigation.
+  **Update: implemented and tested -- backing off 3 segments instead
+  of 1 eliminated the cascade across 12/12 trials on Channel A
+  (Windows), vs. reproducing on the 2nd of 6 attempts pre-fix.** Zero
+  `large audio sync error` lines in any of 12 attempts; ordinary
+  baseline noise unchanged. Not proof it's fully eliminated (12 clean
+  trials, not exhaustive), and not yet tested against an older buffer
+  or on macOS/CoreELEC -- worth continued normal-use monitoring.
+  **Update: macOS confirmation, clean pass.** 10/10 scripted attempts
+  (same method as Windows) plus a separate 69-keypress real-keyboard
+  session, both on Channel A -- zero `large audio sync error` lines
+  in either. Two platforms, two input methods, the one channel that
+  reproduced instantly pre-fix, all clean. Buffer age and CoreELEC
+  still untested.
+- **A periodic, self-correcting `ActiveAE::SyncStream` error spike on a
+  suspiciously exact ~8.6s cadence -- distinct from the Packet-corrupt
+  cascade above, found 2026-09-08 by the macOS peer, unchased.** Seen
+  during ordinary steady-state Channel A playback with no seeking
+  involved at all (noticed independently while that peer was doing the
+  PR #3 seek testing above, but not caused by it). Spikes to
+  ~300-400ms (above `ActiveAE`'s own 200ms threshold), always recovers
+  to <30ms within ~300ms -- never escalates to the `large audio sync
+  error` cascade, and never requires intervention. The ~8.6s interval
+  doesn't cleanly match this addon's existing 10s heartbeat interval
+  (`DispatcharrClient.cpp:3135`), so no obvious correlation yet. Not
+  investigated further -- purely a "noticed in passing" report.
   See `docs/TIMESHIFT.md`'s same section for the full breakdown.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
