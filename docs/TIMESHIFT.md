@@ -2131,6 +2131,47 @@ so far for reproducing this deliberately rather than waiting for it to
 happen incidentally during normal viewing -- see `docs/OPEN_ITEMS.md`
 for the decision on whether/how this gets chased next.
 
+**Follow-up -- the segment-wraparound hypothesis is ruled out; this is
+channel/stream-specific, not a general live-edge-seek issue.** The
+actual `timeshift_buffer` plugin settings for the instance both real
+incidents happened on are `buffer_minutes=300`, `segment_seconds=2`
+(not the assumed defaults), giving a real segment-file-reuse threshold
+of ~10 hours -- but both real incidents had buffer ages of only 1:06
+and 4:49 (minutes), nowhere near that. Confirmed independently on
+Windows too: 6 deliberate live-edge-seek attempts on ESPN (1080p),
+buffer age ~2 minutes, produced zero corruption of any kind.
+
+Controlled trials (macOS) then isolated the real variable: **four
+escalating trials on ESPN (1080p)** -- isolated seek, small burst,
+larger burst, zero-wait overlapping burst, buffer ages 1:50 through
+6:20 (exceeding both real incidents' ages and seek counts) --
+correctly reproduced *some* decode-error noise (80 up to 1,606 errors,
+scaling with seek aggressiveness) but **never once produced the
+severe, sustained large-audio-sync-error state** seen in the real
+incidents. Then **MLB Network (720p) reproduced the severe form
+instantly, on the first, mildest method tried** (a single isolated
+seek, the same method ESPN's Trial A used) -- 240 decode errors and
+238 large-audio-sync errors on the very first attempt, peaking at
+108,800ms (~109s) of desync, where 20 escalating attempts across
+ESPN's four trials produced zero audio-sync errors at all.
+
+Same seek method, same client, same machine -- the only variable that
+changed was the channel/stream itself (MLB Network is 1280x720 h264;
+ESPN is 1080p). Points at the corruption being sensitive to the
+specific stream's own characteristics (resolution, bitrate, keyframe
+interval, or provider-specific encode behavior), not a general
+"seeking to live edge is unsafe" property of every channel. Next
+steps: more MLB Network trials to confirm this isn't a one-off, and a
+same-resolution comparison channel (a different 720p channel, and/or a
+second 1080p channel) to isolate whether resolution itself is the
+driver or whether it's specific to this one stream's encode. One open,
+still-untested confound: both original real-world incidents were
+triggered by actual GUI keypresses (`HandleKey: right`/`StepForward`),
+not `Player.Seek` via JSON-RPC -- doesn't explain the ESPN/MLB gap
+(MLB's repro used JSON-RPC too, same as ESPN's non-reproducing trials),
+but still an open variable for how representative these controlled
+trials are of the original repro path.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
