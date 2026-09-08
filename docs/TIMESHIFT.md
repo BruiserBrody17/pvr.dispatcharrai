@@ -966,6 +966,28 @@ too). Confirmed live afterward: the same rewind-then-seek-to-live
 sequence that previously crashed played cleanly, with sane, stable
 segment-duration estimates in the log instead of one-off outliers.
 
+### Catch-up budget hardening shared between live and recording playback
+
+All of the above (5-segment average, floor, widened margin) landed
+only in `ReadLiveTimeshiftStream()`. `ReadInProgressRecordingStream()`
+has its own, separate catch-up-to-tail loop and had quietly kept the
+original, unhardened single-segment/1.5x-margin math -- the exact
+vulnerability described above, just never exercised by the testing
+that found it there. A pre-1.0 audit caught the divergence. Fixed by
+extracting the segment-duration estimate and catch-up-attempt-count
+calculation into two shared, free functions,
+`EstimateSegmentDurationMs(totalDurationMs, segments)` and
+`ComputeCatchUpAttempts(likelySeekProbe, segmentDurationEstimateMs,
+catchUpSleepMs)`, and having both read paths call them instead of
+keeping their own independent copies -- so a future hardening pass to
+one can't quietly leave the other behind again. Confirmed live: a
+forced tail-seek on a recording showed the seek-probe path getting its
+fast 1-attempt budget and a genuine catch-up wait getting the full 3x
+budget and succeeding, with `segmentDurationEstimateMs` matching
+Dispatcharr's real segment time exactly. Shipped in the same commit as
+some unrelated settings-help-text and `docs/RECORDING_EDL.md` gaps
+found by the same audit.
+
 ## Concurrent viewers: the stop-on-Open/stop-on-Close fix above was itself a real bug
 
 The "seeking after a Stop/reopen" fix a few sections up traded away
