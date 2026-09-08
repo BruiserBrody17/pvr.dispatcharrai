@@ -2191,6 +2191,68 @@ deterministic even on the implicated channel -- it took a second
 attempt here, same as it took escalating trials before Channel B's (still
 unconfirmed) susceptibility could be ruled either way.
 
+**Likely root cause found -- Channel A's raw Dispatcharr stream throws
+PPS-reference decode errors continuously even with zero seeking, zero
+Kodi, and zero addon involvement; Channel B's does not.** Probed both
+channels' raw proxy URLs directly with `ffprobe` (`-headers
+"Authorization: Bearer <token>"`, no seek, cold TCP connection, 10s
+capture window):
+
+```
+ffprobe -v warning -headers "Authorization: Bearer $TOKEN" -select_streams v:0 \
+  -show_entries frame=pict_type -read_intervals "%+10" -print_format json \
+  http://<host>:9191/proxy/ts/stream/<channel-uuid>
+```
+
+Channel A: 119x `[h264] non-existing PPS 0 referenced` immediately
+followed by 119x `no frame!`, spread evenly across the full 10s window
+(not just a one-time cold-start artifact) -- roughly 12 decode failures
+per second, sustained. Channel B (1080p): 1 total warning line (an unrelated
+"No trailing CRLF" HTTP quirk) in the same 10s window -- essentially
+clean.
+
+This is the same `non-existing PPS 0 referenced` message that dominates
+the severe escalation's error signature (see the peer reports above).
+The stream-characteristic probe (`ffprobe -show_entries
+stream=codec_name,width,height,profile,level,bit_rate`) also found both
+of Channel A's duplicate Dispatcharr channel entries are actually the
+same underlying 1280x720 H.264 High@L4.0 video encode (they only differ
+in audio: AAC/HE-AAC 96kbps vs. AC3 384kbps) -- so the earlier
+channel-id-vs-UUID ambiguity doesn't affect this comparison, either
+entry represents "Channel A." Channel B is 1920x1080 H.264 High@L4.2,
+audio E-AC3 256kbps.
+
+GOP/keyframe interval (extracted via `ffprobe -select_streams v:0
+-show_entries frame=pict_type,pts_time`, filtering `pict_type=="I"`)
+is a further clue: Channel A's keyframes land at a rock-steady
+**2.002s** interval -- i.e. exactly Dispatcharr's own `segment_seconds
+= 2` setting for this instance. Channel B's keyframes land at a steady but
+different **2.503s** interval, not aligned to the 2s segment boundary
+at all. Put together, the working theory is: Channel A's upstream
+encode already has a 2s-cadence GOP, so Dispatcharr's segmenter can cut
+segments exactly on existing keyframes -- but something in that
+exact-alignment path is dropping or mis-ordering the PPS NAL unit at
+(or near) those same cut points, corrupting parameter-set delivery on
+nearly every segment boundary. Channel B's GOP doesn't line up with segment
+boundaries, so its segments routinely get cut mid-GOP -- a case
+Dispatcharr's segmenter apparently handles cleanly (or re-injects
+parameter sets correctly for). This would explain both ends of the
+observation: Channel A's *baseline* "cosmetic" `Packet corrupt` noise
+being worse to begin with, and why forcing an extra demuxer resync via
+a live-edge seek tips it over into a severe, cascading decode-error
+storm far more easily than on Channel B, which starts from a nearly clean
+baseline.
+
+This points at Dispatcharr's own segmenter/muxer behavior for this
+specific channel's encode characteristics as the likely actual root
+cause -- not this addon, not Kodi, not the OS/client. Reproducible with
+a bare `ffprobe` call against the raw proxy URL, no addon or Kodi
+involved at all, which is a much cheaper repro path for whoever ends up
+chasing this further on the Dispatcharr side. Not yet confirmed against
+a second 720p-with-segment-aligned-GOP channel or a second
+1080p-with-misaligned-GOP channel, so "segment-boundary GOP alignment"
+is a strong correlated lead here, not yet proven causal.
+
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
 Found during routine log review, not a targeted investigation (Windows
