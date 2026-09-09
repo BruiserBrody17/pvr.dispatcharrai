@@ -59,9 +59,10 @@ Each has its own README with install steps.
    [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases).
 2. In Kodi: **Add-ons -> Install from zip file**, and select the
    downloaded zip.
-3. Enable the addon under **Settings -> Player -> Live TV** (or
-   **PVR & Live TV -> Client specific settings** once enabled) and
-   configure it (see below).
+3. Enable and configure the addon under **Settings -> PVR & Live TV ->
+   General -> PVR client add-ons** (or **Add-ons -> My add-ons -> PVR
+   clients**, the same list either way): select **Dispatcharr PVR
+   Client**, enable it, then **Configure** (see below).
 
 ## Configuration
 
