@@ -10,6 +10,22 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.9.2] - 2026-09-09
+
+Addon only -- neither companion plugin changed for this pass.
+
+### Added
+
+- Recordings can now be renamed from Kodi's own recordings list.
+- Recordings now show their real file size.
+- An in-progress recording can now be extended (add more time to a
+  still-recording timer) directly from Kodi's Timers screen.
+- The PVR backend version shown to Kodi is now Dispatcharr's real,
+  live version instead of a placeholder string.
+- Broader timezone coverage for the recurring-timer timezone setting
+  (about twice as many zones now auto-detect their UTC offset,
+  including daylight saving).
+
 ## [0.9.1] - 2026-09-08
 
 Addon only -- neither companion plugin changed for this pass.
