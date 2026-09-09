@@ -851,6 +851,16 @@ climbed normally for 5s to 00:56, a +90s seek landed at 02:27 (56+90=146s,
 matches within rounding) -- position tracks real seeks in both
 directions, the same result PR #2 confirmed for live timeshift.
 
+**Update: confirmed on CoreELEC/ODROID N2+ too (addon 0.9.1.1,
+2026-09-09).** Same method, Channel B this time (Channel A
+deliberately avoided this session). Started an instant recording,
+played it back in progress: a -45s seek from a real pre-seek position
+of 1:23 landed at 0:38 (exact match); after playback resumed to 1:00,
+a +90s seek landed at 2:31 (60+90=150s=2:30, matches within a second).
+Position tracks real seeks in both directions on this platform too --
+three platforms confirmed now (Windows, and CoreELEC; macOS/Rocky
+Linux still untested for this specific fix).
+
 ## Buffer teardown was slow to notice a Stop
 
 **This section's own fix is itself superseded -- see "Concurrent viewers"
@@ -2389,6 +2399,27 @@ instantly pre-fix -- all clean. Buffer age and CoreELEC remain
 untested. Still calling this "meaningfully reduced" rather than
 "proven eliminated," per the caveat above, but this is a strong
 result.
+
+**Update: CoreELEC/ODROID N2+ confirmation, clean pass -- under
+harder conditions than either desktop platform saw (2026-09-09).** 12
+live-edge-seek attempts (same method: seek -60s, wait, seek +600s to
+force clamp-to-tail), this time deliberately on Channel B rather than
+Channel A (avoided this run). Zero `large audio sync error` lines in
+any of the 12 attempts.
+
+Notable: the ordinary baseline `non-existing PPS 0 referenced` noise
+ran substantially higher here than Channel B's own established clean
+baseline on Windows/macOS (essentially zero there, from the earlier
+`ffprobe` cold-probe comparison) -- 10 to 269 occurrences per ~20s
+attempt window across this run, comparable to or exceeding Channel A's
+own known-bad baseline rate on other platforms. Not investigated
+further (this device's ARM SoC decode timing characteristics differing
+enough from x86 to shift when/how often this manifests is a plausible,
+unconfirmed guess), but worth noting: this means the fix held up under
+meaningfully worse baseline decode-error conditions than either
+Windows or macOS's clean pass tested against, which is a stronger
+result than "also clean," not just an equally clean one. Only the
+older-buffer condition remains untested now.
 
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
