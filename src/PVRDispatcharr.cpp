@@ -205,6 +205,27 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     {
       if (kodi::addon::GetSettingBoolean("dispatcharr_is_admin", true) != isAdmin)
         kodi::addon::SetSettingBoolean("dispatcharr_is_admin", isAdmin);
+
+      // live_timeshift_mode's own dropdown can't be restricted the way the
+      // padding settings above are -- confirmed against Kodi's own source
+      // (xbmc/settings/lib/SettingDefinitions.h's IntegerSettingOption/
+      // TranslatableIntegerSettingOption) that a single list/option control
+      // has no per-option enable/disable concept at all, only the
+      // whole-setting <dependencies> mechanism used elsewhere in this file
+      // -- and disabling the *whole* dropdown would incorrectly block Off/
+      // Local too, which need no admin account. So this is a one-time,
+      // startup-only warning instead of a UI restriction: without it, a
+      // non-admin account with Server-side configured would just silently
+      // hard-fail every live channel via OpenLiveStream() (see its own
+      // comment), with nothing but a kodi.log line explaining why.
+      if (m_liveTimeshiftMode == kLiveTimeshiftServer && !isAdmin)
+      {
+        kodi::QueueNotification(
+            QUEUE_WARNING, "",
+            "Live TV pause/rewind is set to Server-side, but this Dispatcharr account "
+            "isn't an admin -- live channels will fail to play. Switch to Off or Local, "
+            "or use an admin account.");
+      }
     }
     else if (m_debugLogging)
     {
