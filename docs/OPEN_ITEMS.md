@@ -262,31 +262,23 @@
   in either. Two platforms, two input methods, the one channel that
   reproduced instantly pre-fix, all clean. Buffer age and CoreELEC
   still untested.
-- **A periodic, self-correcting `ActiveAE::SyncStream` error spike on a
-  suspiciously exact ~8.6s cadence -- distinct from the Packet-corrupt
-  cascade above, found 2026-09-08 by the macOS peer, unchased.** Seen
-  during ordinary steady-state Channel A playback with no seeking
-  involved at all (noticed independently while that peer was doing the
-  PR #3 seek testing above, but not caused by it). Spikes to
-  ~300-400ms (above `ActiveAE`'s own 200ms threshold), always recovers
-  to <30ms within ~300ms -- never escalates to the `large audio sync
-  error` cascade, and never requires intervention. The ~8.6s interval
-  doesn't cleanly match this addon's existing 10s heartbeat interval
-  (`DispatcharrClient.cpp:3135`), so no obvious correlation yet. Not
-  investigated further -- purely a "noticed in passing" report.
-  **Update: tested on Windows, did not reproduce as periodic
-  (2026-09-09).** 14 minutes of continuous Channel A playback, zero
-  seeking: exactly one `SyncStream` threshold-crossing pair in the
-  whole session, no recurrence in the following ~13.5 minutes -- a
-  true 8.6s cadence would predict ~90+ occurrences in that window.
-  That one occurrence landed 4 seconds after this same session's own
-  reproduction of the ~89.4s large-sync-error transient (see the item
-  above), both right at the same fresh `Player.Open` -- raises a real
-  possibility these are the same one-time stream-open clock-bootstrap
-  event observed through two different log lines, not a genuinely
-  separate recurring ~8.6s issue. Not proven; whether the macOS peer's
-  own session had later occurrences this test didn't happen to hit
-  remains untested. See `docs/TIMESHIFT.md`'s "A periodic,
+- [x] ~~A periodic, self-correcting `ActiveAE::SyncStream` error spike
+  on a suspiciously exact ~8.6s cadence~~ -- **Closed: not actually
+  periodic, confirmed on both platforms that ever saw it
+  (2026-09-08/09).** Originally found by the macOS peer during what
+  looked like ordinary steady-state playback. Tested on Windows (14
+  min, zero seeking): one occurrence total, landing 4 seconds after
+  that session's own ~89.4s large-sync-error transient at the same
+  fresh `Player.Open` -- not periodic. Re-tested on macOS itself (21.6
+  min, zero seeking, addon 0.9.1): same result, one occurrence ~3.9s
+  after buffer open, nothing else. The peer also traced their original
+  observation to a mislabeled sample -- those log lines actually landed
+  shortly after a batch of scripted live-edge-seek attempts, not during
+  clean steady-state; each clamped-to-tail seek forcing its own small
+  demuxer-resync transient plausibly explains the "recurring" look
+  without any genuine time-based periodicity. Same family as the
+  ~89.4s transient above: a one-off clock-settling blip at stream
+  open, not a recurring issue. See `docs/TIMESHIFT.md`'s "A periodic,
   self-correcting ~8.6s `ActiveAE::SyncStream` spike" section for the
   full account.
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
