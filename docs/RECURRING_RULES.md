@@ -256,3 +256,52 @@ computation rather than trusting the stale manual value -- a log line
 of the form `setting recurring_rule_timezone=<zone> (known zone)`
 confirms the sync fired and the dropdown, not the manual number, is
 what's actually authoritative for a known zone.
+
+**Update (2026-09-09): broadened from 25 to ~50 known zones, and a real
+regression from this project's own privacy scrub fixed along the way.**
+Checked against Dispatcharr's real `GET /api/core/timezones/` (see
+`docs/API_NOTES.md`) confirmed the practical ceiling is still DST *rule*
+coverage, not the zone name list -- so this stayed within the same two
+hand-verified rule families (`kUsCanada`, `kEu`) plus confirmed no-DST
+zones, rather than claiming the full ~440-zone list is usable. Added:
+three more US zones (Detroit, Indiana/Indianapolis, Boise), one more
+Canadian no-DST zone (Regina/Saskatchewan), Mexico City (DST abolished
+nationally in 2022, now fixed offset), nine more `kEu`-family zones
+across Western/Central Europe, four more in Eastern Europe, and seven
+fixed-offset Asia/Africa zones with no DST at all. Still deliberately
+excludes Southern Hemisphere zones for the same reason as the original
+25 -- their DST runs the opposite calendar direction, and neither coded
+rule engine models that.
+
+While re-reading this exact table, found a real, unrelated regression:
+this project's own privacy scrub earlier in the same session (a
+`git-filter-repo --replace-text` rule redacting a real user's confirmed
+personal timezone out of *documentation*) had also silently clobbered
+the *product's* own `America/Chicago` entry in three functional
+places -- `kKnownTimeZones` itself, the `recurring_rule_timezone`
+dropdown's actual option value in `settings.xml`, and its displayed
+label in `strings.po` -- all three literally replaced with the string
+"REDACTED_TZ", breaking DST auto-detection for anyone in US Central
+time. That was collateral damage from a blanket string-literal
+replacement across the whole repo, not a deliberate choice: unlike the
+docs it was meant to fix, a generic dropdown entry offering Central
+Time alongside Eastern/Mountain/Pacific/Alaska conveys nothing about
+any specific user's real setup -- it's exactly as generic as the
+zones already sitting next to it, so restoring the real zone name here
+undoes an accidental functional break, not the privacy fix itself.
+Confirmed live: restarted against a real instance configured to
+`America/Chicago`, `recurring_rule_timezone` auto-corrected from
+`manual` back to `America/Chicago` on startup (it had been silently
+stuck on `manual` since the regression, since "REDACTED_TZ" obviously
+never matched the real zone name Dispatcharr reports).
+
+Also added `DispatcharrClient::GetSupportedTimezones()` (the same real
+endpoint), used only in the startup diagnostic when a zone is genuinely
+unrecognized and debug logging is on -- distinguishes "a real IANA
+zone, no DST rule for it yet" from "not a recognized zone at all" in
+the log line, rather than one generic "unrecognized" message for both.
+Confirmed live via a temporary forced-unknown test: correctly
+identified `America/Chicago` as present in Dispatcharr's real ~440-zone
+list even while its own DST-family lookup was artificially forced to
+fail, proving the endpoint call, auth, and the differentiation logic
+all work end-to-end.
