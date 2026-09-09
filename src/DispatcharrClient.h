@@ -585,6 +585,24 @@ public:
   // reports itself configured to.
   bool GetSupportedTimezones(std::vector<std::string>& timezonesOut, std::string& error);
 
+  // GET /api/accounts/users/me/ -- confirmed against the real source
+  // (apps/accounts/api_views.py's UserViewSet.me): needs only ordinary
+  // authentication, not admin, to read your own account -- a deliberately
+  // low-privilege "check my own access level" endpoint, not the
+  // admin-only user list/detail routes. Returns user_level among other
+  // fields; confirmed against apps/accounts/permissions.py that IsAdmin
+  // is exactly user_level >= 10 (matches Dispatcharr's own
+  // User.UserLevel.ADMIN choice), and separately confirmed
+  // CoreSettingsViewSet's update/partial_update actions (what
+  // SetDvrOffsetMinutes() calls) require exactly that IsAdmin permission
+  // -- this really is the same admin check the padding write itself
+  // needs, not a guess. Used only to
+  // decide whether to grey out the recording-padding settings in Kodi's
+  // UI (see PVRDispatcharr's constructor); not itself a permission gate
+  // this addon enforces -- Dispatcharr's own server-side check is still
+  // what actually matters.
+  bool IsCurrentUserAdmin(bool& isAdminOut, std::string& error);
+
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
   // LengthRecordedStream. Kodi's kodi-dev-kit docs describe
