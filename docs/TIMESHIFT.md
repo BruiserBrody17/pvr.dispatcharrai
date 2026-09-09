@@ -2418,8 +2418,23 @@ enough from x86 to shift when/how often this manifests is a plausible,
 unconfirmed guess), but worth noting: this means the fix held up under
 meaningfully worse baseline decode-error conditions than either
 Windows or macOS's clean pass tested against, which is a stronger
-result than "also clean," not just an equally clean one. Only the
-older-buffer condition remains untested now.
+result than "also clean," not just an equally clean one.
+
+**Update: re-run on Channel A itself -- the hardest channel, on
+CoreELEC, still clean (2026-09-09).** Same 12-attempt method. Zero
+`large audio sync error` lines across all 12 attempts, on the one
+channel that's reliably reproduced the severe cascade instantly, on
+the very first or second attempt, on every other platform tested
+(Windows, macOS) -- the most demanding single test this fix has faced
+yet. Baseline noise ran even higher than the Channel B run above:
+`non-existing PPS 0 referenced` mostly in the 130-215 range per
+attempt window (vs. Channel B's more variable 10-269, several low
+outliers) and `Packet corrupt` in the 20-46 range (vs. Channel B's
+10-26) -- consistent with Channel A's already-documented higher
+baseline rate relative to Channel B on other platforms too. All four
+platform/channel combinations tested now (Windows/Channel A, macOS/
+Channel A, CoreELEC/Channel B, CoreELEC/Channel A) are clean. Only the
+older-buffer condition remains untested.
 
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
