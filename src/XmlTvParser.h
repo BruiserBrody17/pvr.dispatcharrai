@@ -38,7 +38,7 @@ struct EpgEntry
 // GET {base}/output/epg) into programme entries keyed by the XMLTV
 // <channel id="..."> value. Confirmed against a live instance: Dispatcharr
 // uses the channel's channel_number here, NOT its tvg_id (e.g. Channel G
-// with channel_number 2632 and tvg_id "USANetwork.us" appears in the XMLTV
+// with channel_number 2632 and tvg_id "ChannelG.us" appears in the XMLTV
 // as <channel id="2632">) -- match on Channel::channelNumber, not tvgId.
 class XmlTvParser
 {
