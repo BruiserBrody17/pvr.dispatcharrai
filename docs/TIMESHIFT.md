@@ -2450,7 +2450,7 @@ fourth time within seconds of a fresh `Player.Open` (-89426.23ms then
 addon-independent (this is Kodi-core's own audio clock bootstrap, not
 anything `pvr.dispatcharrai` does), not chased further.
 
-### A periodic, self-correcting ~8.6s `ActiveAE::SyncStream` spike -- distinct from the Packet-corrupt cascade, unchased
+### A periodic, self-correcting ~8.6s `ActiveAE::SyncStream` spike -- resolved, not actually periodic
 
 Found 2026-09-08 by the macOS peer, noticed in passing rather than
 targeted: during ordinary steady-state Channel A playback with no
@@ -2495,10 +2495,35 @@ magnitude, computed via genuinely different code paths -- raw
 instantaneous difference vs. a windowed average), but the exact timing
 coincidence across two independent code paths on the very first test
 attempt is a real data point, not a coincidence to dismiss outright.
-Whether the macOS peer's own session had additional, later occurrences
-this Windows test simply didn't happen to hit (a different provider
-stream, different session length, a channel switch producing its own
-fresh stream-open elsewhere in their session) remains untested.
+
+**Update: closed -- confirmed not periodic on macOS either, and a
+plausible explanation for the original observation.** Re-ran the exact
+scenario on the platform that first reported it: 21.6 minutes of
+continuous Channel A playback, zero seeking, fresh buffer, addon 0.9.1.
+Same result as Windows -- exactly one `SyncStream` threshold-crossing
+pair in the whole session (`average error of -37.565231, start
+adjusting` -> `-26.898564 below threshold of 30.000000`, both lines
+the same millisecond), landing ~3.9s after the buffer opened, and
+nothing for the following ~20.9 minutes. Zero `large audio sync error`
+lines this run.
+
+On review, the peer traced their original "recurring" observation to
+a mislabeled sample: those log lines weren't captured during clean
+steady-state playback at all -- they landed a couple minutes after a
+batch of 10 scripted live-edge-seek attempts (the PR #3 testing
+elsewhere in this file), not controlled for at the time. A clamped-
+to-tail seek forces a real demuxer reseek/codec resync, which could
+plausibly produce its own small, one-time clock-bootstrap-style
+transient each time it happens -- several of those landing close
+together in a log excerpt would look like "recurring every ~8.6s"
+without being a genuinely time-based periodic phenomenon at all. Not
+rigorously confirmed as *the* mechanism, but consistent with this
+clean retest finding nothing periodic under zero-seek conditions on
+either platform now tested.
+
+Both platforms agree: a one-off, small, self-correcting clock-settling
+blip at stream open, same family as the ~89.4s transient above, not a
+recurring ~8.6s issue. Closed.
 
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
