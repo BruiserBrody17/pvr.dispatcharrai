@@ -37,7 +37,30 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 | Series rules list | GET | `/api/channels/series-rules/` -- returns **`{"rules": [...]}`**, not a bare array or `{results:[...]}`. Per-item fields confirmed against a real populated rule: `{mode, title, tvg_id, channel_id, title_mode, description, description_mode}` -- **no numeric id field at all** (see `docs/RECORDINGS.md` for why `GetTimers()` hashes `(title, tvgId)` instead of using one). |
 | Series rule create | POST | `/api/channels/series-rules/` -- body is `{title, tvg_id?, channel_id?, mode?, title_mode?, description?, description_mode?, untagged_is_new?, epg_source_id?}`. **Not** `{channel, title_pattern}** -- confirmed against the live `SeriesRuleRequest` schema. `channel_id`/`tvg_id` are both optional (channel_id "defaults to lowest-numbered channel for the EPG" if omitted). |
 | Series rule delete | DELETE | `/api/channels/series-rules/?title=...&tvg_id=...&epg_source_id=...` (query params) -- confirmed against the live schema. **There is no `/api/channels/series-rules/{id}/` route**; series rules have no path-addressable id at all. |
-| Catch-up session | POST | `/api/catchup/sessions/` -- body `{channel_uuid, start (ISO-8601), duration (minutes, optional)}`; response's `playback_url` is a **relative path**, prepend `BaseUrl()`. Confirmed end-to-end against a real instance: creates a session-bound URL that streams real MPEG-TS data immediately with no further auth. Per Dispatcharr's own docs, the session stays valid via a 10-minute *sliding* idle window (refreshed by each range/seek request), so unlike embedding a JWT directly in the URL (`GET /proxy/catchup/{uuid}?start=...&token=...`, also confirmed working but not used here), it won't expire mid-playback of a long programme. |
+| Catch-up session | POST | `/api/catchup/sessions/` -- body `{channel_uuid, start (ISO-8601), duration (minutes, optional)}`; response's `playback_url` is a **relative path**, prepend `BaseUrl()`. Confirmed end-to-end against a real instance: creates a session-bound URL that streams real MPEG-TS data immediately with no further auth. Per Dispatcharr's own docs, the session stays valid via a 10-minute *sliding* idle window (refreshed by each range/seek request), so unlike embedding a JWT directly in the URL (`GET /proxy/catchup/{uuid}?start=...&token=...`, also confirmed working but not used here), it won't expire mid-playback of a long programme. A separate `POST /api/catchup/sessions/{session_id}/position/` (body `{position_secs, paused?}`) exists too, but checked against its real source (`apps/timeshift/api_views.py`) and it's purely cosmetic for *Dispatcharr's own admin stats dashboard* -- "does **not** seek the provider stream," doesn't affect this addon's playback at all. Its one side effect that could matter is also refreshing that same idle TTL, but since ordinary Range requests already do that, it would only help a session survive a pause longer than 10 minutes with zero reads -- narrow enough that it's not implemented. |
+| Backend version | GET | `/api/core/version/` -- **public, no auth needed at all** (`AllowAny`), returns `{"version": ..., "timestamp": ...}` straight from Dispatcharr's own `version.py`. Confirmed against the live source (`core/api_views.py`), not just the schema. `GetBackendVersion()` in `PVRDispatcharr.cpp` currently reports this addon's own protocol version instead, with a comment saying no confirmed server-version endpoint existed -- this closes that gap; not yet wired up. |
+| Full timezone list | GET | `/api/core/timezones/` -- returns all of `pytz.common_timezones` (~400+ real IANA names, grouped by region), not a curated subset. The addon's own `recurring_rule_timezone` setting currently ships a hardcoded ~25-timezone list for its UTC-offset auto-compute feature (see `docs/RECURRING_RULES.md`) -- this could broaden that to genuinely comprehensive coverage instead of the curated subset, for users outside the ~25 already covered. Not yet used. |
+
+## System notifications: a real, underused feature surface
+
+Dispatcharr has a full in-app notification system (`core/models.py`'s
+`SystemNotification`, `GET /api/core/notifications/` +
+`.../count/`/`.../{id}/dismiss/`/`.../dismiss-all/`) that this addon
+doesn't touch at all. Checked the model directly rather than guessing
+from the name: it's genuinely operationally relevant, not just
+developer/project chatter -- `notification_type` is one of
+`version_update`/`setting_recommendation`/`announcement`/`warning`/
+`info`, with a `priority` of `low`/`normal`/`high`/`critical` and a
+`source` of `system` (server-generated) vs. `developer` (project-team-
+authored, condition-evaluated). A `setting_recommendation` or a
+`high`/`critical` `warning` could plausibly be something a user
+actually wants to see (e.g. a real Dispatcharr-detected misconfiguration),
+not just a version-bump nag. Polling this and surfacing high-priority
+ones via Kodi's own `kodi::gui::dialogs::Notification` (or similar) --
+independent of the PVR API proper, which has no generic "backend
+alert" callback of its own -- is a plausible, if secondary, feature.
+Not investigated further than confirming the model/endpoints are real
+and what they contain; no dedup/dismissal-state design done yet.
 
 ## Feature notes
 
