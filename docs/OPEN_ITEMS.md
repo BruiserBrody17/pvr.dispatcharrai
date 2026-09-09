@@ -230,6 +230,30 @@ to its original settings and left running normally.
 
 ## Ongoing (more will likely come up)
 
+- **Follow-up API survey: three more genuinely implementable findings,
+  beyond the recording-management ones below (found 2026-09-08, not
+  yet implemented).** Diffed all ~196 of Dispatcharr's real API paths
+  (its live `/api/schema/`) against every endpoint this addon actually
+  calls (grepped from `src/DispatcharrClient.cpp`), then checked the
+  promising gaps against Dispatcharr's real source rather than guessing:
+  (1) `GET /api/core/version/` -- public, no auth, `{version,
+  timestamp}` -- closes `GetBackendVersion()`'s own documented "no
+  confirmed server-version endpoint" gap directly; (2) `GET
+  /api/core/timezones/` -- the full ~400+ real IANA timezone list vs.
+  this addon's own curated ~25, could broaden `recurring_rule_timezone`
+  coverage; (3) Dispatcharr's `SystemNotification` system (`GET
+  /api/core/notifications/` etc.) is real and operationally relevant
+  (version-update/setting-recommendation/warning/info, with a real
+  priority field), not just dev chatter -- a plausible, secondary
+  feature to surface high-priority ones as Kodi GUI notifications, no
+  design work done beyond confirming it's real. Also checked and ruled
+  low-value: `POST .../catchup/sessions/{id}/position/` is purely
+  cosmetic for Dispatcharr's own admin dashboard, doesn't affect this
+  addon's playback. Also noted: Dispatcharr has a whole separate VOD
+  API (`/api/vod/*` -- movies/series/episodes/categories) this addon
+  doesn't touch, but that's architecturally out of scope for a
+  `kodi.pvrclient`-type addon, not a gap to close here. Full detail in
+  `docs/API_NOTES.md`'s table and its new "System notifications" section.
 - **Three recording-management features TVHeadend has that this addon
   doesn't, all confirmed implementable against Dispatcharr's real API
   (found 2026-09-08, not yet implemented).** Recording rename/
