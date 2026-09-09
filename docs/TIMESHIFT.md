@@ -246,6 +246,22 @@ serve it as a growing, byte-seekable stream via the plugin's
 actual fix" near the end of this file for the full mechanism and its live
 confirmation.
 
+**The buffer's actual lifetime, current design** (not the reaper-only
+design some of this file's older investigation notes further down
+describe -- that was superseded, see "Provider concurrent-stream limits"):
+`CloseLiveTimeshiftStream()` calls `StopTimeshiftBuffer()` synchronously
+on every `Close()`, including the `Close()` Kodi runs as part of quitting
+while a channel is playing, passing this session's own `viewer_id`. The
+plugin only actually tears down the underlying ffmpeg process once every
+registered viewer has been removed this way (`plugin.py`'s `_stop_buffer()`)
+-- with a single Kodi client watching, that means **quitting Kodi kills
+the server-side buffer immediately**, confirmed live: Dispatcharr's own
+status page drops the stream the moment Kodi closes, not after the 30s
+heartbeat idle-timeout. The buffer only outlives a Kodi close/restart if
+another device is still registered as a concurrent viewer of that same
+channel at the time. See "Provider concurrent-stream limits" below for
+the full reference-counting mechanism this relies on.
+
 Two things confirmed against Dispatcharr's actual source before writing
 the addon-side call, not assumed from `Plugins.md` alone:
 - **The REST wrapper's response shape**: `apps/plugins/api_views.py`'s
