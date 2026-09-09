@@ -2087,13 +2087,66 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
   }
   else
   {
-    // One-time (manual or EPG-based) recording. Deliberately doesn't
-    // touch title/custom_properties -- see UpdateOneTimeRecording()'s
-    // own comment for why (a real crash risk on a bare partial PATCH,
-    // and this mirrors CreateOneTimeRecording()'s own choice not to
-    // stomp Dispatcharr's auto-enrichment).
     int id = static_cast<int>(timer.GetClientIndex());
-    ok = m_client.UpdateOneTimeRecording(id, timer.GetStartTime(), timer.GetEndTime(), error);
+    if (timer.GetState() == PVR_TIMER_STATE_RECORDING)
+    {
+      // Editing an already-recording timer's end time is Kodi's native
+      // "extend this recording" UX (its player OSD's "Record for longer"
+      // action opens exactly this same timer-edit dialog) -- routed to
+      // the dedicated extend endpoint, NOT UpdateOneTimeRecording()'s
+      // generic PATCH: see ExtendRecording()'s own comment for why a bare
+      // PATCH here would actually revoke the running Celery task instead
+      // of extending it. Dispatcharr's endpoint takes a relative
+      // extra_minutes, not the absolute end time Kodi hands back here, so
+      // the current end time has to be fetched fresh first -- Kodi
+      // doesn't send the pre-edit value, and this addon's own last-polled
+      // copy could be stale.
+      std::vector<Recording> recordings;
+      std::string fetchError;
+      time_t currentEndTime = 0;
+      bool found = false;
+      if (m_client.GetRecordings(recordings, fetchError))
+      {
+        for (const auto& rec : recordings)
+        {
+          if (rec.id == id)
+          {
+            currentEndTime = rec.endTime;
+            found = true;
+            break;
+          }
+        }
+      }
+      if (!found)
+      {
+        kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to update timer: recording %d not found (%s)", id,
+                  fetchError.c_str());
+        return PVR_ERROR_SERVER_ERROR;
+      }
+      time_t deltaSeconds = timer.GetEndTime() - currentEndTime;
+      if (deltaSeconds <= 0)
+      {
+        // Matches the server's own validation (extend/ rejects
+        // extra_minutes <= 0) -- Kodi's timer-edit dialog has no separate
+        // "shorten" action, so a user picking an earlier or unchanged end
+        // time here just means they didn't actually intend to extend
+        // anything.
+        kodi::Log(ADDON_LOG_ERROR,
+                  "pvr.dispatcharrai: failed to update timer: new end time is not later than the current one");
+        return PVR_ERROR_INVALID_PARAMETERS;
+      }
+      int extraMinutes = static_cast<int>((deltaSeconds + 59) / 60);
+      ok = m_client.ExtendRecording(id, extraMinutes, error);
+    }
+    else
+    {
+      // One-time (manual or EPG-based) recording, not yet started.
+      // Deliberately doesn't touch title/custom_properties -- see
+      // UpdateOneTimeRecording()'s own comment for why (a real crash risk
+      // on a bare partial PATCH, and this mirrors CreateOneTimeRecording()'s
+      // own choice not to stomp Dispatcharr's auto-enrichment).
+      ok = m_client.UpdateOneTimeRecording(id, timer.GetStartTime(), timer.GetEndTime(), error);
+    }
   }
 
   if (!ok)
