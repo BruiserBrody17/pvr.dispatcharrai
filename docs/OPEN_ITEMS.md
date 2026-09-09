@@ -73,6 +73,10 @@
   position during an actual in-progress recording's playback. See
   `docs/TIMESHIFT.md`'s "PVR.TimeshiftProgress*"/seek bar section's
   second "Update" for the full account.
+  **Update: also confirmed on CoreELEC/ODROID N2+ (2026-09-09).** Same
+  seek-both-directions test, same clean result. Windows and CoreELEC
+  now confirmed; macOS/Rocky Linux still untested for this specific
+  fix.
 - **A consistent ~89.4s audio-sync-error reading on fresh stream opens,
   harmless (2026-09-08).** Seen independently on Windows and Rocky
   Linux (addon 0.9.0 on both), clustered right around -89,400 to
@@ -262,6 +266,18 @@
   in either. Two platforms, two input methods, the one channel that
   reproduced instantly pre-fix, all clean. Buffer age and CoreELEC
   still untested.
+  **Update: CoreELEC/ODROID N2+ confirmation, clean pass -- and a
+  stronger one than the desktop platforms got (2026-09-09).** 12/12
+  live-edge-seek attempts on Channel B (real Channel B channel, not Channel
+  A -- deliberately avoided this run), zero `large audio sync error`
+  lines in any attempt. Notable: the baseline `non-existing PPS 0
+  referenced` noise ran much higher here than Channel B's established
+  clean baseline on Windows/macOS (10-269 per ~20s attempt window here
+  vs. essentially none there) -- see the new note in
+  `docs/TIMESHIFT.md`'s same section. Despite that elevated baseline
+  noise, the fix still held with zero escalations, a more demanding
+  condition than the earlier clean passes. Only the older-buffer
+  condition remains untested now.
 - [x] ~~A periodic, self-correcting `ActiveAE::SyncStream` error spike
   on a suspiciously exact ~8.6s cadence~~ -- **Closed: not actually
   periodic, confirmed on both platforms that ever saw it
