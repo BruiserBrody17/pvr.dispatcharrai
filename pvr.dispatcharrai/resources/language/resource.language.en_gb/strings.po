@@ -154,7 +154,7 @@ msgid "Dispatcharr's configured timezone (for reference)"
 msgstr ""
 
 msgctxt "#30059"
-msgid "Read-only: Dispatcharr's own configured system timezone (IANA name, e.g. \"REDACTED_TZ\"), kept in sync on every restart. Mainly useful as a reference when your zone isn't in the dropdown below and you need to fall back to manual offset entry."
+msgid "Read-only: Dispatcharr's own configured system timezone (IANA name, e.g. \"America/Chicago\"), kept in sync on every restart. Mainly useful as a reference when your zone isn't in the dropdown below and you need to fall back to manual offset entry."
 msgstr ""
 
 msgctxt "#30060"
@@ -174,7 +174,7 @@ msgid "America/New_York"
 msgstr ""
 
 msgctxt "#30064"
-msgid "REDACTED_TZ"
+msgid "America/Chicago"
 msgstr ""
 
 msgctxt "#30065"
@@ -275,6 +275,114 @@ msgstr ""
 
 msgctxt "#30089"
 msgid "Added on top of the normal end-of-recording padding, only for a new one-time recording created directly from an EPG entry Dispatcharr tags as sports, and only if you haven't already adjusted its end time yourself. 0 disables this. Doesn't affect recurring/series rules. Whether a channel's sports get detected depends on that channel's own EPG source having genre data -- see docs/EPG.md for details."
+msgstr ""
+
+msgctxt "#30090"
+msgid "America/Detroit"
+msgstr ""
+
+msgctxt "#30091"
+msgid "America/Indiana/Indianapolis"
+msgstr ""
+
+msgctxt "#30092"
+msgid "America/Boise"
+msgstr ""
+
+msgctxt "#30093"
+msgid "America/Mexico_City"
+msgstr ""
+
+msgctxt "#30094"
+msgid "America/Regina"
+msgstr ""
+
+msgctxt "#30095"
+msgid "Europe/Vienna"
+msgstr ""
+
+msgctxt "#30096"
+msgid "Europe/Zurich"
+msgstr ""
+
+msgctxt "#30097"
+msgid "Europe/Warsaw"
+msgstr ""
+
+msgctxt "#30098"
+msgid "Europe/Prague"
+msgstr ""
+
+msgctxt "#30099"
+msgid "Europe/Stockholm"
+msgstr ""
+
+msgctxt "#30100"
+msgid "Europe/Copenhagen"
+msgstr ""
+
+msgctxt "#30101"
+msgid "Europe/Oslo"
+msgstr ""
+
+msgctxt "#30102"
+msgid "Europe/Budapest"
+msgstr ""
+
+msgctxt "#30103"
+msgid "Europe/Lisbon"
+msgstr ""
+
+msgctxt "#30104"
+msgid "Europe/Riga"
+msgstr ""
+
+msgctxt "#30105"
+msgid "Europe/Vilnius"
+msgstr ""
+
+msgctxt "#30106"
+msgid "Europe/Sofia"
+msgstr ""
+
+msgctxt "#30107"
+msgid "Europe/Kyiv"
+msgstr ""
+
+msgctxt "#30108"
+msgid "Asia/Tokyo"
+msgstr ""
+
+msgctxt "#30109"
+msgid "Asia/Shanghai"
+msgstr ""
+
+msgctxt "#30110"
+msgid "Asia/Hong_Kong"
+msgstr ""
+
+msgctxt "#30111"
+msgid "Asia/Singapore"
+msgstr ""
+
+msgctxt "#30112"
+msgid "Asia/Kolkata"
+msgstr ""
+
+msgctxt "#30113"
+msgid "Asia/Dubai"
+msgstr ""
+
+msgctxt "#30114"
+msgid "Asia/Karachi"
+msgstr ""
+
+msgctxt "#30115"
+msgid "Africa/Johannesburg"
+msgstr ""
+
+msgctxt "#30116"
+msgid "Africa/Lagos"
 msgstr ""
 
 msgctxt "#30047"

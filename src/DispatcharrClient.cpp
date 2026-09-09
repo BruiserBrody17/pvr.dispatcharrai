@@ -48,6 +48,8 @@ constexpr const char* kRecordingsPath = "/api/channels/recordings/";
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";
 constexpr const char* kRecurringRulesPath = "/api/channels/recurring-rules/";
 constexpr const char* kCoreSettingsPath = "/api/core/settings/";
+constexpr const char* kVersionPath = "/api/core/version/";
+constexpr const char* kTimezonesPath = "/api/core/timezones/";
 // Confirmed against a live instance: every CoreSettings "group" (system
 // timezone, DVR padding/comskip/path-templates, proxy tuning, ...) is one
 // row in this generic key/value table, addressed by its own numeric id
@@ -414,24 +416,48 @@ struct KnownTimeZone
 // rules (or none at all). Anything not listed here falls back to the
 // existing manual recurring_rule_utc_offset_minutes entry -- see
 // ComputeKnownZoneOffsetMinutes's own doc comment in DispatcharrClient.h.
+// Broadened 2026-09-09 against the real, comprehensive list Dispatcharr's
+// own GET /api/core/timezones/ returns (confirmed live and against its
+// source, core/api_views.py's TimezoneListView -- sorted pytz.common_timezones,
+// ~440 entries): still deliberately far short of that full list, not a
+// regression -- every zone here is one this addon can actually compute a
+// correct DST-adjusted offset for (kUsCanada or kEu, both hand-verified
+// against real, stable, well-documented transition rules) or one confirmed
+// to have no DST at all (kNone). A zone merely appearing in Dispatcharr's
+// list doesn't mean it's addable here: Southern Hemisphere zones (e.g.
+// Australia/Sydney, Pacific/Auckland) transition on the opposite calendar
+// schedule (DST starts in local spring, i.e. the Northern Hemisphere's
+// autumn) -- neither IsUsCanadaDstInEffect() nor IsEuDstInEffect() models
+// that, so adding one under either family would silently compute the
+// *wrong* offset for roughly half of every year, worse than the honest
+// "unrecognized, falls back to manual" behavior for an unlisted zone. Not
+// pursued without a genuine third rule engine for that pattern.
 constexpr KnownTimeZone kKnownTimeZones[] = {
     // United States
     {"America/New_York", -300, DstFamily::kUsCanada},
-    {"REDACTED_TZ", -360, DstFamily::kUsCanada},
+    {"America/Chicago", -360, DstFamily::kUsCanada},
     {"America/Denver", -420, DstFamily::kUsCanada},
     {"America/Los_Angeles", -480, DstFamily::kUsCanada},
     {"America/Anchorage", -540, DstFamily::kUsCanada},
     {"America/Phoenix", -420, DstFamily::kNone},  // Arizona: no DST
     {"Pacific/Honolulu", -600, DstFamily::kNone}, // Hawaii: no DST
+    {"America/Detroit", -300, DstFamily::kUsCanada},
+    {"America/Indiana/Indianapolis", -300, DstFamily::kUsCanada},
+    {"America/Boise", -420, DstFamily::kUsCanada},
     // Canada
     {"America/Toronto", -300, DstFamily::kUsCanada},
     {"America/Winnipeg", -360, DstFamily::kUsCanada},
     {"America/Edmonton", -420, DstFamily::kUsCanada},
     {"America/Vancouver", -480, DstFamily::kUsCanada},
     {"America/Halifax", -240, DstFamily::kUsCanada},
+    {"America/Regina", -360, DstFamily::kNone}, // Saskatchewan: no DST
+    // Mexico: DST abolished nationally in 2022 (except the US-border
+    // strip, not modeled here) -- fixed offset, confirmed current policy.
+    {"America/Mexico_City", -360, DstFamily::kNone},
     // UK/Ireland
     {"Europe/London", 0, DstFamily::kEu},
     {"Europe/Dublin", 0, DstFamily::kEu},
+    {"Europe/Lisbon", 0, DstFamily::kEu}, // Portugal: WET/WEST, same EU dates as UK
     // Central Europe
     {"Europe/Paris", 60, DstFamily::kEu},
     {"Europe/Berlin", 60, DstFamily::kEu},
@@ -439,10 +465,33 @@ constexpr KnownTimeZone kKnownTimeZones[] = {
     {"Europe/Rome", 60, DstFamily::kEu},
     {"Europe/Amsterdam", 60, DstFamily::kEu},
     {"Europe/Brussels", 60, DstFamily::kEu},
+    {"Europe/Vienna", 60, DstFamily::kEu},
+    {"Europe/Zurich", 60, DstFamily::kEu},
+    {"Europe/Warsaw", 60, DstFamily::kEu},
+    {"Europe/Prague", 60, DstFamily::kEu},
+    {"Europe/Stockholm", 60, DstFamily::kEu},
+    {"Europe/Copenhagen", 60, DstFamily::kEu},
+    {"Europe/Oslo", 60, DstFamily::kEu},
+    {"Europe/Budapest", 60, DstFamily::kEu},
     // Eastern Europe
     {"Europe/Helsinki", 120, DstFamily::kEu},
     {"Europe/Athens", 120, DstFamily::kEu},
     {"Europe/Bucharest", 120, DstFamily::kEu},
+    {"Europe/Riga", 120, DstFamily::kEu},
+    {"Europe/Vilnius", 120, DstFamily::kEu},
+    {"Europe/Sofia", 120, DstFamily::kEu},
+    {"Europe/Kyiv", 120, DstFamily::kEu}, // EU-aligned transition dates
+    // Asia/Middle East -- all fixed offset, none observe DST
+    {"Asia/Tokyo", 540, DstFamily::kNone},
+    {"Asia/Shanghai", 480, DstFamily::kNone},
+    {"Asia/Hong_Kong", 480, DstFamily::kNone},
+    {"Asia/Singapore", 480, DstFamily::kNone},
+    {"Asia/Kolkata", 330, DstFamily::kNone},
+    {"Asia/Dubai", 240, DstFamily::kNone},
+    {"Asia/Karachi", 300, DstFamily::kNone},
+    // Africa -- fixed offset, no DST
+    {"Africa/Johannesburg", 120, DstFamily::kNone},
+    {"Africa/Lagos", 60, DstFamily::kNone},
     // No-DST reference
     {"UTC", 0, DstFamily::kNone},
     {"Etc/UTC", 0, DstFamily::kNone},
@@ -1828,6 +1877,45 @@ bool DispatcharrClient::GetSystemTimeZone(std::string& timeZoneOut, std::string&
   {
     error = "system_settings row has no time_zone value";
     return false;
+  }
+  return true;
+}
+
+bool DispatcharrClient::GetServerVersion(std::string& versionOut, std::string& error)
+{
+  json response;
+  // withAuth=false: confirmed AllowAny live, and this needs to work even
+  // when login itself has failed (Kodi's PVR info screen still asks for a
+  // backend version regardless).
+  if (!Request("GET", kVersionPath, json(), response, error, /*withAuth=*/false))
+    return false;
+  versionOut = FieldOr<std::string>(response, "version", "");
+  if (versionOut.empty())
+  {
+    error = "version response has no version value";
+    return false;
+  }
+  return true;
+}
+
+bool DispatcharrClient::GetSupportedTimezones(std::vector<std::string>& timezonesOut, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json response;
+  if (!Request("GET", kTimezonesPath, json(), response, error))
+    return false;
+  const json& list = response.contains("timezones") ? response["timezones"] : json();
+  if (!list.is_array())
+  {
+    error = "Unexpected timezones response shape";
+    return false;
+  }
+  timezonesOut.clear();
+  for (const auto& item : list)
+  {
+    if (item.is_string())
+      timezonesOut.push_back(item.get<std::string>());
   }
   return true;
 }

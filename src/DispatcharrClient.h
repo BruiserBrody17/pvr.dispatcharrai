@@ -562,6 +562,29 @@ public:
   // always pass the actual current time.
   static bool ComputeKnownZoneOffsetMinutes(const std::string& ianaZoneName, time_t nowUtc, int& offsetMinutesOut);
 
+  // GET /api/core/version/ -- public, no auth required at all (confirmed
+  // against the live source, core/api_views.py's `version` view:
+  // @permission_classes([AllowAny])), returns {"version": ..., "timestamp":
+  // ...} straight from Dispatcharr's own version.py. Used by
+  // PVRDispatcharr::GetBackendVersion(), which previously had no real
+  // server-version source and reported this addon's own protocol version
+  // instead.
+  bool GetServerVersion(std::string& versionOut, std::string& error);
+
+  // GET /api/core/timezones/ -- requires auth (confirmed live: 401 without
+  // it, matching its view's plain `Authenticated()` permission, unlike
+  // GetServerVersion()'s AllowAny). Confirmed against the real source
+  // (core/api_views.py's TimezoneListView): returns
+  // {"timezones": [...], "grouped": {...}, "count": N} where "timezones"
+  // is sorted(pytz.common_timezones), ~440 real IANA names. This addon
+  // still can't compute a correct DST-adjusted offset for most of them
+  // (see kKnownTimeZones's own comment for why only two DST families are
+  // modeled) -- used only to distinguish, in the startup timezone-sync
+  // diagnostic, "a real zone this addon just doesn't have DST rules for"
+  // from "not a recognized IANA zone at all" for whatever Dispatcharr
+  // reports itself configured to.
+  bool GetSupportedTimezones(std::vector<std::string>& timezonesOut, std::string& error);
+
   // Raw byte-range recording playback, called through the addon's
   // OpenRecordedStream/ReadRecordedStream/SeekRecordedStream/
   // LengthRecordedStream. Kodi's kodi-dev-kit docs describe

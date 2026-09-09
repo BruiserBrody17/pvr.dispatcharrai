@@ -56,6 +56,22 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   m_enableRealtimeUpdates = kodi::addon::GetSettingBoolean("enable_realtime_updates", false);
   m_debugLogging = kodi::addon::GetSettingBoolean("debug_logging", false);
 
+  // Public, no-auth endpoint (see GetServerVersion()'s own comment) --
+  // fetched before login so GetBackendVersion() still has a real answer
+  // even if authentication below fails outright. m_backendVersion keeps
+  // its "unknown" default if this fails too (e.g. Dispatcharr unreachable
+  // at startup).
+  {
+    std::string version, versionError;
+    if (m_client.GetServerVersion(version, versionError))
+      m_backendVersion = version;
+    else if (m_debugLogging)
+    {
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: could not read Dispatcharr's server version: %s",
+                versionError.c_str());
+    }
+  }
+
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
   {
@@ -136,9 +152,29 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       std::string desiredZoneSetting = known ? timeZone : "manual";
       if (kodi::addon::GetSettingString("recurring_rule_timezone", "manual") != desiredZoneSetting)
       {
+        // Only worth the extra authenticated request (GetSupportedTimezones()
+        // -- see its own comment) when there's actually something to debug
+        // and someone's turned debug logging on to see it: distinguishes "a
+        // real IANA zone, this addon just has no DST rule for it" from "not
+        // a recognized zone at all", which matters for telling a genuinely
+        // unusual Dispatcharr misconfiguration apart from this addon's own,
+        // deliberately narrow zone coverage (see kKnownTimeZones's comment).
+        std::string zoneKindNote = known ? "known zone" : "unrecognized zone, falling back to manual offset entry";
+        if (!known && m_debugLogging)
+        {
+          std::vector<std::string> supported;
+          std::string tzListError;
+          if (m_client.GetSupportedTimezones(supported, tzListError))
+          {
+            bool realZone = std::find(supported.begin(), supported.end(), timeZone) != supported.end();
+            zoneKindNote = realZone ? "a real IANA zone, but this addon has no DST rule for it yet -- falling "
+                                       "back to manual offset entry"
+                                     : "not a recognized IANA zone at all (per Dispatcharr's own timezone list) "
+                                       "-- falling back to manual offset entry";
+          }
+        }
         kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: setting recurring_rule_timezone=%s (%s)",
-                  desiredZoneSetting.c_str(),
-                  known ? "known zone" : "unrecognized zone, falling back to manual offset entry");
+                  desiredZoneSetting.c_str(), zoneKindNote.c_str());
         kodi::addon::SetSettingString("recurring_rule_timezone", desiredZoneSetting);
       }
     }
@@ -639,9 +675,9 @@ PVR_ERROR PVRDispatcharr::GetBackendName(std::string& name)
 
 PVR_ERROR PVRDispatcharr::GetBackendVersion(std::string& version)
 {
-  // Dispatcharr doesn't have a confirmed "server version" endpoint used
-  // here; this reports the addon's own protocol expectations instead.
-  version = "native-api-0.1";
+  // Real Dispatcharr server version, fetched once at startup -- see
+  // m_backendVersion's own comment and GetServerVersion().
+  version = m_backendVersion;
   return PVR_ERROR_NO_ERROR;
 }
 
