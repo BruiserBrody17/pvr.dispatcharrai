@@ -53,6 +53,23 @@ automates the Windows/macOS/Linux steps below on every push.
    `tools/depends/target/binary-addons/.installed-native` first -- the
    harness touches that marker even after a failed configure, which
    otherwise makes it skip reconfiguring on the next run.
+
+   **The same marker also needs clearing on an ordinary rebuild against
+   updated source, not just after a failure** (confirmed live, 2026-09-09,
+   rebuilding a persistent Linux build tree from an earlier session that
+   was still at `0.9.0`): with `ADDONS_DEFINITION_DIR` pointing at a
+   `file://` path (a live local checkout, not a version-pinned tarball
+   URL the way CoreELEC's `package.mk` works), the harness has no signal
+   that the addon's own source content changed at all -- same URL every
+   time -- so it silently no-ops (`make: Nothing to be done for 'all'`)
+   and leaves the old binary in place. Confirmed the fix needs *two*
+   things removed, not just one: `.installed-native` itself, and the
+   addon's own stale ExternalProject state,
+   `tools/depends/target/binary-addons/native/pvr.dispatcharrai-prefix/`
+   (its stamp files are what the *inner* CMake target checks, one layer
+   below the outer marker) -- deleting only one of the two still no-op'd.
+   A version bump alone doesn't fix this either, since the file:// URL
+   itself never changes across versions the way a tagged tarball's would.
 5. `-DPACKAGE_DIR` looks like it should redirect where CPack writes the
    zip, but doesn't actually take effect for this harness (confirmed:
    verified against a real run, CPack still wrote it deep inside the
