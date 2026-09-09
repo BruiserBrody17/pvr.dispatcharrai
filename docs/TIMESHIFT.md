@@ -2433,8 +2433,32 @@ outliers) and `Packet corrupt` in the 20-46 range (vs. Channel B's
 10-26) -- consistent with Channel A's already-documented higher
 baseline rate relative to Channel B on other platforms too. All four
 platform/channel combinations tested now (Windows/Channel A, macOS/
-Channel A, CoreELEC/Channel B, CoreELEC/Channel A) are clean. Only the
-older-buffer condition remains untested.
+Channel A, CoreELEC/Channel B, CoreELEC/Channel A) are clean.
+
+**Update: the older-buffer condition tested too -- fully closed
+(2026-09-09).** Every prior trial (this fix and its earlier
+verification) used a fresh 2-5 minute buffer; the one real-world
+incident that started this whole investigation happened on a buffer
+that had been open ~37 minutes. Opened a Channel A buffer on Windows
+and left it completely untouched (no seeks, no interaction) for 40
+minutes -- exceeding that real incident's age -- then ran the same
+12-attempt live-edge-seek test against it. Zero `large audio sync
+error` lines across all 12 attempts. Baseline noise (`Packet corrupt`
+12-19, `non-existing PPS 0 referenced` 20-30, occasional single
+`co located POCs`) stayed in the same ordinary range as every fresh-
+buffer trial -- buffer age doesn't appear to change anything about
+either the baseline noise or the fix's effectiveness.
+
+This closes out the last open dimension for this fix. Every condition
+that's been tested is now clean: two channels (the hardest known
+reproducer and its resistant comparison partner), three platforms
+(Windows, macOS, CoreELEC), two input methods (synthetic JSON-RPC and
+real keyboard), and now both a fresh and a buffer aged well past the
+original incident's own age. Still not literally provable as
+"impossible to ever recur" -- no fix ever is, absent a root-cause
+understanding of the underlying Dispatcharr-side corruption itself --
+but this is about as thorough a confirmation as black-box testing
+against a real instance can give.
 
 ### A consistent ~89.4s audio-sync-error reading appears once (or a few times) per fresh stream open -- harmless, distinct from the Packet corrupt investigation above
 
