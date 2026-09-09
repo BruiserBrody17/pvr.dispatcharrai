@@ -65,6 +65,23 @@
   why the regression happened and why restoring a generic dropdown entry
   isn't a privacy re-exposure, in `docs/RECURRING_RULES.md`'s "Update"
   note.
+  **Update: 0.9.2 (batching this item plus the three recording-management
+  features below) confirmed on CoreELEC/ODROID N2+ (2026-09-09).** Real
+  cross-compile via the CoreELEC package.mk path (`docs/BUILDING.md`),
+  deployed over SSH. `PVR.BackendVersion` correctly read back `0.30.0` via
+  `XBMC.GetInfoLabels` (no GUI screenshot needed for this one -- a real
+  Kodi skin infolabel, more direct than the Windows check). Timezone fix
+  also confirmed independently on this device: `recurring_rule_timezone`
+  auto-resolved to `America/Chicago` on first load of the new build (this
+  device's own 0.9.1 install predated the REDACTED_TZ regression
+  entirely, so this wasn't a regression-recovery test here, just
+  first-time-correct confirmation). Basic live-playback smoke check
+  (Channel A) also came back clean, no errors in `kodi.log`. Recording
+  rename/file size/extend-recording themselves were **not** re-tested on
+  this device -- all three are plain REST calls plus generic Kodi PVR
+  API plumbing with no platform-specific code path, the same reasoning
+  already applied when deciding not to cross-platform-test rename after
+  it was first confirmed on Windows.
   **Update: (3) and (4) considered and deliberately not pursued
   (2026-09-09).** System notifications: Kodi GUI notifications are
   toast-style interruptions over whatever's currently playing --
