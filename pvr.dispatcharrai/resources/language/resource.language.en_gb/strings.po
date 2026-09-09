@@ -390,7 +390,7 @@ msgid "Dispatcharr account is an admin"
 msgstr ""
 
 msgctxt "#30118"
-msgid "Internal, addon-managed: whether the configured Dispatcharr account has admin-level access (user_level >= 10), checked via GET /api/accounts/users/me/ and refreshed on every restart. Used only to enable/disable the recording padding settings above, which Dispatcharr itself rejects from a non-admin account -- not meant to be changed by hand."
+msgid "Read-only: whether the configured Dispatcharr account has admin-level access, kept in sync on every restart. Recording pre/post padding below can only be changed by an admin account -- Dispatcharr rejects the write otherwise -- so this addon greys those settings out automatically when this reads No."
 msgstr ""
 
 msgctxt "#30047"

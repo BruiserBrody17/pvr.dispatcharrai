@@ -187,7 +187,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 
   // Same self-heal-on-every-startup reasoning as the padding/timezone syncs
   // above -- gates recording_pre_offset_minutes/recording_post_offset_minutes
-  // (see settings.xml's own comment there) via the hidden
+  // (see settings.xml's own comment there) via the read-only-reference
   // dispatcharr_is_admin setting, since Dispatcharr itself rejects a padding
   // write from a non-admin account (see IsCurrentUserAdmin()'s own comment
   // for how this was confirmed to be the exact same permission check).
