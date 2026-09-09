@@ -1472,6 +1472,16 @@ bool DispatcharrClient::StopRecording(int recordingId, std::string& error)
   return Request("POST", path, json(), response, error);
 }
 
+bool DispatcharrClient::RenameRecording(int recordingId, const std::string& newTitle, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json body = {{"title", newTitle}};
+  json response;
+  std::string path = std::string(kRecordingsPath) + std::to_string(recordingId) + "/update-metadata/";
+  return Request("POST", path, body, response, error);
+}
+
 bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))

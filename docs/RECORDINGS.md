@@ -1726,6 +1726,29 @@ the way in (see this file's own note above on that nesting). Genuinely
 implementable: add `SetSupportsRecordingsRename(true)` to
 `GetCapabilities()` and a `RenameRecording()` callback that POSTs here.
 
+**Update: implemented and confirmed live end-to-end (2026-09-09).**
+Exactly that -- `SetSupportsRecordingsRename(true)` plus
+`PVRDispatcharr::RenameRecording()` calling the new
+`DispatcharrClient::RenameRecording(recordingId, newTitle, error)`,
+which POSTs `{"title": newTitle}` (description deliberately omitted
+entirely, not sent as an empty string, so the server-side "None means
+no change" logic in `update_metadata` leaves the existing description
+alone). Kodi has no JSON-RPC method for triggering a rename at all --
+confirmed by checking its full method list -- so this had to be tested
+through the actual GUI: navigated Kodi's own recordings list, opened a
+real recording's context menu (which only shows an "Edit" entry once
+`SetSupportsRecordingsRename` is true -- itself a first confirmation
+the capability wired up correctly), and used its rename dialog to
+change a real in-progress-turned-stopped recording's title from
+"its real EPG-sourced show name" to "RENAMETEST". Confirmed two ways: Kodi's own
+`PVR.GetRecordings` reported the new title back immediately, and a
+direct check against Dispatcharr's REST API showed exactly the
+expected write -- `custom_properties.program.title` updated,
+`custom_properties.program.user_edited: true` set, `description`
+completely untouched (still the original EPG-sourced text) confirming
+the addon's own "omit the field entirely" choice does what it's
+supposed to.
+
 **Recording file size is available, just not as a JSON field.** The
 `Recording` model itself really does have no size field (confirmed
 against the live schema: `id`/`start_time`/`end_time`/`task_id`/

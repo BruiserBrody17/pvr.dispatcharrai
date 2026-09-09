@@ -61,6 +61,18 @@
   OpenAPI schema, which mis-describes this endpoint's request body) in
   `docs/RECORDINGS.md`'s "Recording-management feature gaps vs.
   TVHeadend" section.
+  **Update: rename implemented and confirmed live (2026-09-09).**
+  `SetSupportsRecordingsRename(true)` plus a `RenameRecording()`
+  callback calling `DispatcharrClient::RenameRecording()` (new). Tested
+  end-to-end via Kodi's own GUI (its rename dialog, not JSON-RPC --
+  Kodi has no JSON-RPC method for this at all): renamed a real
+  in-progress-turned-stopped recording from "its real EPG-sourced show name" to "RENAMETEST",
+  confirmed both through Kodi's own `PVR.GetRecordings` and directly
+  against Dispatcharr's REST API -- `custom_properties.program.title`
+  updated to the new value, `user_edited: true` set, description left
+  untouched (confirming the addon correctly sends only `{"title": ...}`
+  for a pure rename). File size and extending an in-progress recording
+  remain unimplemented.
 - [x] **In-progress recording playback had the same seek-bar
   wall-clock-position bug live timeshift had -- fixed and live-confirmed
   (2026-09-08).** `GetStreamTimes()`'s in-progress-recording branch
