@@ -2427,9 +2427,28 @@ near 89-90s, `buffer_minutes` would need to be configured to roughly
 schema default is 60 (3,600s) and the one other real instance with a
 confirmed value in this project's history used 300 (18,000s), both
 three orders of magnitude off. No realistic buffer configuration
-produces this number. The actual mechanism behind the ~89.4s reading
-remains unknown -- purely informational, no playback impact either
-time, not chased further.
+produces this number.
+
+**Update: reproduced a fourth time (Windows, addon 0.9.0, 2026-09-09),
+and Kodi-core's own source explains exactly why this is a one-time
+startup transient, not a recurring or addon-driven phenomenon.**
+Reading Kodi's real `ActiveAE.cpp` (`xbmc/cores/AudioEngine/Engines/
+ActiveAE/ActiveAE.cpp`, Omega branch): the `large audio sync error`
+warning logs the *raw, uncapped* `playingPts - clock` difference
+*before* it gets clamped to a sane `maxError` (1000ms normally, 5000ms
+while already mid-correction) for actual use. Right at stream open,
+before the audio clock has locked onto a stable reference against the
+newly-opened stream's own PTS, that raw difference can transiently
+read something enormous -- then, once the clock settles a moment
+later, it never happens again for the rest of that same stream's
+session. This matches every observation to date: only near the very
+start of a stream, never mid-session, no playback impact (the actual
+*used* error value was always safely clamped), and now reproduced a
+fourth time within seconds of a fresh `Player.Open` (-89426.23ms then
+-89426.56ms, landing just 4 seconds after this same session's own
+`ActiveAE::SyncStream` event below). Purely informational,
+addon-independent (this is Kodi-core's own audio clock bootstrap, not
+anything `pvr.dispatcharrai` does), not chased further.
 
 ### A periodic, self-correcting ~8.6s `ActiveAE::SyncStream` spike -- distinct from the Packet-corrupt cascade, unchased
 
@@ -2447,9 +2466,39 @@ tracks, and never requiring any intervention.
 The ~8.6s interval doesn't cleanly match this addon's own 10s
 real-time-updates heartbeat interval
 (`DispatcharrClient.cpp:3135`'s `kHeartbeatInterval`), so there's no
-obvious correlation to this addon's own code. Not investigated
-further -- purely a "noticed in passing" report, no repro attempted,
-no playback impact.
+obvious correlation to this addon's own code.
+
+**Update: tested on Windows (addon 0.9.0, Channel A, 2026-09-09) --
+did not reproduce as a periodic phenomenon.** 14 minutes of continuous
+playback, zero seeking, Kodi's own global debug logging on the whole
+time: exactly one `ActiveAE::SyncStream` threshold-crossing pair in
+the entire session (`average error of -123.834461, start adjusting`
+immediately followed by `average error -23.834461 below threshold of
+30.000000`, both logged the same millisecond), and nothing else for
+the following ~13.5 minutes. If this were genuinely periodic at an
+8.6s cadence, ~90+ occurrences would be expected in that window; zero
+recurrences after the first is strong evidence against "periodic" as
+originally framed.
+
+More notable: that one occurrence landed **4 seconds after** this same
+session's own reproduction of the ~89.4s large-sync-error transient
+documented in the section above (06:45:37.307 vs. 06:45:41.347/.366) --
+both right at the same fresh `Player.Open`. Raises a real possibility
+that these aren't two separate phenomena at all: a single stream-open
+clock-bootstrap transient could plausibly perturb both the raw
+instantaneous error check (`large audio sync error`) and the separate,
+windowed-average error tracker `SyncStream` corrects against, within
+the same few-second startup window -- one underlying event, observed
+through two different logging paths, rather than a distinct recurring
+~8.6s issue. Not proven (the magnitudes differ by three orders of
+magnitude, computed via genuinely different code paths -- raw
+instantaneous difference vs. a windowed average), but the exact timing
+coincidence across two independent code paths on the very first test
+attempt is a real data point, not a coincidence to dismiss outright.
+Whether the macOS peer's own session had additional, later occurrences
+this Windows test simply didn't happen to hit (a different provider
+stream, different session length, a channel switch producing its own
+fresh stream-open elsewhere in their session) remains untested.
 
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
