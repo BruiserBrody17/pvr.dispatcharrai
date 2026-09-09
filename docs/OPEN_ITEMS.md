@@ -95,8 +95,28 @@
   the Kodi Flatpak non-interactively over SSH needs the real logged-in
   session's display environment exported first or Kodi's own process
   crashes on startup (a pre-existing documented gotcha, just re-hit
-  here). Windows, CoreELEC/ODROID, and Rocky Linux are all now confirmed
-  current on `0.9.2`; macOS hasn't been updated/re-tested this pass.
+  here).
+  **Update: also confirmed on macOS (2026-09-09).** No persistent build
+  workspace survived from earlier sessions, so this was a from-scratch
+  setup: a fresh Kodi source checkout plus a separate local copy of the
+  addon (not the real repo directly), with `addon-defs` pointing at that
+  copy and synced from the real repo via `rsync -az --delete` first, same
+  pattern as Windows/Rocky Linux. Built cleanly on the first attempt --
+  a brand-new `ExternalProject` tree has no stale stamps to clear, so the
+  live-checkout stale-marker gotcha above didn't actually come up this
+  time. Same checks, same clean result: addon reports `0.9.2` via
+  `Addons.GetAddonDetails`, `PVR.BackendVersion` read back `0.30.0` via
+  `XBMC.GetInfoLabels`, `recurring_rule_timezone` auto-resolved to
+  the real configured zone (this device's install was previously at `0.9.1`,
+  predating the REDACTED_TZ regression, so again first-time-correct
+  rather than regression-recovery). Live-playback smoke test needed a
+  second attempt: the first channel tried was a placeholder EVENT-type
+  channel with no real stream behind it and failed with the addon's own
+  generic "ffmpeg exited before producing any segments" error -- not a
+  regression, just a dead test channel; switching to Channel A gave a
+  clean fresh-buffer open with no errors in `kodi.log`. All four
+  platforms (Windows, CoreELEC/ODROID, Rocky Linux, macOS) are now
+  confirmed current on `0.9.2`.
   **Update: (3) and (4) considered and deliberately not pursued
   (2026-09-09).** System notifications: Kodi GUI notifications are
   toast-style interruptions over whatever's currently playing --
