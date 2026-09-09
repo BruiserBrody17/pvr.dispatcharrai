@@ -351,6 +351,20 @@ public:
   // see PVRDispatcharr::DeleteTimer() for why that maps to this call, not
   // DeleteRecording().
   bool StopRecording(int recordingId, std::string& error);
+  // Confirmed against Dispatcharr's real source (apps/channels/
+  // api_views.py's RecordingViewSet.update_metadata), not its OpenAPI
+  // schema -- DRF-spectacular's auto-generated requestBody for this
+  // custom @action just reuses the whole Recording serializer and
+  // doesn't mention title/description at all, despite the endpoint's
+  // own docstring saying exactly that's what it updates. The real body
+  // is a plain {"title": ...}; the view writes it into
+  // custom_properties.program.title -- the exact field GetRecordings()
+  // already reads on the way in (see its own comment) -- and sets
+  // custom_properties.program.user_edited = true so the EPG
+  // auto-enrichment task won't overwrite it on a later sync. Empty/
+  // whitespace-only titles are rejected server-side (400), so callers
+  // don't need their own blank-title guard on top.
+  bool RenameRecording(int recordingId, const std::string& newTitle, std::string& error);
 
   // True if Config::apiKey is already set. Callers use this to decide
   // whether GenerateApiKey() is worth calling at all. Deliberately reads
