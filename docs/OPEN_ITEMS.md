@@ -78,8 +78,14 @@
   Linux (addon 0.9.0 on both), clustered right around -89,400 to
   -89,500ms, only near the start of a stream and never recurring. No
   playback impact on either machine. Purely informational -- not
-  chased further. See `docs/TIMESHIFT.md`'s section of the same name
-  for the detail and a leading (unconfirmed) guess at the mechanism.
+  chased further. The leading guess (the buffer's own configured
+  visible-window duration, `visible_segments * segment_seconds`,
+  coincidentally landing in this range) was checked live against
+  `timeshift_buffer`'s real source (2026-09-09) and ruled out: that
+  formula always reduces to just `buffer_minutes * 60`, three orders
+  of magnitude too large for any realistic buffer setting to land near
+  89-90s. Actual mechanism still unknown. See `docs/TIMESHIFT.md`'s
+  section of the same name for the detail.
 - ~~In-progress recording playback never received the catch-up-budget
   hardening that live timeshift already has~~ -- **Already fixed;
   this entry was stale.** When this was written (2026-09-08, after
@@ -260,7 +266,10 @@
   doesn't cleanly match this addon's existing 10s heartbeat interval
   (`DispatcharrClient.cpp:3135`), so no obvious correlation yet. Not
   investigated further -- purely a "noticed in passing" report.
-  See `docs/TIMESHIFT.md`'s same section for the full breakdown.
+  See `docs/TIMESHIFT.md`'s "A periodic, self-correcting ~8.6s
+  `ActiveAE::SyncStream` spike" section (added 2026-09-09 -- this
+  entry had pointed there all along, but the section itself didn't
+  exist yet until now).
 - [x] **A second, related `Packet corrupt`/freeze, confirmed root-caused
   and fixed, then re-verified live (2026-09-07).** Switching away from a
   channel and back could reproduce a real segment-size disagreement --
