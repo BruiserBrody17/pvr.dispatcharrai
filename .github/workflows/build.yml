@@ -50,8 +50,12 @@ jobs:
           # (confirmed live, 2026-09-09: two consecutive real CI failures, same
           # hash mismatch both times, retrying the job unchanged didn't help).
           # Dropped before update since this job only needs
-          # build-essential/cmake/libcurl/pkg-config, never Chrome.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          # build-essential/cmake/libcurl/pkg-config, never Chrome. Grep-based
+          # rather than a fixed filename: a first attempt at
+          # /etc/apt/sources.list.d/google-chrome.list specifically did NOT
+          # stop the failure (confirmed live, same run) -- glob it broadly and
+          # print what actually gets removed instead of guessing again.
+          grep -rl -i chrome /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -fv
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libcurl4-openssl-dev pkg-config
 
