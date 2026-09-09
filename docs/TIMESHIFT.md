@@ -285,6 +285,28 @@ the addon-side call, not assumed from `Plugins.md` alone:
   Dispatcharr change (e.g. letting a plugin declare a permission class per
   action); nothing on this addon's or plugin's side can work around it.
 
+**Update (2026-09-09): a proactive, visible warning added on top of the
+log-line-only failure above.** The existing behavior (a `kodi.log` line
+naming both possible causes once a channel actually fails to open) is
+real but easy to miss -- a user just sees every live channel fail to
+play, with no on-screen explanation. Now checked once at startup
+(reusing the same `DispatcharrClient::IsCurrentUserAdmin()` call already
+made for the recording-padding greyout, see `docs/API_NOTES.md`'s
+`/api/accounts/users/me/` entry): if `live_timeshift_mode` is configured
+as Server-side but the account isn't admin, a `kodi::QueueNotification()`
+warning fires immediately, not just after a real channel-open failure.
+Deliberately a one-time startup notification rather than restricting the
+`live_timeshift_mode` dropdown itself -- confirmed against Kodi's own
+source (`xbmc/settings/lib/SettingDefinitions.h`'s
+`IntegerSettingOption`/`TranslatableIntegerSettingOption`) that a Kodi
+addon settings list control has no per-option enable/disable mechanism
+at all, only the whole-setting `<dependencies>` gate already used for the
+padding fields -- which would be the wrong tool here anyway, since
+`Off`/`Local` need to stay selectable regardless of admin status.
+Confirmed live via a temporary forced-non-admin override: the warning
+appeared, with the real admin account restored afterward and confirmed
+silent (no notification) on the next restart.
+
 `StartTimeshiftBuffer()` builds the final playlist URL from this addon's
 own configured Dispatcharr host plus the port/path the plugin reports back
 for its own file server, deliberately always as `http://` regardless of
