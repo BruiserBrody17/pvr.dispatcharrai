@@ -284,8 +284,21 @@
   error` lines across all 12, with baseline noise running even higher
   than the Channel B run above. All four platform/channel combinations
   tested now (Windows/Channel A, macOS/Channel A, CoreELEC/Channel B,
-  CoreELEC/Channel A) are clean. Only the older-buffer condition
-  remains untested.
+  CoreELEC/Channel A) are clean.
+  **Update: the live-edge-seek fix (PR #3) is now fully closed --
+  older-buffer condition tested too, clean (2026-09-09).** Every prior
+  trial used a fresh 2-5 minute buffer; the real incident that started
+  this investigation happened on a ~37-minute-old one. Left a Channel A
+  buffer open and completely untouched for 40 minutes on Windows, then
+  ran the same 12-attempt test -- zero `large audio sync error` lines,
+  baseline noise in the same ordinary range as every fresh-buffer
+  trial. Every dimension tested (two channels, three platforms, two
+  input methods, fresh and aged buffers) is now clean. The remaining
+  cosmetic baseline `Packet corrupt`/`non-existing PPS 0 referenced`
+  noise this whole investigation started from is still present and
+  still deliberately unfixed (see this item's own opening paragraph
+  above) -- that part was never the target of PR #3, only the severe
+  escalation was.
 - [x] ~~A periodic, self-correcting `ActiveAE::SyncStream` error spike
   on a suspiciously exact ~8.6s cadence~~ -- **Closed: not actually
   periodic, confirmed on both platforms that ever saw it
