@@ -82,6 +82,21 @@
   API plumbing with no platform-specific code path, the same reasoning
   already applied when deciding not to cross-platform-test rename after
   it was first confirmed on Windows.
+  **Update: also confirmed on the Rocky Linux laptop (2026-09-09) --
+  it had been sitting at `0.9.0`, several releases behind.** Same checks,
+  same clean result: `PVR.BackendVersion` read back `0.30.0`,
+  `recurring_rule_timezone` auto-resolved to `America/Chicago`, live
+  playback of Channel A came back clean with no errors. Hit two build/
+  deploy issues specific to this platform, both now written up in
+  `docs/BUILDING.md`: the live-checkout build harness silently no-ops
+  against updated source unless two separate stale-marker locations are
+  cleared first (not just one, and not just after a genuine failure --
+  already-documented advice that turned out incomplete), and launching
+  the Kodi Flatpak non-interactively over SSH needs the real logged-in
+  session's display environment exported first or Kodi's own process
+  crashes on startup (a pre-existing documented gotcha, just re-hit
+  here). Windows, CoreELEC/ODROID, and Rocky Linux are all now confirmed
+  current on `0.9.2`; macOS hasn't been updated/re-tested this pass.
   **Update: (3) and (4) considered and deliberately not pursued
   (2026-09-09).** System notifications: Kodi GUI notifications are
   toast-style interruptions over whatever's currently playing --
