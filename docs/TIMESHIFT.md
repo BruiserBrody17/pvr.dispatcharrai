@@ -69,7 +69,7 @@ its removal, see git history) sets `inputstream.ffmpegdirect`'s
 workaround further below hit a confirmed, unfixable seek bug in.
 
 **Confirmed live, not just by inference from the code path being
-different**: opened a real channel (CNN) under Local, `TimeshiftStream::
+different**: opened a real channel (Channel E) under Local, `TimeshiftStream::
 Start`/`DoReadWrite` in `kodi.log` confirmed ffmpegdirect actually
 instantiated the dedicated class, `canseek: true`. A backward seek (30s)
 logged `demuxer seek to: 5755.827300` / `..., success` with
@@ -302,7 +302,7 @@ a 404 (`"Plugin not found"`): the registry key is the plugin's *folder
 name*, and the zip built for an earlier manual install had extracted to a
 generic `plugin/` folder rather than `timeshift_buffer/` -- fixed by
 reinstalling under the correct folder name, not an addon-side bug. After
-that, a real channel (ESPN, via `Player.Open`) opened cleanly through the
+that, a real channel (Channel B, via `Player.Open`) opened cleanly through the
 whole chain: `StartTimeshiftBuffer()` reached the plugin, got back a real
 port/route, `inputstream.ffmpegdirect` opened
 `http://<host>:9192/<uuid>/live.m3u8` successfully (`Input #0, hls`, `start:
@@ -480,7 +480,7 @@ capability -- see its own README -- but this addon no longer calls it.
 
 The initial confirmation above was a single, freshly-started session per
 channel. Real day-to-day use surfaced two bugs that scenario didn't cover:
-a higher-bitrate channel (ESPN 1080p) hitching every few seconds, and
+a higher-bitrate channel (Channel B 1080p) hitching every few seconds, and
 reopening a channel after Stop resuming from the old stale position
 instead of live. Both traced back to the same place --
 `OpenLiveTimeshiftStream()` -- and both are fixed by the same change.
@@ -508,8 +508,8 @@ exposes a segment once it's fully closed (`segment_seconds`, 6s by
 default), so sitting right at the tail means there is *nothing* to read
 until the next segment closes -- confirmed by the stall period tracking
 `segment_seconds` almost exactly (a repeating "stream stalled" -> buffering
--> resume cycle roughly every 4-5 seconds in the actual test log). MLB
-Network's buffer, still running from earlier testing, had simply
+-> resume cycle roughly every 4-5 seconds in the actual test log).
+Channel A's buffer, still running from earlier testing, had simply
 accumulated more backlog by the time it was opened -- explaining the
 apparent channel-to-channel difference without any real bitrate
 dependency. The same zero-margin `position` is also exactly why reopening
@@ -524,9 +524,9 @@ already-available data for the demuxer's read-ahead to draw on between
 segment arrivals, while staying clearly "live" to the viewer, comparable
 to the inherent latency any real live-TV/DVR service already has.
 
-**Confirmed live**, ESPN (1080p): 60+ seconds of continuous playback, zero
+**Confirmed live**, Channel B (1080p): 60+ seconds of continuous playback, zero
 "stream stalled" events (was multiple per minute before), a -30s seek
-landed cleanly and playback continued. MLB Network: played ~40s, Stop,
+landed cleanly and playback continued. Channel A: played ~40s, Stop,
 waited a few seconds, reopened -- resumed near the current live edge
 (matching elapsed real time), not the original stale start position.
 
@@ -577,7 +577,7 @@ same point again -- restoring exactly the alignment that already made
 seeking work within one continuous session, now for a freshly reopened one
 too.
 
-**Confirmed live**: reopened ESPN (1080p), let ~25s accumulate, then three
+**Confirmed live**: reopened Channel B (1080p), let ~25s accumulate, then three
 seeks in the same reopened session -- `-15s` landed at 12.9s, a follow-up
 `+10s` landed at 95.0s (consistent with real elapsed time between them),
 and a deliberately-oversized `-1000s` landed at 0.4s, correctly clamped to
@@ -585,8 +585,8 @@ the true start of the fresh buffer rather than some unrelated fallback
 point. The debug log showed a genuine multi-step binary search (probing
 byte 0, then near the tail, then narrowing between them) converging on
 each target, instead of the single-probe fallback-to-0 seen before this
-fix. No hitching on a cold buffer either (0 stalls across 45s on ESPN,
-30s on MLB Network) -- the margin-based near-live starting position
+fix. No hitching on a cold buffer either (0 stalls across 45s on Channel B,
+30s on Channel A) -- the margin-based near-live starting position
 (above) still applies on top of this, so a fresh buffer still gets a few
 seconds' cushion before playback starts rather than reading right at its
 own bleeding edge.
@@ -631,7 +631,7 @@ undisturbed.
 Fixed by giving `OpenLiveTimeshiftStream()` a real cold-start grace
 period: it now retries `RefreshLiveManifest()` for up to 15 seconds (30
 attempts, 500ms apart) instead of failing on the first check. **Confirmed
-live**: three consecutive Stop -> wait 2s -> Play cycles on ESPN (1080p),
+live**: three consecutive Stop -> wait 2s -> Play cycles on Channel B (1080p),
 all three succeeded cleanly with zero "live playlist not found" errors
 (previously this failed every time); a genuinely cold first Open also
 succeeded within the retry window with no hitching afterward (0 stalls).
@@ -845,7 +845,7 @@ through to `OpenInProgressRecordingStream()`, which stores it on
 recording branch reports it via the new
 `GetInProgressRecordingStreamStartTime()` instead of a hardcoded `0`.
 Confirmed live (Windows, addon 0.9.0): started an instant recording of
-MLB Network, played it back while still in progress. A -45s seek from
+Channel A, played it back while still in progress. A -45s seek from
 01:21 landed at 00:38 (matches exactly); after playback resumed and
 climbed normally for 5s to 00:56, a +90s seek landed at 02:27 (56+90=146s,
 matches within rounding) -- position tracks real seeks in both
@@ -1014,7 +1014,7 @@ than "the first viewer loses pause/rewind": **a second viewer opening the
 same channel killed the first viewer's playback outright, and the first
 viewer's own eventual Stop then killed the second viewer's replacement
 buffer too**, leaving both viewers broken in sequence rather than one.
-Confirmed live: watching ESPN (1080p) on a Mac, then opening the same
+Confirmed live: watching Channel B (1080p) on a Mac, then opening the same
 channel on a second, separate device (a Rocky Linux laptop) -- the Mac's
 playback stopped, and the second device's own playback stalled
 indefinitely a few seconds later. Dispatcharr's own `list_buffers` plugin
@@ -1046,7 +1046,7 @@ and that simply no longer stopping the buffer at all (reattaching via
 `StartTimeshiftBuffer()`'s existing idempotent `start_buffer`, which already
 reports back an already-running buffer rather than restarting one) would
 keep the whole addressed byte range one continuous, valid encoder run and
-fix concurrency for free. **Tested live and confirmed wrong**: opened ESPN
+fix concurrency for free. **Tested live and confirmed wrong**: opened Channel B
 (1080p) on Windows, played ~20s, Stop, waited ~22s, reopened the same
 channel -- the reopen reattached to the still-running buffer instantly (no
 cold-start wait; the manifest already had ~90MB/several minutes of history
@@ -1127,7 +1127,7 @@ the ~26.5h wraparound garbage, with `Player.Time`/`Player.Duration` (via
 **Confirmed live across two real, separate devices** (Windows and a Rocky
 Linux laptop, the same two-device setup that originally surfaced this bug),
 exercising the actual scenario rather than a same-instance stand-in:
-Windows opened ESPN (1080p) and played cleanly (`speed: 1`, `Player.Time`
+Windows opened Channel B (1080p) and played cleanly (`speed: 1`, `Player.Time`
 progressing normally); with Windows still playing, Rocky opened the *same*
 channel -- Rocky started playing cleanly, and Windows's own `kodi.log`
 showed no `ClosePVRStream`, no stall, and `Player.Time` continuing to
@@ -1152,7 +1152,7 @@ is a bug in this addon; noted here only because they blocked testing.)
 
 **Not a bug, and expected: Dispatcharr's own Stats page only shows one
 active client for a channel with several concurrent Kodi viewers.**
-Confirmed real, via a genuine three-way test (ESPN 1080p played
+Confirmed real, via a genuine three-way test (Channel B 1080p played
 simultaneously on Windows, macOS, and Rocky Linux, all with clean
 playback) -- Dispatcharr's Stats page showed only the first (Windows)
 device as active; macOS and Rocky Linux never appeared. Root cause is the
@@ -1226,7 +1226,7 @@ viewer's Open() or Close()) -- the three together are the complete,
 correct design, not competing alternatives.
 
 **Confirmed live**, reproducing the actual two-device scenario end to end,
-not just the mechanism in isolation: Windows opened ESPN (1080p);
+not just the mechanism in isolation: Windows opened Channel B (1080p);
 `list_buffers` showed `"viewers": 1`. Rocky Linux opened the same channel
 while Windows kept playing; `list_buffers` showed `"viewers": 2`, both
 devices still playing cleanly. Windows stopped -- Rocky's own playback
@@ -1246,24 +1246,24 @@ thread, matching how `CloseLiveTimeshiftStream()` had called
 surfaced that this reintroduced a *different* provider-concurrent-stream-limit
 failure, not fixed by reference counting at all. **Confirmed live**: with a
 provider limited to 3 concurrent streams, 2 already used by in-progress
-recordings, and the 3rd by NHL Network being watched live -- switching
-directly to MLB Network (no explicit Stop in between, just picking a
+recordings, and the 3rd by Channel C being watched live -- switching
+directly to Channel A (no explicit Stop in between, just picking a
 different channel, which is exactly what "watch a live channel, then start
 watching a different one" is from Kodi's own PVR API's perspective: a
 `CloseLiveStream()`/`ClosePVRStream()` for the old channel immediately
 followed by `OpenLiveStream()`/`OpenPVRStream()` for the new one) played
-nothing at all and Kodi returned to the main menu outright. NHL Network's
+nothing at all and Kodi returned to the main menu outright. Channel C's
 own stream *did* visibly go down in Dispatcharr's status a few seconds
 later -- correctly torn down by the reference-counting fix -- but only
-*after* MLB Network had already failed to start, not before.
+*after* Channel A had already failed to start, not before.
 
 Root cause: this addon's own `CloseLiveTimeshiftStream()` handed the actual
 `StopTimeshiftBuffer()` network call off to a detached background thread
 and returned immediately, so Kodi's own next call --
-`OpenLiveTimeshiftStream()` for MLB Network, made essentially back to back
+`OpenLiveTimeshiftStream()` for Channel A, made essentially back to back
 with the Close() that just returned -- reached the plugin's `start_buffer`
-and tried to open a *4th* upstream connection to the provider while NHL
-Network's connection (2 recordings + NHL Network = the provider's real
+and tried to open a *4th* upstream connection to the provider while
+Channel C's connection (2 recordings + Channel C = the provider's real
 limit of 3) hadn't actually been torn down yet. The provider naturally
 refused it, `start_buffer` failed, and `OpenLiveTimeshiftStream()` had no
 retry budget for *that* kind of failure (its existing cold-start retry
@@ -1296,15 +1296,15 @@ manifest call already does), so this isn't a new category of blocking for
 it, just this one call site catching up to that existing pattern.
 
 **Confirmed live**: the exact failing sequence above, repeated against the
-synchronous fix -- opened NHL Network, confirmed one registered viewer via
-`list_buffers`, then switched directly to MLB Network. `kodi.log` showed
-`ClosePVRStream` for NHL Network's own stream path, then `OpenPVRStream`
-for MLB Network's **2.3 seconds later** on the same log thread -- direct
+synchronous fix -- opened Channel C, confirmed one registered viewer via
+`list_buffers`, then switched directly to Channel A. `kodi.log` showed
+`ClosePVRStream` for Channel C's own stream path, then `OpenPVRStream`
+for Channel A's **2.3 seconds later** on the same log thread -- direct
 evidence `CloseLiveTimeshiftStream()` was genuinely blocking on the
-teardown, not returning immediately. MLB Network started and played
+teardown, not returning immediately. Channel A started and played
 cleanly (`speed: 1`), and `list_buffers` immediately afterward showed
-exactly one buffer -- MLB Network's own, with one registered viewer --
-NHL Network's buffer gone entirely, no leftover state. (This particular
+exactly one buffer -- Channel A's own, with one registered viewer --
+Channel C's buffer gone entirely, no leftover state. (This particular
 run didn't have 2 real recordings competing for provider slots alongside
 it, so it directly confirms the race itself is closed -- the ordering and
 timing that caused the original failure -- rather than re-proving the
@@ -1840,7 +1840,7 @@ analysis, plus a clean compile and a normal (non-stalled) reload in Kodi.
 ### 1.0.6 follow-up: a second, distinct freeze -- corrupt packets within seconds of open
 
 Reported live (macOS, addon 1.0.6, plugin 1.0.2, confirmed both actually
-running) immediately after the heartbeat fix above shipped: ESPN
+running) immediately after the heartbeat fix above shipped: Channel B
 (1080p) still froze, but with a different signature ruling out a
 recurrence of the heartbeat bug -- stalled in ~10s with zero successful
 `ReadLiveTimeshiftStream` catch-up cycles logged first (the heartbeat
@@ -1930,15 +1930,15 @@ exact trigger:
 Confirmed live (Windows): both changes compile cleanly and the addon
 reloads normally. The plugin-side fix is verified via a functional test
 against the real, unmodified function. Neither change was verified
-against the exact original failure (would need the real ESPN 1080p
+against the exact original failure (would need the real Channel B 1080p
 stream and a way to force the underlying race, not available from this
 session) -- if this recurs after both ship, the new addon-side
 diagnostic should name the exact segment and size disagreement, which
 would be the fastest path to a fully confirmed root cause.
 
-**Update -- verified live against the real failure (macOS, ESPN 1080p,
+**Update -- verified live against the real failure (macOS, Channel B 1080p,
 a separate Claude Code instance on the user's own Mac, relayed back):**
-the permanent-freeze regression is genuinely fixed. ESPN (1080p) played
+the permanent-freeze regression is genuinely fixed. Channel B (1080p) played
 continuously for 4+ minutes, including a real -30s rewind seek partway
 through (`demuxer seek to: ..., success`, `speed:1`/`canseek:true`
 holding throughout) -- well past the ~10s mark that reliably killed it
@@ -2072,8 +2072,8 @@ waiting on another incidental occurrence.
 
 **Update -- a deliberate rapid-channel-switching stress test did not
 reproduce it (Windows, addon 0.9.0).** 15 minutes, 105 switches across
-six channels (MLB Network, ESPN (1080p), NHL Network, NFL Network, CNN,
-NBA TV), random dwell 2-15s per channel. Result: 483 `Packet corrupt`
+six channels (Channel A, Channel B (1080p), Channel C, Channel D, Channel E,
+Channel F), random dwell 2-15s per channel. Result: 483 `Packet corrupt`
 occurrences (the same already-documented benign rate), zero
 size-disagreement diagnostic firings, zero addon errors/crashes/failed
 opens. 42 `ActiveAE - large audio sync error` warnings and 91 `timeout
@@ -2095,7 +2095,7 @@ frequency.
 
 **Update -- a 30-minute continuous single-channel dwell (the other half
 of the narrowed-down approach above) also did not reproduce it
-(Windows, addon 0.9.0).** ESPN (1080p), no switching at all after the
+(Windows, addon 0.9.0).** Channel B (1080p), no switching at all after the
 initial open. Result: 782 `Packet corrupt` occurrences (same benign
 rate as always, expected volume for 30 minutes), zero size-disagreement
 diagnostic firings, zero audio desync warnings, zero stream stalls,
@@ -2116,7 +2116,7 @@ this from the Dispatcharr/plugin server side rather than the Kodi
 client side.
 
 **Second occurrence -- escalated again, but this time self-recovered
-(macOS, addon 0.9.0, ~20-hour continuous session, MLB Network).** Same
+(macOS, addon 0.9.0, ~20-hour continuous session, Channel A).** Same
 underlying noise (1,825 `Packet corrupt` occurrences over the session,
 usual ~2-4s background rate, consistent with the per-segment-muxer-
 reset hypothesis above), but a burst of three `Stream stalled, start
@@ -2143,7 +2143,7 @@ rather than guess at a fix from two data points.
 
 **Third occurrence, and a real breakthrough -- a reliable, on-demand
 trigger found: seeking to the live edge (macOS, addon 0.9.0, PR #2's
-seekbar fix testing session, ESPN (1080p)).** Reproduced 3-for-3 in one
+seekbar fix testing session, Channel B (1080p)).** Reproduced 3-for-3 in one
 session, every time immediately after Kodi's "skip to live" seek
 (clamped to tail in the addon's own `SeekLiveTimeshiftStream` log, same
 as any other seek landing past the known tail). Ruled out as a
@@ -2177,41 +2177,41 @@ incidents happened on are `buffer_minutes=300`, `segment_seconds=2`
 (not the assumed defaults), giving a real segment-file-reuse threshold
 of ~10 hours -- but both real incidents had buffer ages of only 1:06
 and 4:49 (minutes), nowhere near that. Confirmed independently on
-Windows too: 6 deliberate live-edge-seek attempts on ESPN (1080p),
+Windows too: 6 deliberate live-edge-seek attempts on Channel B (1080p),
 buffer age ~2 minutes, produced zero corruption of any kind.
 
 Controlled trials (macOS) then isolated the real variable: **four
-escalating trials on ESPN (1080p)** -- isolated seek, small burst,
+escalating trials on Channel B (1080p)** -- isolated seek, small burst,
 larger burst, zero-wait overlapping burst, buffer ages 1:50 through
 6:20 (exceeding both real incidents' ages and seek counts) --
 correctly reproduced *some* decode-error noise (80 up to 1,606 errors,
 scaling with seek aggressiveness) but **never once produced the
 severe, sustained large-audio-sync-error state** seen in the real
-incidents. Then **MLB Network (720p) reproduced the severe form
+incidents. Then **Channel A (720p) reproduced the severe form
 instantly, on the first, mildest method tried** (a single isolated
-seek, the same method ESPN's Trial A used) -- 240 decode errors and
+seek, the same method Channel B's Trial A used) -- 240 decode errors and
 238 large-audio-sync errors on the very first attempt, peaking at
 108,800ms (~109s) of desync, where 20 escalating attempts across
-ESPN's four trials produced zero audio-sync errors at all.
+Channel B's four trials produced zero audio-sync errors at all.
 
 Same seek method, same client, same machine -- the only variable that
-changed was the channel/stream itself (MLB Network is 1280x720 h264;
-ESPN is 1080p). Points at the corruption being sensitive to the
+changed was the channel/stream itself (Channel A is 1280x720 h264;
+Channel B is 1080p). Points at the corruption being sensitive to the
 specific stream's own characteristics (resolution, bitrate, keyframe
 interval, or provider-specific encode behavior), not a general
 "seeking to live edge is unsafe" property of every channel. Next
-steps: more MLB Network trials to confirm this isn't a one-off, and a
+steps: more Channel A trials to confirm this isn't a one-off, and a
 same-resolution comparison channel (a different 720p channel, and/or a
 second 1080p channel) to isolate whether resolution itself is the
 driver or whether it's specific to this one stream's encode. One open,
 still-untested confound: both original real-world incidents were
 triggered by actual GUI keypresses (`HandleKey: right`/`StepForward`),
-not `Player.Seek` via JSON-RPC -- doesn't explain the ESPN/MLB gap
-(MLB's repro used JSON-RPC too, same as ESPN's non-reproducing trials),
+not `Player.Seek` via JSON-RPC -- doesn't explain the Channel B/Channel A gap
+(Channel A's repro used JSON-RPC too, same as Channel B's non-reproducing trials),
 but still an open variable for how representative these controlled
 trials are of the original repro path.
 
-**Cross-platform confirmation (Windows) -- MLB Network reproduces the
+**Cross-platform confirmation (Windows) -- Channel A reproduces the
 severe form here too, ruling out "macOS-specific."** Same isolated
 -60s/+600s seek method, same channel. First attempt: clean (65
 `Packet corrupt`, matching normal background rate, zero audio-sync
@@ -2223,16 +2223,16 @@ real-time pace afterward (consistent with the peer's own "still
 recovering after 2 minutes" observation for their worse case -- a
 ~170s desync takes on the order of ~170 real seconds to fully drain
 once it stops growing). Confirms the channel-specific finding
-independently of platform: this is genuinely about MLB Network's
+independently of platform: this is genuinely about Channel A's
 stream specifically, reproducible on both macOS and Windows, not
 something tied to one OS/client. Also confirms it isn't purely
 deterministic even on the implicated channel -- it took a second
-attempt here, same as it took escalating trials before ESPN's (still
+attempt here, same as it took escalating trials before Channel B's (still
 unconfirmed) susceptibility could be ruled either way.
 
-**Likely root cause found -- MLB Network's raw Dispatcharr stream throws
+**Likely root cause found -- Channel A's raw Dispatcharr stream throws
 PPS-reference decode errors continuously even with zero seeking, zero
-Kodi, and zero addon involvement; ESPN's does not.** Probed both
+Kodi, and zero addon involvement; Channel B's does not.** Probed both
 channels' raw proxy URLs directly with `ffprobe` (`-headers
 "Authorization: Bearer <token>"`, no seek, cold TCP connection, 10s
 capture window):
@@ -2243,10 +2243,10 @@ ffprobe -v warning -headers "Authorization: Bearer $TOKEN" -select_streams v:0 \
   http://<host>:9191/proxy/ts/stream/<channel-uuid>
 ```
 
-MLB Network: 119x `[h264] non-existing PPS 0 referenced` immediately
+Channel A: 119x `[h264] non-existing PPS 0 referenced` immediately
 followed by 119x `no frame!`, spread evenly across the full 10s window
 (not just a one-time cold-start artifact) -- roughly 12 decode failures
-per second, sustained. ESPN (1080p): 1 total warning line (an unrelated
+per second, sustained. Channel B (1080p): 1 total warning line (an unrelated
 "No trailing CRLF" HTTP quirk) in the same 10s window -- essentially
 clean.
 
@@ -2254,32 +2254,32 @@ This is the same `non-existing PPS 0 referenced` message that dominates
 the severe escalation's error signature (see the peer reports above).
 The stream-characteristic probe (`ffprobe -show_entries
 stream=codec_name,width,height,profile,level,bit_rate`) also found both
-of MLB Network's duplicate Dispatcharr channel entries are actually the
+of Channel A's duplicate Dispatcharr channel entries are actually the
 same underlying 1280x720 H.264 High@L4.0 video encode (they only differ
 in audio: AAC/HE-AAC 96kbps vs. AC3 384kbps) -- so the earlier
 channel-id-vs-UUID ambiguity doesn't affect this comparison, either
-entry represents "MLB Network." ESPN is 1920x1080 H.264 High@L4.2,
+entry represents "Channel A." Channel B is 1920x1080 H.264 High@L4.2,
 audio E-AC3 256kbps.
 
 GOP/keyframe interval (extracted via `ffprobe -select_streams v:0
 -show_entries frame=pict_type,pts_time`, filtering `pict_type=="I"`)
-is a further clue: MLB Network's keyframes land at a rock-steady
+is a further clue: Channel A's keyframes land at a rock-steady
 **2.002s** interval -- i.e. exactly Dispatcharr's own `segment_seconds
-= 2` setting for this instance. ESPN's keyframes land at a steady but
+= 2` setting for this instance. Channel B's keyframes land at a steady but
 different **2.503s** interval, not aligned to the 2s segment boundary
-at all. Put together, the working theory is: MLB Network's upstream
+at all. Put together, the working theory is: Channel A's upstream
 encode already has a 2s-cadence GOP, so Dispatcharr's segmenter can cut
 segments exactly on existing keyframes -- but something in that
 exact-alignment path is dropping or mis-ordering the PPS NAL unit at
 (or near) those same cut points, corrupting parameter-set delivery on
-nearly every segment boundary. ESPN's GOP doesn't line up with segment
+nearly every segment boundary. Channel B's GOP doesn't line up with segment
 boundaries, so its segments routinely get cut mid-GOP -- a case
 Dispatcharr's segmenter apparently handles cleanly (or re-injects
 parameter sets correctly for). This would explain both ends of the
-observation: MLB Network's *baseline* "cosmetic" `Packet corrupt` noise
+observation: Channel A's *baseline* "cosmetic" `Packet corrupt` noise
 being worse to begin with, and why forcing an extra demuxer resync via
 a live-edge seek tips it over into a severe, cascading decode-error
-storm far more easily than on ESPN, which starts from a nearly clean
+storm far more easily than on Channel B, which starts from a nearly clean
 baseline.
 
 This points at Dispatcharr's own segmenter/muxer behavior for this
@@ -2292,13 +2292,13 @@ a second 720p-with-segment-aligned-GOP channel or a second
 1080p-with-misaligned-GOP channel, so "segment-boundary GOP alignment"
 is a strong correlated lead here, not yet proven causal.
 
-**Update: real-world confirmation on MLB Network via actual GUI
+**Update: real-world confirmation on Channel A via actual GUI
 keypresses, not synthetic `Player.Seek` calls.** Peer report (macOS),
 from `kodi.log` timestamps 12:56:07-12:56:51: `HandleKey: left` x7
 (`StepBack`) drove `SeekLiveTimeshiftStream` to the buffer start (time
 926s); ~13s later `HandleKey: right` x6 (`StepForward`) drove it back
 to the live edge (clamped to tail, time 199066). Immediately after the
-tail-seek: the same signature as the original ESPN incidents -- a
+tail-seek: the same signature as the original Channel B incidents -- a
 storm of `[h264] vt decoder cb: output image buffer is null: -12909`
 and `non-existing PPS 0 referenced`, `ActiveAE - large audio sync
 error` climbing to a peak of ~170,000ms (170s) of desync, recovering
@@ -2308,18 +2308,17 @@ at roughly real-time pace (no restart needed) -- ~169,000ms at
 
 This closes the GUI-vs-JSON-RPC confound noted above: real
 `StepBack`/`StepForward` keypresses, the same input path as the
-original ESPN incidents, trigger the identical failure mode on MLB
-Network -- not an artifact of using `Player.Seek` for the controlled
+original Channel B incidents, trigger the identical failure mode on Channel A -- not an artifact of using `Player.Seek` for the controlled
 trials. Also notable: this buffer had been open ~37 minutes (since
 12:19, continuously, spanning several earlier controlled test seeks)
-rather than freshly opened, so MLB Network's reproducibility doesn't
+rather than freshly opened, so Channel A's reproducibility doesn't
 appear to depend on buffer age either. Both points further strengthen
 the channel/stream-specific framing above over any remaining
 "macOS + live-edge-seek" framing.
 
 **Update: mid-buffer seek control test -- the cascade is specific to
 the live edge, not a general property of the corrupted stream.**
-Direct A/B on the same MLB Network buffer/session (Windows): seeking
+Direct A/B on the same Channel A buffer/session (Windows): seeking
 to a genuine mid-buffer point (~1:46 into a ~4:42 buffer, nowhere near
 either end) produced only ordinary baseline noise -- 29 `Packet
 corrupt`, 14 `non-existing PPS 0 referenced`, 1 `co located POCs`,
@@ -2352,7 +2351,7 @@ in `src/DispatcharrClient.cpp` now sums the trailing
 `kLiveEdgeSeekBackoffSegments = 3` segments' byte sizes for its tail
 clamp instead of just the single last segment's, matching the margin
 `OpenLiveTimeshiftStream()` already keeps for its own cold-start trim.
-Tested on MLB Network (Windows), same rewind-then-seek-to-live method
+Tested on Channel A (Windows), same rewind-then-seek-to-live method
 used throughout this investigation, two back-to-back batches of 6
 attempts each (12 total): **zero** `large audio sync error` lines in
 any attempt, only the ordinary baseline noise (~15-25 `non-existing
@@ -2371,7 +2370,7 @@ confirmation above, nor on macOS/CoreELEC.
 
 **Update: macOS confirmation -- clean pass, both scripted and real
 keyboard input.** Peer report (macOS, arm64):
-- 10 scripted attempts on MLB Network, same JSON-RPC method used on
+- 10 scripted attempts on Channel A, same JSON-RPC method used on
   Windows (seek -60s, wait, seek +600s to force clamp-to-tail): 10/10
   confirmed `clamped to tail`, **zero** `large audio sync error`
   lines. Matches the Windows 0/12 result on the exact channel/method
@@ -2426,8 +2425,8 @@ buffers in use, to see if it lines up with ~89-90s.
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
 Reproduced live (macOS, addon 1.0.7, plugin 1.0.3, redeployed and
-reloaded): ESPN (1080p) played fine, switched to MLB Network (played
-fine), switched back to ESPN -- froze within ~8s of the fresh buffer
+reloaded): Channel B (1080p) played fine, switched to Channel A (played
+fine), switched back to Channel B -- froze within ~8s of the fresh buffer
 being created (`already_running=0`, confirming this is a brand-new
 buffer instance, not leftover state). The Content-Range cross-check
 added for 1.0.7 fired exactly as designed:
@@ -2459,7 +2458,7 @@ per-buffer-instance.** `_delete_buffer_state()` (called by
 `stop_buffer`/the reaper/dead-buffer cleanup) clears
 `_manifest_cache[channel_uuid]`, but only in *that calling worker
 process's own memory* -- Dispatcharr's multi-worker deployment means
-the `stop_buffer` call tearing down the old ESPN buffer instance isn't
+the `stop_buffer` call tearing down the old Channel B buffer instance isn't
 guaranteed to land on the same worker process that had cached
 `get_live_manifest` data for it. A channel switched away and back gets
 a brand-new ffmpeg process whose `live.m3u8` restarts sequence
@@ -2503,7 +2502,7 @@ instance's real sizes (500 and 2,883,732 bytes in the test, the latter
 matching the exact value from the live incident).
 
 Not yet re-verified against the exact live failure (would need another
-macOS pass, channel-switch-away-and-back on ESPN specifically) -- if
+macOS pass, channel-switch-away-and-back on Channel B specifically) -- if
 this recurs, the same Content-Range diagnostic from the first 1.0.7 fix
 will still catch it and log the disagreement, so any remaining gap
 would at least be immediately visible rather than silent.
@@ -2519,7 +2518,7 @@ fix and remains open, untouched, tracked separately in
 live it still failed under heavy testing churn.** Retested (macOS,
 plugin 1.0.4) both with the exact repro sequence (no failure that time)
 and, after a methodology mistake was caught and the test redone on a
-genuinely fresh Kodi log, a cold open of ESPN with *no* channel-
+genuinely fresh Kodi log, a cold open of Channel B with *no* channel-
 switching involved at all -- the diagnostic fired anyway, on
 `seg_00000.ts`, the very first segment of a freshly-created buffer. A
 retry on the same fresh session fired again, on a different segment,

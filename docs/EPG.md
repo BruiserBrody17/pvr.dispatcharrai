@@ -143,7 +143,7 @@ genre metadata to detect sports from in the first place.
 **Whether this applies to a given channel depends entirely on that
 channel's EPG source, not the addon** -- confirmed by a second live
 observation (two real, simultaneously-airing sports events, one per
-channel): ESPN (1080p)'s guide data comes from Schedules Direct, which
+channel): Channel B (1080p)'s guide data comes from Schedules Direct, which
 does supply `<category>` tags, so its live event was correctly detected
 and padded; YES Network's guide data comes straight from the backend
 IPTV provider instead, which doesn't include category data at all, so

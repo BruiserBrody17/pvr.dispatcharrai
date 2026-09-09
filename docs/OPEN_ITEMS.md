@@ -102,7 +102,7 @@
   shared between live and recording playback" section.
 - **Recurring, non-fatal `Packet corrupt` on server-side live timeshift,
   post-1.0 (surfaced during 1.0.7 verification, 2026-09-07).** Confirmed
-  live on macOS (ESPN 1080p): ffmpeg's mpegts demuxer logs `Packet
+  live on macOS (Channel B 1080p): ffmpeg's mpegts demuxer logs `Packet
   corrupt` roughly once every ~2.5s throughout an otherwise-healthy
   4+ minute playback session (close to the plugin's 2s
   `segment_seconds`), with Kodi's own demuxer evidently resyncing
@@ -155,7 +155,7 @@
   was continuous playback with only one switch. Next attempt should
   try long continuous dwell on a single channel instead. See
   `docs/TIMESHIFT.md`'s same section for the full test breakdown.
-  **Update (2026-09-08): a 30-minute continuous ESPN dwell (the
+  **Update (2026-09-08): a 30-minute continuous Channel B dwell (the
   follow-up angle above) also did not reproduce it.** Same benign
   `Packet corrupt` rate, zero size-disagreement firings, zero audio
   desync, zero stalls, zero `catch-up-to-tail` "gave up" exhaustions
@@ -165,7 +165,7 @@
   section for the full breakdown.
   **Update (2026-09-08): a second, real occurrence -- this time
   self-recovered.** macOS, addon 0.9.0, ~20-hour continuous session
-  (MLB Network): a burst of three `Stream stalled` events in ~3.6s,
+  (Channel A): a burst of three `Stream stalled` events in ~3.6s,
   audio desync peaking at -5064ms, but this time Kodi's own resync
   machinery pulled it back under threshold within about a second with
   no manual intervention and no user-visible interruption -- unlike the
@@ -196,39 +196,38 @@
   incidents happened at 1-5 minutes of buffer age, nowhere close.
   Confirmed on Windows too: 6 live-edge seeks on a 2-minute buffer,
   zero corruption. Controlled trials then found the real variable:
-  ESPN (1080p) resisted 4 escalating trials (up to 1,606 decode
-  errors, zero audio-sync errors); MLB Network (720p) reproduced the
+  Channel B (1080p) resisted 4 escalating trials (up to 1,606 decode
+  errors, zero audio-sync errors); Channel A (720p) reproduced the
   severe form instantly on the *mildest* method (240 decode errors,
   238 audio-sync errors, 109s peak desync, first attempt). Same
-  method/client/machine -- only the channel changed. Next: more MLB
+  method/client/machine -- only the channel changed. Next: more Channel A
   trials to confirm, plus a same-resolution comparison channel to
   isolate whether it's resolution or this specific stream's encode.
-  **Update: likely root cause found.** A bare `ffprobe` probe of MLB
-  Network's raw Dispatcharr proxy stream -- no seek, no Kodi, no addon,
+  **Update: likely root cause found.** A bare `ffprobe` probe of Channel A's raw Dispatcharr proxy stream -- no seek, no Kodi, no addon,
   just a cold TCP connection -- throws ~12 `non-existing PPS 0
   referenced`/`no frame!` errors per second, continuously, for the
-  whole 10s test window; ESPN's same probe is essentially clean (1
-  unrelated warning). MLB Network's keyframe interval is a steady
+  whole 10s test window; Channel B's same probe is essentially clean (1
+  unrelated warning). Channel A's keyframe interval is a steady
   2.002s, exactly matching this instance's `segment_seconds=2` setting;
-  ESPN's is a steady but unaligned 2.503s. Working theory: MLB's
+  Channel B's is a steady but unaligned 2.503s. Working theory: Channel A's
   segment-aligned GOP means Dispatcharr's segmenter cuts every segment
   exactly on a keyframe, and something in that exact-alignment path
   corrupts the PPS NAL unit at those cut points almost every time --
   explaining both the worse baseline noise and why a live-edge seek
   (an extra demuxer resync) tips it into the severe cascade so much
-  more easily than on ESPN. Points at Dispatcharr's own segmenter for
+  more easily than on Channel B. Points at Dispatcharr's own segmenter for
   this channel's encode, not this addon/Kodi/OS. Not yet confirmed
   against a second segment-aligned channel or a second misaligned one.
   **Update: confirmed via real GUI keypresses, not just synthetic
   seeks.** Peer report -- `StepBack`x7 then `StepForward`x6 (real
-  remote/keyboard input, same path as the original ESPN incidents)
-  drove a live-edge seek on MLB Network and reproduced the identical
+  remote/keyboard input, same path as the original Channel B incidents)
+  drove a live-edge seek on Channel A and reproduced the identical
   failure signature, peaking ~170s desync, recovering at real-time
   pace. Closes the GUI-vs-JSON-RPC confound. Also: this buffer was
   ~37 minutes old (not freshly opened), so reproducibility on this
   channel doesn't depend on buffer age either.
   **Update: mid-buffer seek control test says this is fixable
-  client-side.** Same MLB Network buffer, direct A/B: seeking to a
+  client-side.** Same Channel A buffer, direct A/B: seeking to a
   genuine mid-buffer point produced only ordinary baseline noise (0
   audio-sync-error lines); seeking to the live edge moments later on
   that same buffer immediately produced 2,393 audio-sync-error lines.
@@ -237,7 +236,7 @@
   backoff margin (currently 1 segment) as a plausible, worth-trying
   client-side mitigation.
   **Update: implemented and tested -- backing off 3 segments instead
-  of 1 eliminated the cascade across 12/12 trials on MLB Network
+  of 1 eliminated the cascade across 12/12 trials on Channel A
   (Windows), vs. reproducing on the 2nd of 6 attempts pre-fix.** Zero
   `large audio sync error` lines in any of 12 attempts; ordinary
   baseline noise unchanged. Not proof it's fully eliminated (12 clean
@@ -245,14 +244,14 @@
   or on macOS/CoreELEC -- worth continued normal-use monitoring.
   **Update: macOS confirmation, clean pass.** 10/10 scripted attempts
   (same method as Windows) plus a separate 69-keypress real-keyboard
-  session, both on MLB Network -- zero `large audio sync error` lines
+  session, both on Channel A -- zero `large audio sync error` lines
   in either. Two platforms, two input methods, the one channel that
   reproduced instantly pre-fix, all clean. Buffer age and CoreELEC
   still untested.
 - **A periodic, self-correcting `ActiveAE::SyncStream` error spike on a
   suspiciously exact ~8.6s cadence -- distinct from the Packet-corrupt
   cascade above, found 2026-09-08 by the macOS peer, unchased.** Seen
-  during ordinary steady-state MLB Network playback with no seeking
+  during ordinary steady-state Channel A playback with no seeking
   involved at all (noticed independently while that peer was doing the
   PR #3 seek testing above, but not caused by it). Spikes to
   ~300-400ms (above `ActiveAE`'s own 200ms threshold), always recovers
