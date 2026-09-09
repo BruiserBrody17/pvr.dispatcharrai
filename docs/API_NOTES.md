@@ -23,7 +23,7 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 | Login | POST | `/api/accounts/token/` (returns `{access, refresh}`) |
 | Refresh | POST | `/api/accounts/token/refresh/` |
 | API key auth | header | `X-API-Key: <key>` -- accepted as an alternative to the JWT bearer token on nearly every endpoint. Generate via `POST /api/accounts/api-keys/generate/`. **Accounts with restricted ("streamer") permissions may not be able to log in via `/api/accounts/token/` at all** (confirmed: a real streamer-role account got "No active account found" from the login endpoint) -- if login fails for a permissions reason rather than a wrong-password reason, an API key is the working alternative. The addon implements both: it logs in with username/password to get a JWT pair, then generates and caches an API key (`GenerateApiKey()`/`HasApiKey()` in `DispatcharrClient.cpp`), falling back to it automatically on a 401. |
-| List channels | GET | `/api/channels/channels/` |
+| List channels | GET | `/api/channels/channels/` -- returns **every** channel regardless of the caller's account; there's no server-side, per-account restriction based on channel profile membership (confirmed against the real `ChannelViewSet.get_queryset()`: the base queryset is just `Channel.objects.all()`/`super().get_queryset()`, and `channel_profile_id` is only applied as a filter if the *caller* passes it as a query param -- opt-in curation, not access control). See "Channel profiles" below. |
 | Channel groups | GET | `/api/channels/groups/` (**not** `/api/channels/channel-groups/`, which doesn't exist -- Dispatcharr's SPA serves its own `index.html` for unmatched routes, so that guess returned a misleading HTTP 200 of HTML, not JSON) |
 | List streams | GET | `/api/channels/streams/` |
 | Channel logo | GET | `/api/channels/logos/{id}/cache/` -- `{id}` is the channel's `logo_id`, **not the channel's own id** |
@@ -40,6 +40,32 @@ Verified 2026-08-30 against a real Dispatcharr instance's own
 | Catch-up session | POST | `/api/catchup/sessions/` -- body `{channel_uuid, start (ISO-8601), duration (minutes, optional)}`; response's `playback_url` is a **relative path**, prepend `BaseUrl()`. Confirmed end-to-end against a real instance: creates a session-bound URL that streams real MPEG-TS data immediately with no further auth. Per Dispatcharr's own docs, the session stays valid via a 10-minute *sliding* idle window (refreshed by each range/seek request), so unlike embedding a JWT directly in the URL (`GET /proxy/catchup/{uuid}?start=...&token=...`, also confirmed working but not used here), it won't expire mid-playback of a long programme. A separate `POST /api/catchup/sessions/{session_id}/position/` (body `{position_secs, paused?}`) exists too, but checked against its real source (`apps/timeshift/api_views.py`) and it's purely cosmetic for *Dispatcharr's own admin stats dashboard* -- "does **not** seek the provider stream," doesn't affect this addon's playback at all. Its one side effect that could matter is also refreshing that same idle TTL, but since ordinary Range requests already do that, it would only help a session survive a pause longer than 10 minutes with zero reads -- narrow enough that it's not implemented. |
 | Backend version | GET | `/api/core/version/` -- **public, no auth needed at all** (`AllowAny`), returns `{"version": ..., "timestamp": ...}` straight from Dispatcharr's own `version.py`. Confirmed against the live source (`core/api_views.py`), not just the schema. `GetBackendVersion()` in `PVRDispatcharr.cpp` currently reports this addon's own protocol version instead, with a comment saying no confirmed server-version endpoint existed -- this closes that gap; not yet wired up. |
 | Full timezone list | GET | `/api/core/timezones/` -- returns all of `pytz.common_timezones` (~400+ real IANA names, grouped by region), not a curated subset. The addon's own `recurring_rule_timezone` setting currently ships a hardcoded ~25-timezone list for its UTC-offset auto-compute feature (see `docs/RECURRING_RULES.md`) -- this could broaden that to genuinely comprehensive coverage instead of the curated subset, for users outside the ~25 already covered. Not yet used. |
+
+## Channel profiles: a real curated-lineup feature, unused by this addon
+
+Dispatcharr supports named, curated channel subsets --
+`ChannelProfile` (just a name) plus `ChannelProfileMembership`
+(`channel_profile` x `channel`, with its own `enabled` toggle), and a
+user account can be assigned one (`apps/accounts/migrations/
+0002_remove_user_channel_groups_user_channel_profiles_and_more.py`
+confirms accounts moved to this model, not the reverse). Checked the
+real `ChannelViewSet.get_queryset()` (`apps/channels/api_views.py`) to
+see whether this is enforced automatically or opt-in: it's opt-in --
+`GET /api/channels/channels/` returns every channel regardless of
+account by default; passing `?channel_profile_id=<id>` is what
+actually filters. So this isn't an access-control gap (nothing this
+addon does bypasses a security boundary that exists), it's a missed
+curation feature: Dispatcharr can define e.g. a "Kids" or "Sports
+only" lineup, and right now this addon has no way to let a user pick
+one -- it always pulls the full, unfiltered channel list. `GET
+/api/channels/profiles/` lists the available profiles (confirmed live
+against a real instance: returns `[]` here, since this is a
+single-user setup with none configured -- the feature is real and
+available regardless of this particular instance not using it).
+Plausible implementation: a dropdown addon setting populated from that
+endpoint, passed as `channel_profile_id` on `GetChannels()`'s own
+`/api/channels/channels/` call. Not investigated further than
+confirming the mechanism is real and currently unused.
 
 ## System notifications: a real, underused feature surface
 
