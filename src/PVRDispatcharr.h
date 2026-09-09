@@ -110,6 +110,7 @@ public:
   PVR_ERROR GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                          std::vector<kodi::addon::PVRStreamProperty>& properties) override;
   PVR_ERROR DeleteRecording(const kodi::addon::PVRRecording& recording) override;
+  PVR_ERROR RenameRecording(const kodi::addon::PVRRecording& recording) override;
   PVR_ERROR GetRecordingEdl(const kodi::addon::PVRRecording& recording,
                             std::vector<kodi::addon::PVREDLEntry>& edl) override;
   // Kodi always demuxes pvr://recordings/... via CInputStreamPVRRecording,
