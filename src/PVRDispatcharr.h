@@ -326,6 +326,14 @@ private:
   std::atomic<int> m_liveTimeshiftMode{kLiveTimeshiftOff};
   std::atomic<bool> m_enableCatchupFfmpegdirectSeek{false};
   std::atomic<bool> m_debugLogging{false};
+  // Fetched once at startup (see the constructor) via
+  // DispatcharrClient::GetServerVersion() and never written again after
+  // that -- safe as a plain string despite GetBackendVersion() reading it
+  // from Kodi's own calling thread, since the write happens-before this
+  // object is ever handed back to Kodi (no background thread touches it).
+  // "unknown" if the fetch failed (e.g. addon started while Dispatcharr
+  // itself was unreachable).
+  std::string m_backendVersion{"unknown"};
   // See recurring_rule_utc_offset_minutes in settings.xml/strings.po --
   // bridges Kodi's UTC-based timer times against Dispatcharr's own
   // recurring-rule scheduler, which interprets a rule's start/end
