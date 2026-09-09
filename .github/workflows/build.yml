@@ -42,6 +42,16 @@ jobs:
       - name: Install build dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
+          # ubuntu-latest ships a pre-configured google-chrome apt source this
+          # job never needs -- a known, recurring GitHub Actions runner issue
+          # (Google's own served Packages.gz occasionally disagreeing with its
+          # Release manifest's hash) intermittently fails `apt-get update`
+          # entirely on that unrelated source, taking this build down with it
+          # (confirmed live, 2026-09-09: two consecutive real CI failures, same
+          # hash mismatch both times, retrying the job unchanged didn't help).
+          # Dropped before update since this job only needs
+          # build-essential/cmake/libcurl/pkg-config, never Chrome.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libcurl4-openssl-dev pkg-config
 
