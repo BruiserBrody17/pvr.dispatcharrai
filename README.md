@@ -18,10 +18,7 @@ directly onto Dispatcharr's own backend and settings.
   being written
 - Recording pre/post padding, synced with Dispatcharr's own global
   setting -- reading it needs no special permission, pushing a change
-  back needs a real admin account (see below); the addon settings screen
-  greys out the padding fields automatically if the configured account
-  isn't one, rather than letting you enter a value Dispatcharr will
-  reject
+  back needs a real admin account (see below)
 - Commercial-break markers on a recording's seekbar, for recordings
   Dispatcharr's comskip integration has marked (needs the
   `recording_edl` companion plugin)
