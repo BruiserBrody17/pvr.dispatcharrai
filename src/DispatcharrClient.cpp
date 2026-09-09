@@ -1327,6 +1327,14 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
       // actually finished," regardless of what status already says.
       r.hlsDirStillPresent = custom.contains("_hls_dir") && !custom["_hls_dir"].is_null();
 
+      // custom_properties.bytes_written is only written by Dispatcharr's
+      // recording task at finalization (confirmed against its source,
+      // apps/channels/tasks.py: summed from HLS segment file sizes and
+      // stored into custom_properties only once the task reaches its
+      // post-processing step) -- absent while genuinely still recording,
+      // hence the 0 default here rather than treating absence as an error.
+      r.bytesWritten = FieldOr<int64_t>(custom, "bytes_written", 0);
+
       const json& program = custom.contains("program") ? custom["program"] : json();
       if (program.is_object())
       {

@@ -73,6 +73,29 @@
   untouched (confirming the addon correctly sends only `{"title": ...}`
   for a pure rename). File size and extending an in-progress recording
   remain unimplemented.
+  **Update: file size implemented and confirmed live (2026-09-09).**
+  Turned out simpler than originally scoped above -- no `HEAD` request
+  needed at all. `custom_properties.bytes_written` is already present in
+  the same `GetRecordings()` payload this addon already fetches;
+  confirmed against Dispatcharr's real source
+  (`apps/channels/tasks.py`) that it's a sum of the recording's HLS
+  segment file sizes, written once at finalization, not updated live
+  during an active recording. `Recording::bytesWritten` parses it
+  (defaulting to 0 when the key is absent), `SetSupportsRecordingSize(true)`
+  plus `PVRRecording::SetSizeInBytes()` surface it. Tested live end to
+  end on Windows across the full lifecycle of a real instant recording:
+  in-progress (`custom_properties` genuinely lacks the key, confirmed via
+  temporary debug logging -- 0 shown), just-stopped-not-yet-finalized
+  (key still absent), and finalized (key present, real value). Kodi's own
+  GUI showed the result two ways -- the recordings list's per-folder
+  "Total: 25.22 MB", and a dedicated "Size: 25.22 MB" line in the
+  recording's own info panel -- both matching the raw byte count
+  (26,448,968) exactly. Also confirmed the boundary case: a recording
+  that never captured real stream data (`status=interrupted`, a test
+  channel with no live backing) correctly showed `bytesWritten=0` and
+  Kodi's info panel omitted the Size line entirely rather than showing a
+  misleading zero. Extending an in-progress recording remains
+  unimplemented.
 - [x] **In-progress recording playback had the same seek-bar
   wall-clock-position bug live timeshift had -- fixed and live-confirmed
   (2026-09-08).** `GetStreamTimes()`'s in-progress-recording branch

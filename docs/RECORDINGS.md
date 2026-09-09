@@ -1761,6 +1761,38 @@ the size without downloading anything. Implementable:
 `SetSupportsRecordingSize(true)` plus a `HEAD` call in whatever
 populates `PVRRecording`'s size field.
 
+**Update: implemented and confirmed live end-to-end (2026-09-09) --
+simpler than the `HEAD`-request plan above, once actually checked
+against Dispatcharr's finalization code.** The `HEAD`-against-`/file/`
+approach was never built: `custom_properties.bytes_written` turned out
+to already be present in the exact same `GetRecordings()` response this
+addon already fetches, no second HTTP call needed per recording.
+Confirmed against `apps/channels/tasks.py`'s real source: it's a sum of
+the recording's HLS segment (`seg_*.ts`) file sizes, written into
+`custom_properties["bytes_written"]` only once the recording task
+reaches its post-processing/finalization step -- not updated live while
+still recording, which is why `Recording::bytesWritten` (new field in
+`DispatcharrClient.h`) defaults to 0 whenever the key is absent from
+`custom_properties`, rather than treating absence as an error.
+`SetSupportsRecordingSize(true)` plus `PVRRecording::SetSizeInBytes()`
+in `GetRecordings()`'s population loop surface it. Tested live on
+Windows with a real instant recording (`PVR.Record`) across its full
+lifecycle, confirmed via temporary debug logging of the parsed
+`custom_properties` state at each stage: in-progress
+(`custom_properties` genuinely has no `bytes_written` key yet), stopped
+but not yet finalized (still absent -- `_hls_dir` still present,
+matching this file's own note above on that window), and finalized
+(key present, real value: 26,448,968 bytes for a ~30s recording). Kodi's
+own GUI confirmed the same number two independent ways -- the
+recordings list's per-folder "Total: 25.22 MB", and a dedicated
+"Size: 25.22 MB" line in the recording's own info panel -- both
+matching the raw byte count exactly. Also confirmed the boundary case
+live: a recording that never captured real stream data
+(`custom_properties.status == "interrupted"`, from a channel with no
+real backing live stream) correctly parsed `bytesWritten=0`, and Kodi's
+info panel omitted the Size line entirely rather than showing a
+misleading "Size: 0 B".
+
 **Extending an in-progress recording is real, dedicated, and currently
 unused by this addon at all.** `POST /api/channels/recordings/{id}/
 extend/` moves a still-recording's `end_time` forward without
@@ -1790,6 +1822,8 @@ across devices the way `update-metadata`'s title/description do, so
 it's a materially weaker win than the two implementable items above --
 not pursued further without the user actually wanting the tradeoff.
 
-Not yet implemented -- this is a findings/feasibility pass, not a
-change. See `docs/OPEN_ITEMS.md` for the tracked follow-up.
+Originally a findings/feasibility pass, not a change -- rename and file
+size have since been implemented and confirmed live (see the "Update"
+paragraphs above); extending an in-progress recording remains
+unimplemented. See `docs/OPEN_ITEMS.md` for the tracked follow-up.
 
