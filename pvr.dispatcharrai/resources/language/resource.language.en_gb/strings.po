@@ -269,14 +269,6 @@ msgctxt "#30087"
 msgid "Etc/UTC"
 msgstr ""
 
-msgctxt "#30088"
-msgid "Extra padding for sports (minutes)"
-msgstr ""
-
-msgctxt "#30089"
-msgid "Added on top of the normal end-of-recording padding, only for a new one-time recording created directly from an EPG entry Dispatcharr tags as sports, and only if you haven't already adjusted its end time yourself. 0 disables this. Doesn't affect recurring/series rules. Whether a channel's sports get detected depends on that channel's own EPG source having genre data -- see docs/EPG.md for details."
-msgstr ""
-
 msgctxt "#30090"
 msgid "America/Detroit"
 msgstr ""
