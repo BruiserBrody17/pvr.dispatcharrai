@@ -509,14 +509,36 @@ to its original settings and left running normally.
   Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
   confirmed live on all four, closing out what was the last real gap in
   platform coverage.
-- ~~A genuine, unexplained anomaly from the macOS pass~~ -- **Decided:
-  treating as a one-off, not pursuing further.** `kodi.log` showed a full
-  `UpdateClients: Recreating PVR client` (clean DLL unload/reload, no
-  crash, playback fine right after) immediately after dismissing a
-  resume-prompt dialog, with no settings change involved -- ruling out
-  the known beta.2 spurious-restart bug (settings-write-triggered). Did
-  not reproduce on a second attempt. Left here for the record in case it
-  ever resurfaces and this becomes useful context.
+- ~~A genuine, unexplained anomaly from the macOS pass~~ -- **Likely
+  already explained and fixed the next day, entry just never
+  reconciled (2026-09-08 review).** Original note (2026-09-05):
+  `kodi.log` showed a full `UpdateClients: Recreating PVR client`
+  (clean DLL unload/reload, no crash, playback fine right after)
+  immediately after dismissing a resume-prompt dialog, with no
+  settings change involved -- ruling out the known beta.2
+  spurious-restart bug (settings-write-triggered), and not
+  reproducing on a second attempt. One day later (2026-09-06,
+  `899e5a7`), a separate macOS session hit the identical log signature
+  -- `UpdateClients: Recreating PVR client`, clean reload, no crash --
+  this time while opening an in-progress recording, and that one *was*
+  root-caused and fixed: `OpenRecordedStream()`/`ReadRecordedStream()`
+  occasionally self-heal a near-expiry API key mid-call and persist it
+  via `SetSettingString()`, which loops back through
+  `OnAddonSettingChanged()` and (correctly, by that guard's own logic)
+  requests a restart, tearing down the stream that had just opened.
+  See `docs/RECORDINGS.md`'s "A self-heal API-key regeneration..."
+  section for the full account. Dismissing a resume-prompt dialog for
+  a recording leads directly into `OpenRecordedStream()` -- the exact
+  vulnerable call site -- and "no settings change involved" is exactly
+  how a silent, addon-internal self-heal write would look from a
+  tester's side; not reproducing on a second attempt also fits, since
+  the trigger depends on the API key's natural expiry timing rather
+  than firing every time. Not provable with certainty (the original
+  log's own API-key-regeneration line isn't preserved to check
+  directly), but strong enough that this shouldn't still read as an
+  open mystery. Left here, corrected, rather than deleted, for the
+  same reason the original was kept: useful context if anything like
+  it resurfaces.
 - ~~Catch-up and recurring-timer creation have no clean way to exercise
   via Kodi's JSON-RPC alone~~ -- **Decided: counted as tested anyway, not
   worth building a dedicated driving mechanism for.** The underlying
