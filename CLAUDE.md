@@ -21,10 +21,8 @@ working in the codebase, not using the addon.
 - `docs/` -- engineering history: root causes, live-confirmed API
   behavior, things tried and reverted. Not user-facing.
 - `docs/OPEN_ITEMS.md` -- the project's running punch-list; add new open
-  items there rather than losing track of them in conversation. Its
-  "1.0 release checklist" section is a closed-out historical record from
-  that specific milestone, not something to keep adding to -- new items
-  (from any release) go in its "Ongoing" section instead.
+  items there rather than losing track of them in conversation, in its
+  "Ongoing" section.
 
 ## Building and testing
 
