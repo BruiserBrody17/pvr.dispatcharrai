@@ -64,8 +64,24 @@
   it, and that the fix restores auto-detection. Full account, including
   why the regression happened and why restoring a generic dropdown entry
   isn't a privacy re-exposure, in `docs/RECURRING_RULES.md`'s "Update"
-  note. (3) (system notifications) and (4) (channel profiles) remain
-  unimplemented.
+  note.
+  **Update: (3) and (4) considered and deliberately not pursued
+  (2026-09-09).** System notifications: Kodi GUI notifications are
+  toast-style interruptions over whatever's currently playing --
+  version-available/setting-recommendation chatter is exactly the kind
+  of backend-admin noise that has no business popping up mid-playback in
+  a living-room context, and this was only ever "plausible, secondary,
+  no design work done" to begin with, never a real commitment. Channel
+  profiles: if the filtering already happens server-side (Dispatcharr's
+  own admin UI), a Kodi-side profile picker is a second UI for the same
+  thing -- the one scenario where it would've earned its keep is
+  multiple Kodi devices sharing one Dispatcharr account wanting
+  *different* subsets (a device-level need account-level filtering can't
+  express), but that's theoretical here: this instance's channel
+  profiles are empty, not an actual gap for the current setup. Neither
+  ruled out permanently -- revisit if either premise changes (e.g. a
+  second Kodi device actually wants a different lineup than the main
+  one).
 - **Three recording-management features TVHeadend has that this addon
   doesn't, all confirmed implementable against Dispatcharr's real API
   (found 2026-09-08, not yet implemented).** Recording rename/
