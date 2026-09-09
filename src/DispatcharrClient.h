@@ -508,8 +508,8 @@ public:
   bool SetDvrOffsetMinutes(int preMinutes, int postMinutes, std::string& error);
 
   // Dispatcharr's own configured system timezone (CoreSettings key
-  // "system_settings", field "time_zone"), as a raw IANA zone name (e.g.
-  // "REDACTED_TZ") -- confirmed live against a real instance. Surfaced
+  // "system_settings", field "time_zone"), as a raw IANA zone name --
+  // confirmed live against a real instance. Surfaced
   // as read-only info next to recurring_rule_utc_offset_minutes so the
   // user has a concrete reference for what numeric offset to enter there,
   // without this addon needing to bundle a real timezone database just to

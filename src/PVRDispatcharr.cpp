@@ -106,8 +106,8 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   }
 
   // Same self-heal-on-every-startup reasoning as the padding sync above.
-  // Dispatcharr's own configured IANA timezone name (e.g.
-  // "REDACTED_TZ") is always surfaced as a read-only reference. When
+  // Dispatcharr's own configured IANA timezone name is always surfaced
+  // as a read-only reference. When
   // that zone is one of the short list
   // DispatcharrClient::ComputeKnownZoneOffsetMinutes() knows the DST rules
   // for, recurring_rule_timezone is auto-selected to match it, the same
