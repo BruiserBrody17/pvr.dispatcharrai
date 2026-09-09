@@ -230,6 +230,26 @@ to its original settings and left running normally.
 
 ## Ongoing (more will likely come up)
 
+- **Three recording-management features TVHeadend has that this addon
+  doesn't, all confirmed implementable against Dispatcharr's real API
+  (found 2026-09-08, not yet implemented).** Recording rename/
+  description edit (`POST /api/channels/recordings/{id}/update-metadata/`,
+  writes into the exact `custom_properties.program.*` fields already
+  read on the way in), recording file size (not a JSON field, but a
+  `HEAD` request against `/api/channels/recordings/{id}/file/` gets it
+  from `Content-Length`), and extending an in-progress recording (`POST
+  .../extend/`, a real dedicated endpoint this addon currently doesn't
+  call at all). Rename is the most user-visible and cleanest to add.
+  Two other candidates (recording undelete, per-recording retention)
+  were checked and ruled out -- Dispatcharr's `DELETE` is immediately
+  destructive with no trash table, and there's no retention/lifetime
+  concept anywhere in its API. A fourth (resume position/play count)
+  has no server-side backing either; only implementable as a weaker,
+  addon-local-only hack, not pursued. Full write-up, including how each
+  was confirmed against Dispatcharr's actual source (not just its
+  OpenAPI schema, which mis-describes this endpoint's request body) in
+  `docs/RECORDINGS.md`'s "Recording-management feature gaps vs.
+  TVHeadend" section.
 - [x] **In-progress recording playback had the same seek-bar
   wall-clock-position bug live timeshift had -- fixed and live-confirmed
   (2026-09-08).** `GetStreamTimes()`'s in-progress-recording branch
