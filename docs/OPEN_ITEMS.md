@@ -276,8 +276,16 @@
   vs. essentially none there) -- see the new note in
   `docs/TIMESHIFT.md`'s same section. Despite that elevated baseline
   noise, the fix still held with zero escalations, a more demanding
-  condition than the earlier clean passes. Only the older-buffer
-  condition remains untested now.
+  condition than the earlier clean passes.
+  **Update: re-run on Channel A itself on CoreELEC -- the hardest
+  channel, still clean (2026-09-09).** Same 12-attempt method, this
+  time on the actual channel that's reliably reproduced the severe
+  cascade instantly on every other platform. Zero `large audio sync
+  error` lines across all 12, with baseline noise running even higher
+  than the Channel B run above. All four platform/channel combinations
+  tested now (Windows/Channel A, macOS/Channel A, CoreELEC/Channel B,
+  CoreELEC/Channel A) are clean. Only the older-buffer condition
+  remains untested.
 - [x] ~~A periodic, self-correcting `ActiveAE::SyncStream` error spike
   on a suspiciously exact ~8.6s cadence~~ -- **Closed: not actually
   periodic, confirmed on both platforms that ever saw it
