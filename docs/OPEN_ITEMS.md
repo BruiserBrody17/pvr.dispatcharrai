@@ -254,6 +254,19 @@ to its original settings and left running normally.
   doesn't touch, but that's architecturally out of scope for a
   `kodi.pvrclient`-type addon, not a gap to close here. Full detail in
   `docs/API_NOTES.md`'s table and its new "System notifications" section.
+  **Update: a fourth finding, from a broader "what Dispatcharr product
+  features exist" pass rather than just an endpoint diff.** Dispatcharr
+  supports named, curated channel subsets (`ChannelProfile`/
+  `ChannelProfileMembership`, with user accounts assignable to one) --
+  a real feature (e.g. a "Kids" or "Sports only" lineup) this addon has
+  no way to let a user pick; `GetChannels()` always pulls every channel,
+  unfiltered. Confirmed against the real `ChannelViewSet.get_queryset()`
+  that this is opt-in filtering (`?channel_profile_id=`), not a
+  server-enforced access boundary -- so not implementing it isn't a
+  security gap, just a missed curation feature. `GET
+  /api/channels/profiles/` lists what's available (empty on this
+  particular single-user instance, but the mechanism is real). See
+  `docs/API_NOTES.md`'s new "Channel profiles" section.
 - **Three recording-management features TVHeadend has that this addon
   doesn't, all confirmed implementable against Dispatcharr's real API
   (found 2026-09-08, not yet implemented).** Recording rename/
