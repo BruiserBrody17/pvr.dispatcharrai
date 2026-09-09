@@ -37,18 +37,14 @@ repo and install separately on your Dispatcharr instance (not through
 Kodi):
 
 - **`timeshift_buffer`** -- enables server-side live TV pause/rewind/seek
-  (`live_timeshift_mode` set to `Server-side`), sharing one buffer process
-  per channel across every device currently watching it (see the plugin's
-  own README for exactly what that does and doesn't get you). That buffer
-  is torn down as soon as the last watching device stops -- including
-  quitting Kodi -- not kept running in the background. Requires an
-  admin-level Dispatcharr account. If you'd rather not grant that, set
-  `live_timeshift_mode` to `Local` instead: real pause/rewind buffered on
-  the Kodi device itself via the separate `inputstream.ffmpegdirect`
-  addon, no Dispatcharr admin account and no server-side plugin needed at
-  all -- just local to this device, gone as soon as it restarts. `Off`
-  (the default) plays live channels with no pause/rewind and no extra
-  dependency of any kind.
+  (`live_timeshift_mode` set to `Server-side`): one buffer per channel,
+  shared across every device currently watching, torn down as soon as the
+  last viewer stops. Requires an admin-level Dispatcharr account (see the
+  plugin's own README for the full picture). Without one, use `Local`
+  instead: pause/rewind buffered on the Kodi device itself via
+  `inputstream.ffmpegdirect`, no admin account or server-side plugin
+  needed, but local-only and gone on restart. `Off` (the default) is a
+  plain live stream, no pause/rewind, no extra dependency.
 - **`recording_edl`** -- exposes comskip commercial-break markers to Kodi.
   Also requires an admin-level Dispatcharr account. Optional; without it
   (or with a non-admin account), recordings just show no markers --
