@@ -136,7 +136,7 @@
             <options>
               <option label="30062">manual</option>
               <option label="30063">America/New_York</option>
-              <option label="30064">REDACTED_TZ</option>
+              <option label="30064">America/Chicago</option>
               <option label="30065">America/Denver</option>
               <option label="30066">America/Los_Angeles</option>
               <option label="30067">America/Anchorage</option>
@@ -160,6 +160,33 @@
               <option label="30085">Europe/Bucharest</option>
               <option label="30086">UTC</option>
               <option label="30087">Etc/UTC</option>
+              <option label="30090">America/Detroit</option>
+              <option label="30091">America/Indiana/Indianapolis</option>
+              <option label="30092">America/Boise</option>
+              <option label="30093">America/Mexico_City</option>
+              <option label="30094">America/Regina</option>
+              <option label="30095">Europe/Vienna</option>
+              <option label="30096">Europe/Zurich</option>
+              <option label="30097">Europe/Warsaw</option>
+              <option label="30098">Europe/Prague</option>
+              <option label="30099">Europe/Stockholm</option>
+              <option label="30100">Europe/Copenhagen</option>
+              <option label="30101">Europe/Oslo</option>
+              <option label="30102">Europe/Budapest</option>
+              <option label="30103">Europe/Lisbon</option>
+              <option label="30104">Europe/Riga</option>
+              <option label="30105">Europe/Vilnius</option>
+              <option label="30106">Europe/Sofia</option>
+              <option label="30107">Europe/Kyiv</option>
+              <option label="30108">Asia/Tokyo</option>
+              <option label="30109">Asia/Shanghai</option>
+              <option label="30110">Asia/Hong_Kong</option>
+              <option label="30111">Asia/Singapore</option>
+              <option label="30112">Asia/Kolkata</option>
+              <option label="30113">Asia/Dubai</option>
+              <option label="30114">Asia/Karachi</option>
+              <option label="30115">Africa/Johannesburg</option>
+              <option label="30116">Africa/Lagos</option>
             </options>
           </constraints>
           <control type="list" format="string" />

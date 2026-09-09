@@ -41,6 +41,31 @@
   /api/channels/profiles/` lists what's available (empty on this
   particular single-user instance, but the mechanism is real). See
   `docs/API_NOTES.md`'s new "Channel profiles" section.
+  **Update: items (1) and (2) implemented and confirmed live
+  (2026-09-09).** `GetBackendVersion()` now reports Dispatcharr's real
+  version (confirmed live: `0.30.0`, visible in Kodi's own System Info ->
+  PVR service panel), fetched once at startup via new
+  `DispatcharrClient::GetServerVersion()`. `recurring_rule_timezone`'s
+  known-zone table broadened from 25 to ~50 entries using
+  `GET /api/core/timezones/` as the reference for what's real vs.
+  hand-guessed -- the practical scope turned out narrower than "genuinely
+  comprehensive": the actual bottleneck is DST *rule* coverage (only two
+  hand-verified rule families exist), not the zone name list, so this
+  stayed within those families plus confirmed no-DST zones rather than
+  claiming all ~440. New `DispatcharrClient::GetSupportedTimezones()`
+  also feeds a refined startup diagnostic (distinguishes "real zone, no
+  DST rule for it" from "not a recognized zone at all"). A genuine,
+  unrelated regression was found and fixed along the way: this project's
+  own earlier privacy scrub had collaterally replaced the real, working
+  `America/Chicago` entry in `kKnownTimeZones`/`settings.xml`/
+  `strings.po` with the literal string "REDACTED_TZ", silently breaking
+  DST auto-detection for Central time -- confirmed via a real restart
+  that `recurring_rule_timezone` had been stuck on `manual` because of
+  it, and that the fix restores auto-detection. Full account, including
+  why the regression happened and why restoring a generic dropdown entry
+  isn't a privacy re-exposure, in `docs/RECURRING_RULES.md`'s "Update"
+  note. (3) (system notifications) and (4) (channel profiles) remain
+  unimplemented.
 - **Three recording-management features TVHeadend has that this addon
   doesn't, all confirmed implementable against Dispatcharr's real API
   (found 2026-09-08, not yet implemented).** Recording rename/
