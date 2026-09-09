@@ -129,6 +129,23 @@
           <control type="edit" format="string" />
           <enable>false</enable>
         </setting>
+        <!-- visible="false" is a real attribute on <setting> itself (confirmed
+             against Kodi's own source, AddonSettings.cpp's XMLUtils::GetAttribute(
+             settingElement, "visible")) -- genuinely hides the whole row, unlike
+             <control><hidden>true</hidden></control> above on the password field,
+             which only masks a text control's displayed value and (confirmed
+             live, 2026-09-09) does nothing useful on a toggle control -- a first
+             attempt using that pattern here still rendered as a normal, visible,
+             interactive toggle. This really is addon-managed internal state, not
+             something a user should be able to hand-toggle between restarts (the
+             constructor's own sync would just overwrite it back on the next
+             restart anyway, so a manual flip would only cause a confusing,
+             temporary inconsistency). -->
+        <setting id="dispatcharr_is_admin" type="boolean" label="30117" help="30118" visible="false">
+          <level>2</level>
+          <default>true</default>
+          <control type="toggle" />
+        </setting>
         <setting id="recurring_rule_timezone" type="string" label="30060" help="30061">
           <level>1</level>
           <default>manual</default>
@@ -214,6 +231,13 @@
             <dependency type="enable" setting="recurring_rule_timezone">manual</dependency>
           </dependencies>
         </setting>
+        <!-- Gated on dispatcharr_is_admin, same proven <dependencies> pattern
+             as recurring_rule_utc_offset_minutes above (see that setting's
+             own comment) -- Dispatcharr itself rejects a write to these from
+             a non-admin account (confirmed against its real source,
+             CoreSettingsViewSet's update action requires IsAdmin), so a
+             non-admin account can read the current padding here but not
+             usefully change it. -->
         <setting id="recording_pre_offset_minutes" type="integer" label="30054" help="30055">
           <level>0</level>
           <default>0</default>
@@ -222,6 +246,9 @@
             <maximum>120</maximum>
           </constraints>
           <control type="edit" format="integer" />
+          <dependencies>
+            <dependency type="enable" setting="dispatcharr_is_admin">true</dependency>
+          </dependencies>
         </setting>
         <setting id="recording_post_offset_minutes" type="integer" label="30056" help="30057">
           <level>0</level>
@@ -231,6 +258,9 @@
             <maximum>120</maximum>
           </constraints>
           <control type="edit" format="integer" />
+          <dependencies>
+            <dependency type="enable" setting="dispatcharr_is_admin">true</dependency>
+          </dependencies>
         </setting>
         <setting id="sports_extra_padding_minutes" type="integer" label="30088" help="30089">
           <level>0</level>

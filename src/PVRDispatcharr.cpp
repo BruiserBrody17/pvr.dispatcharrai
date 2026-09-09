@@ -185,6 +185,34 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     }
   }
 
+  // Same self-heal-on-every-startup reasoning as the padding/timezone syncs
+  // above -- gates recording_pre_offset_minutes/recording_post_offset_minutes
+  // (see settings.xml's own comment there) via the hidden
+  // dispatcharr_is_admin setting, since Dispatcharr itself rejects a padding
+  // write from a non-admin account (see IsCurrentUserAdmin()'s own comment
+  // for how this was confirmed to be the exact same permission check).
+  // Deliberately fails OPEN (leaves dispatcharr_is_admin at its default
+  // `true`, i.e. not greyed out) when the check itself fails -- e.g.
+  // Dispatcharr unreachable at startup -- rather than failing closed: a
+  // false negative here just reproduces today's pre-this-feature behavior
+  // (the save still fails server-side for a genuine non-admin), while a
+  // false positive greying it out would strand a real admin looking at a
+  // disabled field with no explanation.
+  {
+    bool isAdmin = true;
+    std::string adminError;
+    if (m_client.IsCurrentUserAdmin(isAdmin, adminError))
+    {
+      if (kodi::addon::GetSettingBoolean("dispatcharr_is_admin", true) != isAdmin)
+        kodi::addon::SetSettingBoolean("dispatcharr_is_admin", isAdmin);
+    }
+    else if (m_debugLogging)
+    {
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: could not check Dispatcharr admin status: %s",
+                adminError.c_str());
+    }
+  }
+
   StartRecordingRefreshThread();
   StartChannelEpgRefreshThread();
   if (m_enableRealtimeUpdates)
