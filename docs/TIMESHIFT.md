@@ -2410,17 +2410,46 @@ also doesn't match this file's other findings: no `CPtsTracker`/
 Linux occurrences (unlike the one Windows case, which did show a
 PTS-pattern recalibration right before it -- possibly two different
 paths converging on the same downstream symptom, not necessarily one
-mechanism). Leading, unconfirmed guess: a one-time measurement
-artifact from how the addon's server-side timeshift buffer establishes
-its initial live-edge/clock reference when a stream first opens,
-plausibly related to the buffer's own configured visible-window
-duration coincidentally landing in this range -- not verified against
-the actual `timeshift_buffer` plugin settings on the Dispatcharr
-instance these sessions used. Purely informational for now: no
-playback impact observed on either machine, not chased further this
-pass. Worth a quick look if it's ever cheap to check what
-`visible_segments * segment_seconds` actually evaluates to for the
-buffers in use, to see if it lines up with ~89-90s.
+mechanism). Leading guess at the time: a one-time measurement artifact
+from how the addon's server-side timeshift buffer establishes its
+initial live-edge/clock reference when a stream first opens, plausibly
+related to the buffer's own configured visible-window duration
+coincidentally landing in this range.
+
+**Update: ruled out.** `timeshift_buffer`'s own source
+(`dispatcharr-plugin/timeshift_buffer/plugin.py`) computes
+`visible_segments = max(1, (buffer_minutes * 60) // segment_seconds)`,
+so `visible_segments * segment_seconds` always reduces to just
+`buffer_minutes * 60` -- the buffer's *full* rewindable window in
+seconds, not some smaller derived quantity. For that to land anywhere
+near 89-90s, `buffer_minutes` would need to be configured to roughly
+1.5 -- implausible for a "how far back can you rewind" setting; the
+schema default is 60 (3,600s) and the one other real instance with a
+confirmed value in this project's history used 300 (18,000s), both
+three orders of magnitude off. No realistic buffer configuration
+produces this number. The actual mechanism behind the ~89.4s reading
+remains unknown -- purely informational, no playback impact either
+time, not chased further.
+
+### A periodic, self-correcting ~8.6s `ActiveAE::SyncStream` spike -- distinct from the Packet-corrupt cascade, unchased
+
+Found 2026-09-08 by the macOS peer, noticed in passing rather than
+targeted: during ordinary steady-state Channel A playback with no
+seeking involved at all (the peer was doing the PR #3 seek testing
+elsewhere in this file at the time, but this wasn't caused by that --
+it recurred on its own cadence independent of any seek). `ActiveAE`
+logs a sync-error spike to ~300-400ms (above its own 200ms threshold)
+roughly every 8.6 seconds, always self-correcting back to under 30ms
+within about 300ms -- never escalating into the sustained, severe
+`large audio sync error` cascade the Packet-corrupt investigation
+tracks, and never requiring any intervention.
+
+The ~8.6s interval doesn't cleanly match this addon's own 10s
+real-time-updates heartbeat interval
+(`DispatcharrClient.cpp:3135`'s `kHeartbeatInterval`), so there's no
+obvious correlation to this addon's own code. Not investigated
+further -- purely a "noticed in passing" report, no repro attempted,
+no playback impact.
 
 ### 1.0.7 follow-up #2: the diagnostic caught a real, different mismatch -- a cross-buffer-instance cache gap
 
