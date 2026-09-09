@@ -385,6 +385,14 @@ msgctxt "#30116"
 msgid "Africa/Lagos"
 msgstr ""
 
+msgctxt "#30117"
+msgid "Dispatcharr account is an admin"
+msgstr ""
+
+msgctxt "#30118"
+msgid "Read-only: whether the configured Dispatcharr account has admin-level access, kept in sync on every restart. Recording pre/post padding below can only be changed by an admin account -- Dispatcharr rejects the write otherwise -- so this addon greys those settings out automatically when this reads No."
+msgstr ""
+
 msgctxt "#30047"
 msgid "Improve catch-up seek reliability (experimental)"
 msgstr ""
