@@ -4,6 +4,46 @@
 
 ## Ongoing (more will likely come up)
 
+- **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
+  (requested 2026-09-09, not yet started -- user asked for scope/steps
+  first, no action taken pending consent).** Mechanically straightforward
+  in-repo: `git grep -il dispatcharrai` finds 25 files, plus the two
+  directories whose names carry the id
+  (`pvr.dispatcharrai/`/`packaging/coreelec/pvr.dispatcharrai/`). Needs
+  updating: `addon.xml.in`'s `<addon id="...">`, `CMakeLists.txt`'s
+  `project()`/`build_addon()`, `.github/workflows/build.yml` (addon-defs
+  paths, `ADDONS_TO_BUILD`, artifact/zip names), the CoreELEC
+  `package.mk` (`PKG_NAME`/`PKG_SITE`/`PKG_URL`/`PKG_SHORTDESC`), docs
+  (`docs/BUILDING.md` heaviest), and ~50 hardcoded `"pvr.dispatcharrai: "`
+  log-prefix strings across `src/*.cpp` (cosmetic, not functionally
+  required). The two companion Python plugins
+  (`dispatcharr-plugin/recording_edl`, `dispatcharr-plugin/timeshift_buffer`)
+  keep their own unrelated ids but reference `pvr.dispatcharrai` by name
+  in READMEs/`plugin.json` `help_url`s/many `plugin.py` comments -- those
+  need updating too. Renaming the GitHub repo itself
+  (`BruiserBrody17/pvr.dispatcharrai`) is a separate, optional decision
+  (GitHub auto-redirects the old URL after a rename, but every local
+  clone's `origin` -- this Windows workspace, the Rocky Linux build box,
+  whatever the macOS peer session set up -- would still want
+  `git remote set-url` eventually for cleanliness).
+  **The real cost isn't the repo, it's that Kodi treats an id change as
+  a brand-new addon, not an upgrade.** The addon id is both the
+  installed folder name and the `userdata/addon_data/<id>/settings.xml`
+  storage key, so every device currently running this addon (Windows,
+  Rocky Linux laptop, ODROID N2+/CoreELEC, macOS) needs the old addon
+  removed and the new-id build installed fresh -- existing settings
+  (host/port/credentials, API key, timezone selection, padding,
+  timeshift mode) do **not** carry over automatically; either hand-copy
+  each device's `addon_data` folder to the new id or reconfigure from
+  scratch, still undecided. Also expect to need the same "Settings ->
+  PVR & Live TV -> Guide -> Clear data" step already documented above
+  (Kodi's EPG database keys off the client id) on every device after the
+  switch. Proposed order once given the go-ahead: rename on a branch ->
+  decide GitHub-repo-rename yes/no -> rebuild + fresh-install Windows
+  first and verify clean -> roll the same fresh-install to Rocky Linux,
+  ODROID/CoreELEC, and macOS (via the peer session) -> settle the
+  settings-carryover question per device -> cut a release under the new
+  name once all four platforms are confirmed working.
 - **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, not
   yet implemented).** Diffed all ~196 of Dispatcharr's real API paths
