@@ -159,6 +159,10 @@ struct Recording
   // Kodi's timer-state UI (PVR_TIMER_STATE_RECORDING), which must keep
   // reflecting Dispatcharr's real status, not this file-readiness detail.
   bool hlsDirStillPresent = false;
+  // 0 while genuinely still recording -- Dispatcharr only writes this into
+  // custom_properties at finalization, see the comment where this is parsed
+  // in DispatcharrClient.cpp.
+  int64_t bytesWritten = 0;
   // Non-zero when this Recording was materialized by Dispatcharr's own
   // recurring-rule scheduler (custom_properties.rule.{type:"recurring",id})
   // rather than created directly -- see RecurringRule below. Used to link

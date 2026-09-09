@@ -604,6 +604,10 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   // completed and in-progress recordings alike, since it's a plain
   // custom_properties write independent of either playback path.
   capabilities.SetSupportsRecordingsRename(true);
+  // Sourced from custom_properties.bytes_written, already present in the
+  // same GetRecordings() payload -- see Recording::bytesWritten's own
+  // comment for why it reads 0 while a recording is still in progress.
+  capabilities.SetSupportsRecordingSize(true);
   capabilities.SetSupportsTimers(true);
   capabilities.SetSupportsRecordingPlayCount(false);
   // Backed by this addon's companion recording_edl Dispatcharr plugin (see
@@ -1454,6 +1458,7 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
     recording.SetChannelUid(rec.channelId > 0 ? rec.channelId : PVR_CHANNEL_INVALID_UID);
     recording.SetRecordingTime(rec.startTime);
     recording.SetDuration(rec.durationSeconds);
+    recording.SetSizeInBytes(rec.bytesWritten);
     recording.SetIsDeleted(false);
     results.Add(recording);
   }
