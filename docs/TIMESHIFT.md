@@ -508,8 +508,8 @@ exposes a segment once it's fully closed (`segment_seconds`, 6s by
 default), so sitting right at the tail means there is *nothing* to read
 until the next segment closes -- confirmed by the stall period tracking
 `segment_seconds` almost exactly (a repeating "stream stalled" -> buffering
--> resume cycle roughly every 4-5 seconds in the actual test log). MLB
-Network's buffer, still running from earlier testing, had simply
+-> resume cycle roughly every 4-5 seconds in the actual test log).
+Channel A's buffer, still running from earlier testing, had simply
 accumulated more backlog by the time it was opened -- explaining the
 apparent channel-to-channel difference without any real bitrate
 dependency. The same zero-margin `position` is also exactly why reopening
@@ -1262,8 +1262,8 @@ Root cause: this addon's own `CloseLiveTimeshiftStream()` handed the actual
 and returned immediately, so Kodi's own next call --
 `OpenLiveTimeshiftStream()` for Channel A, made essentially back to back
 with the Close() that just returned -- reached the plugin's `start_buffer`
-and tried to open a *4th* upstream connection to the provider while NHL
-Network's connection (2 recordings + Channel C = the provider's real
+and tried to open a *4th* upstream connection to the provider while
+Channel C's connection (2 recordings + Channel C = the provider's real
 limit of 3) hadn't actually been torn down yet. The provider naturally
 refused it, `start_buffer` failed, and `OpenLiveTimeshiftStream()` had no
 retry budget for *that* kind of failure (its existing cold-start retry
@@ -2206,8 +2206,8 @@ second 1080p channel) to isolate whether resolution itself is the
 driver or whether it's specific to this one stream's encode. One open,
 still-untested confound: both original real-world incidents were
 triggered by actual GUI keypresses (`HandleKey: right`/`StepForward`),
-not `Player.Seek` via JSON-RPC -- doesn't explain the Channel B/MLB gap
-(MLB's repro used JSON-RPC too, same as Channel B's non-reproducing trials),
+not `Player.Seek` via JSON-RPC -- doesn't explain the Channel B/Channel A gap
+(Channel A's repro used JSON-RPC too, same as Channel B's non-reproducing trials),
 but still an open variable for how representative these controlled
 trials are of the original repro path.
 
@@ -2308,8 +2308,7 @@ at roughly real-time pace (no restart needed) -- ~169,000ms at
 
 This closes the GUI-vs-JSON-RPC confound noted above: real
 `StepBack`/`StepForward` keypresses, the same input path as the
-original Channel B incidents, trigger the identical failure mode on MLB
-Network -- not an artifact of using `Player.Seek` for the controlled
+original Channel B incidents, trigger the identical failure mode on Channel A -- not an artifact of using `Player.Seek` for the controlled
 trials. Also notable: this buffer had been open ~37 minutes (since
 12:19, continuously, spanning several earlier controlled test seeks)
 rather than freshly opened, so Channel A's reproducibility doesn't
