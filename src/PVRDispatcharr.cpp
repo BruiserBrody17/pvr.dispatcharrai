@@ -598,6 +598,12 @@ PVR_ERROR PVRDispatcharr::GetCapabilities(kodi::addon::PVRCapabilities& capabili
   capabilities.SetSupportsChannelGroups(true);
   capabilities.SetSupportsRecordings(true);
   capabilities.SetSupportsRecordingsDelete(true);
+  // Backed by Dispatcharr's real POST .../recordings/{id}/update-metadata/
+  // (confirmed against its source, not its OpenAPI schema -- see
+  // DispatcharrClient::RenameRecording()'s own comment). Works for both
+  // completed and in-progress recordings alike, since it's a plain
+  // custom_properties write independent of either playback path.
+  capabilities.SetSupportsRecordingsRename(true);
   capabilities.SetSupportsTimers(true);
   capabilities.SetSupportsRecordingPlayCount(false);
   // Backed by this addon's companion recording_edl Dispatcharr plugin (see
@@ -1502,6 +1508,19 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
   if (!m_client.DeleteRecording(id, error))
   {
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete recording %d: %s", id, error.c_str());
+    return PVR_ERROR_SERVER_ERROR;
+  }
+  TriggerRecordingUpdate();
+  return PVR_ERROR_NO_ERROR;
+}
+
+PVR_ERROR PVRDispatcharr::RenameRecording(const kodi::addon::PVRRecording& recording)
+{
+  int id = std::atoi(recording.GetRecordingId().c_str());
+  std::string error;
+  if (!m_client.RenameRecording(id, recording.GetTitle(), error))
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to rename recording %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   TriggerRecordingUpdate();
