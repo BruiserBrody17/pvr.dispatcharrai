@@ -17,8 +17,7 @@ directly onto Dispatcharr's own backend and settings.
 - Recording playback, including watching a recording while it's still
   being written
 - Recording pre/post padding, synced with Dispatcharr's own global
-  setting -- reading it needs no special permission, pushing a change
-  back needs a real admin account (see below)
+  setting (needs an admin account to change -- see below)
 - Commercial-break markers on a recording's seekbar, for recordings
   Dispatcharr's comskip integration has marked (needs the
   `recording_edl` companion plugin)
@@ -26,9 +25,9 @@ directly onto Dispatcharr's own backend and settings.
   place from Kodi's own timer list
 - Catch-up/archive playback ("play from guide") for channels whose
   provider supports it
-- Optional real-time push updates for recordings/timers, so a change made
-  elsewhere (another Kodi install, Dispatcharr's own web UI) shows up
-  immediately instead of waiting for the next periodic refresh
+- Optional real-time push updates for recordings/timers, so changes made
+  elsewhere (another Kodi install, Dispatcharr's web UI) show up
+  immediately, not on the next periodic refresh
 
 ## Companion Dispatcharr plugins
 
@@ -66,15 +65,12 @@ Each has its own README with install steps.
 ## Configuration
 
 Set in Kodi's addon settings: Dispatcharr host, port, HTTPS toggle,
-username, and password. A standard (non-admin) account covers everything
-native to Dispatcharr itself -- channel/EPG browsing and recording
-playback need no special permission, and recording management
-(adding/editing/deleting timers) just needs that account's `dvr_access`
-set to `manage`. Both companion plugins need a real admin account
-instead (see "Companion Dispatcharr plugins" above), and so does pushing
-a recording-padding change back to Dispatcharr -- reading the current
-value doesn't, but the write silently fails on a lesser account (see
-[docs/RECORDINGS.md](docs/RECORDINGS.md) for why).
+username, and password. A standard account with `dvr_access` set to
+`manage` covers everything native to Dispatcharr -- browsing, playback,
+and timer management. An admin account is needed for both companion
+plugins and for pushing a recording-padding change back to Dispatcharr
+(reading the current value doesn't need one; the write just fails
+silently otherwise -- see [docs/RECORDINGS.md](docs/RECORDINGS.md)).
 
 Most settings take effect immediately after saving. Connection settings
 (host/port/HTTPS/username/password) need a Kodi restart -- Kodi will tell
