@@ -21,8 +21,11 @@ returns the buffer's current segments (with a stable sequence number, so
 a client can address the rolling window correctly across refreshes); the
 file server answers HTTP Range requests against them, which is what lets
 `pvr.dispatcharrai` treat the buffer as one growing, byte-seekable
-stream. A background reaper (leader-elected across worker processes)
-stops and cleans up any buffer that's gone idle past `idle_timeout_seconds`.
+stream. Viewers are reference-counted; the ffmpeg process stops as soon
+as the last one deregisters. A background reaper (leader-elected across
+worker processes) is just the backstop for viewers that vanish without
+deregistering -- a crash, network drop, force-quit -- reaping anything
+idle past `idle_timeout_seconds`.
 
 Multiple devices watching the same channel share this one buffer
 process -- Dispatcharr opens a single upstream connection to your
