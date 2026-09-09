@@ -94,8 +94,24 @@
   that never captured real stream data (`status=interrupted`, a test
   channel with no live backing) correctly showed `bytesWritten=0` and
   Kodi's info panel omitted the Size line entirely rather than showing a
-  misleading zero. Extending an in-progress recording remains
-  unimplemented.
+  misleading zero.
+  **Update: extending an in-progress recording implemented and
+  confirmed live (2026-09-09) -- all three original items now done.**
+  Routed through `GetTimers()`'s existing `PVR_TIMER_STATE_RECORDING`
+  timer for an in-progress recording: editing its end time in Kodi's
+  Timers window now calls new `DispatcharrClient::ExtendRecording()`
+  (`POST .../extend/`, `{"extra_minutes": N}`) instead of the generic
+  reschedule PATCH a not-yet-started timer still uses. That distinction
+  mattered: checked against the real `extend` endpoint's own source
+  first and found it deliberately bypasses Django's `pre_save` signal
+  because that signal revokes the running Celery recording task -- a
+  plain PATCH against an already-recording item would have stopped it,
+  not extended it. Tested live: extended a real in-progress recording's
+  end time by 15 minutes via Kodi's actual Timer-edit dialog, confirmed
+  via `PVR.GetTimers` that the end time moved forward *and* `state`
+  stayed `"recording"` throughout -- direct proof the task kept running
+  rather than being revoked. Full account, including the numeric-pad
+  GUI quirks hit along the way, in `docs/RECORDINGS.md`.
 - [x] **In-progress recording playback had the same seek-bar
   wall-clock-position bug live timeshift had -- fixed and live-confirmed
   (2026-09-08).** `GetStreamTimes()`'s in-progress-recording branch

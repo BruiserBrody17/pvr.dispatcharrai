@@ -1490,6 +1490,16 @@ bool DispatcharrClient::RenameRecording(int recordingId, const std::string& newT
   return Request("POST", path, body, response, error);
 }
 
+bool DispatcharrClient::ExtendRecording(int recordingId, int extraMinutes, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json body = {{"extra_minutes", extraMinutes}};
+  json response;
+  std::string path = std::string(kRecordingsPath) + std::to_string(recordingId) + "/extend/";
+  return Request("POST", path, body, response, error);
+}
+
 bool DispatcharrClient::GetTimerRules(std::vector<TimerRule>& out, std::string& error)
 {
   if (!EnsureAuthenticated(error))

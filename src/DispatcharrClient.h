@@ -369,6 +369,20 @@ public:
   // whitespace-only titles are rejected server-side (400), so callers
   // don't need their own blank-title guard on top.
   bool RenameRecording(int recordingId, const std::string& newTitle, std::string& error);
+  // POST /api/channels/recordings/{id}/extend/, {"extra_minutes": N} --
+  // deliberately NOT just another UpdateOneTimeRecording() PATCH call for
+  // an in-progress recording. Confirmed against this endpoint's own real
+  // source (apps/channels/api_views.py's RecordingViewSet.extend): a
+  // generic PATCH goes through the model's normal .save() path, which
+  // fires a pre_save signal that revokes the scheduled/running Celery
+  // recording task -- i.e. would stop the recording rather than extend
+  // it. This endpoint instead uses queryset.update() specifically to
+  // bypass that signal; the still-running task's own 2-second polling
+  // loop re-reads end_time from the DB and extends its deadline live.
+  // Server-side rejects extra_minutes <= 0 (400) and an already-finished
+  // recording (400, checked via custom_properties.status) -- both
+  // surfaced to the caller as a plain false/error, not a crash.
+  bool ExtendRecording(int recordingId, int extraMinutes, std::string& error);
 
   // True if Config::apiKey is already set. Callers use this to decide
   // whether GenerateApiKey() is worth calling at all. Deliberately reads

@@ -1804,6 +1804,50 @@ while checking this: grepping this addon's own source for `extend`/
 Kodi's usual "record for longer" from this addon at all, despite
 Dispatcharr already supporting it cleanly server-side.
 
+**Update: implemented and confirmed live (2026-09-09) -- and a real
+near-miss caught by reading the endpoint's own source before wiring it
+up.** `GetTimers()` already surfaces every in-progress recording as a
+`PVR_TIMER_STATE_RECORDING` timer (that's how Kodi's "record for
+longer" reaches an addon at all -- editing that timer's end time in
+Kodi's own Timers window, no separate UI concept exists). The obvious
+implementation would have been routing that edit through
+`UpdateTimer()`'s existing one-time-recording branch,
+`UpdateOneTimeRecording()`'s plain `PATCH .../{id}/`, exactly like a
+not-yet-started recording's reschedule already does. Checked against
+the real `extend` action's source first (`apps/channels/api_views.py`)
+and found why that would have been wrong: its own docstring explains
+the endpoint deliberately uses `queryset.update()` specifically to
+*bypass* the model's `pre_save` signal, because that signal revokes the
+scheduled/running Celery recording task -- i.e. a generic PATCH against
+an already-recording item would have gone through the normal `.save()`
+path and stopped the recording being "extended," the opposite of the
+intent. New `DispatcharrClient::ExtendRecording(id, extraMinutes,
+error)` calls the dedicated endpoint instead; `UpdateTimer()` now
+branches on `timer.GetState() == PVR_TIMER_STATE_RECORDING` and takes
+this path only for an already-recording timer (a not-yet-started
+one-time recording's reschedule is untouched, still the original PATCH
+-- correct there, since there's no running task yet to protect).
+Dispatcharr's endpoint takes a relative `extra_minutes`, not the
+absolute end time Kodi hands back from its edit dialog, so the current
+end time is fetched fresh via `GetRecordings()` right before computing
+the delta (Kodi doesn't send the pre-edit value, and this addon's own
+last-polled copy could be stale); a delta `<= 0` (an unchanged or
+earlier end time -- Kodi's dialog has no separate "shorten" action) is
+rejected client-side as `PVR_ERROR_INVALID_PARAMETERS` before any
+request is sent, matching the server's own validation. Tested live on
+Windows against a real instant recording: extended a `12:00 PM` end
+time by 15 minutes via Kodi's actual Timers-window edit dialog (its
+"Numeric pad" time-entry sub-dialog needed real numeric-pad key actions
+-- `Input.SendText` fed it a garbled value, `Input.ExecuteAction` with
+`number1`..`number9` worked correctly and matched what the on-screen
+digits showed at each step). Confirmed via `PVR.GetTimers` immediately
+after: `endtime` moved from `17:00:00` to `17:15:01` UTC and `state`
+stayed `"recording"` throughout -- direct proof the running task kept
+going rather than being revoked, the exact risk the dedicated endpoint
+exists to avoid. (The extra 1 second beyond a clean 15:00 delta is
+integer-minute rounding against Dispatcharr's own `extra_minutes` API,
+not a bug on this addon's side.)
+
 **Undelete, retention/lifetime, and resume-position/play-count are
 confirmed *not* implementable -- Dispatcharr genuinely has no backend
 for any of them, not just an unexposed one.** `RecordingViewSet.destroy()`
@@ -1822,8 +1866,9 @@ across devices the way `update-metadata`'s title/description do, so
 it's a materially weaker win than the two implementable items above --
 not pursued further without the user actually wanting the tradeoff.
 
-Originally a findings/feasibility pass, not a change -- rename and file
-size have since been implemented and confirmed live (see the "Update"
-paragraphs above); extending an in-progress recording remains
-unimplemented. See `docs/OPEN_ITEMS.md` for the tracked follow-up.
+Originally a findings/feasibility pass, not a change -- all three
+implementable items (rename, file size, extending an in-progress
+recording) have since been implemented and confirmed live (see the
+"Update" paragraphs above). See `docs/OPEN_ITEMS.md` for the tracked
+history.
 
