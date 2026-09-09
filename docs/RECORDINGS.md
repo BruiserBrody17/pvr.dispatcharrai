@@ -1690,3 +1690,83 @@ the only `std::stod()`/`std::stof()` call anywhere in the addon's C++
 source (checked directly, not assumed), so this closes the entire class
 of this specific bug on the native side, not just this one call site.
 
+## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
+
+Prompted by a "what does TVHeadend have that this addon doesn't"
+question. Comparing this addon's declared Kodi `PVRCapabilities`
+(`GetCapabilities()` in `src/PVRDispatcharr.cpp`) against everything
+the Kodi PVR API exposes, filtering out the DVB/tuner-specific flags
+that don't map to an IPTV backend anyway (channel scan, channel
+settings, descramble info), left five real gaps, all recording
+management: rename, undelete, per-recording retention/lifetime,
+recording file size, and resume position/play count. Checked each
+against Dispatcharr's actual behavior rather than guessing -- first its
+live OpenAPI schema (`GET /api/schema/` against a real instance), then,
+since DRF-spectacular's auto-generated `requestBody` for a custom
+`@action` frequently just reuses the ViewSet's default serializer
+schema regardless of what the view actually reads from `request.data`
+(confirmed exactly this for the endpoint below), Dispatcharr's real
+source (`apps/channels/api_views.py`, fetched via `gh api
+repos/Dispatcharr/Dispatcharr/contents/...` since GitHub's code-search
+API refuses unauthenticated requests).
+
+**Rename/description edit is real and already writes into the exact
+field this addon already reads.** `POST
+/api/channels/recordings/{id}/update-metadata/` takes a plain
+`{"title": ..., "description": ...}` body (confirmed from the view's
+own source, not the schema, which -- as above -- just shows the whole
+`Recording` serializer as the body and doesn't mention title/description
+at all despite the endpoint's own docstring explicitly saying "Update
+user-editable recording metadata (title, description)"). It writes
+straight into `custom_properties.program.title`/`description` and sets
+`custom_properties.program.user_edited = true` to stop the EPG
+auto-enrichment task from overwriting it on a later run -- the exact
+`custom_properties.program.*` path `GetRecordings()` already reads on
+the way in (see this file's own note above on that nesting). Genuinely
+implementable: add `SetSupportsRecordingsRename(true)` to
+`GetCapabilities()` and a `RenameRecording()` callback that POSTs here.
+
+**Recording file size is available, just not as a JSON field.** The
+`Recording` model itself really does have no size field (confirmed
+against the live schema: `id`/`start_time`/`end_time`/`task_id`/
+`custom_properties`/`channel`, nothing else, matching this file's
+existing note on the model's minimalism) -- but `/api/channels/
+recordings/{id}/file/`'s own handler computes it server-side
+(`os.path.getsize(file_path)`) and reports it as a normal HTTP
+`Content-Length` header. A `HEAD` request against that endpoint gets
+the size without downloading anything. Implementable:
+`SetSupportsRecordingSize(true)` plus a `HEAD` call in whatever
+populates `PVRRecording`'s size field.
+
+**Extending an in-progress recording is real, dedicated, and currently
+unused by this addon at all.** `POST /api/channels/recordings/{id}/
+extend/` moves a still-recording's `end_time` forward without
+interrupting the stream (the running Celery task re-reads `end_time`
+every ~2s and adjusts its own deadline live, confirmed from the source).
+Not one of the original TVHeadend-comparison items, but a genuine find
+while checking this: grepping this addon's own source for `extend`/
+`ExtendRecording` turns up nothing -- there's currently no way to do
+Kodi's usual "record for longer" from this addon at all, despite
+Dispatcharr already supporting it cleanly server-side.
+
+**Undelete, retention/lifetime, and resume-position/play-count are
+confirmed *not* implementable -- Dispatcharr genuinely has no backend
+for any of them, not just an unexposed one.** `RecordingViewSet.destroy()`
+(the real `DELETE` handler, read directly, not inferred) deletes the DB
+row first, then tears down any live DVR client and removes the file(s)
+from disk in a background thread -- immediately destructive by design,
+no soft-delete/trash table anywhere for an "undelete" to restore from.
+Grepping `api_views.py` for `retention`/`lifetime`/`resume`/
+`play_count`/`last_played` turns up nothing at all -- no per-recording
+or global auto-delete policy, and no resume-position or play-count
+concept anywhere server-side. Resume position could theoretically be
+faked as a purely addon-local value (Kodi's own storage, or an
+unofficial key stashed in `custom_properties` this addon invents
+itself), but that wouldn't survive a reinstall or follow the recording
+across devices the way `update-metadata`'s title/description do, so
+it's a materially weaker win than the two implementable items above --
+not pursued further without the user actually wanting the tradeoff.
+
+Not yet implemented -- this is a findings/feasibility pass, not a
+change. See `docs/OPEN_ITEMS.md` for the tracked follow-up.
+
