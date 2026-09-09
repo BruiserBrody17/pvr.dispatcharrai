@@ -50,6 +50,7 @@ constexpr const char* kRecurringRulesPath = "/api/channels/recurring-rules/";
 constexpr const char* kCoreSettingsPath = "/api/core/settings/";
 constexpr const char* kVersionPath = "/api/core/version/";
 constexpr const char* kTimezonesPath = "/api/core/timezones/";
+constexpr const char* kCurrentUserPath = "/api/accounts/users/me/";
 // Confirmed against a live instance: every CoreSettings "group" (system
 // timezone, DVR padding/comskip/path-templates, proxy tuning, ...) is one
 // row in this generic key/value table, addressed by its own numeric id
@@ -1917,6 +1918,22 @@ bool DispatcharrClient::GetSupportedTimezones(std::vector<std::string>& timezone
     if (item.is_string())
       timezonesOut.push_back(item.get<std::string>());
   }
+  return true;
+}
+
+bool DispatcharrClient::IsCurrentUserAdmin(bool& isAdminOut, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+  json response;
+  if (!Request("GET", kCurrentUserPath, json(), response, error))
+    return false;
+  if (!response.contains("user_level"))
+  {
+    error = "user/me response has no user_level value";
+    return false;
+  }
+  isAdminOut = FieldOr(response, "user_level", 0) >= 10;
   return true;
 }
 
