@@ -148,7 +148,7 @@ rather than assuming either one.
      | Out-File -Encoding ascii "$prebuilt\openssl.txt"
    "zlib http://mirrors.kodi.tv/build-deps/win32/zlib-1.2.11-x64-v141-20200105.7z" `
      | Out-File -Encoding ascii "$prebuilt\zlib.txt"
-   cmake -S kodi-source\cmake\addons\depends\windows -B deps-build -G "Visual Studio 17 2022" -A x64 "-DADDON_DEPENDS_PATH=$depends"
+   cmake -S kodi-source\cmake\addons\depends\windows -B deps-build -G "Visual Studio 18 2026" -A x64 "-DADDON_DEPENDS_PATH=$depends"
    cmake --build deps-build --config Release
    ```
    Then delete the three `.txt` files you just created. The main build's own
@@ -162,7 +162,7 @@ rather than assuming either one.
    the first `.` it contains, which silently turns `pvr.dispatcharrai` into
    just `pvr`:
    ```powershell
-   cmake -S kodi-source\cmake\addons -B build -G "Visual Studio 17 2022" -A x64 `
+   cmake -S kodi-source\cmake\addons -B build -G "Visual Studio 18 2026" -A x64 `
      "-DADDONS_TO_BUILD=pvr.dispatcharrai" `
      "-DADDONS_DEFINITION_DIR=$pwd\addon-defs" `
      "-DCMAKE_INSTALL_PREFIX=$pwd\install" `
