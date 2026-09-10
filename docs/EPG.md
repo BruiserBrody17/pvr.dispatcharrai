@@ -59,7 +59,11 @@ what TVHeadend's own `pvr.hts` shows for the same kind of source:
   though unconfirmed against this particular source) → `director`/
   `writer` get their own fields, everyone else buckets into `Cast`
   (comma-joined, matching `EPG_STRING_TOKEN_SEPARATOR`).
-- `<date>` → both `Year` (leading 4 digits) and `FirstAired` (verbatim).
+- `<date>` → `Year` (leading 4 digits) always; `FirstAired` (verbatim)
+  only when the programme also has a real season/episode number -- see
+  the "A `<date>` value can be a series-level placeholder..." entry in
+  `docs/RECORDINGS.md` for why episode-less programmes deliberately skip
+  it.
 - `<sub-title>` → both `PlotOutline` (unchanged, existing behavior) and
   the new `EpisodeName` (confirmed live: e.g. "Men's & Women's Second
   Round" for a tennis broadcast).

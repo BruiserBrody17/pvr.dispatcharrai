@@ -1750,6 +1750,33 @@ matching recording nests under the rule in Kodi's UI too. Confirmed live:
 after the fix, the rule's own row showed the same real start/end time as
 its matched child recording instead of the epoch.
 
+**A `<date>` value can be a series-level placeholder, not a real
+per-episode original air date -- reported live (2026-09-10) as a
+recording showing "10/15/2001" as its date despite being a genuinely new,
+same-day episode, not a rerun.** Initially assumed to be legitimate data
+(PTI has aired since 2001, so an old air date isn't implausible on its
+face) until the user pointed out these specific recordings weren't
+reruns. Checked the raw Dispatcharr data for five upcoming instances of
+the same daily show, airing on five different calendar dates: all five
+carried the *identical* `custom_properties.program.original_air_date`
+("2001-10-15"), and none had any `season`/`episode`/`onscreen_episode`
+identifier at all -- unlike an actual episodic programme (TNA iMPACT!),
+which has real, distinct per-episode identifiers. A single fixed date
+across every distinct airing of a still-running daily show is not a real
+fact about any of those specific episodes; it's almost certainly a
+series-level value (possibly from Dispatcharr's TVMaze poster/metadata
+cross-reference, given the poster URL's domain, rather than the raw
+Schedules Direct guide feed itself) stamped onto every instance because
+the guide source has no true per-episode date for an evergreen talk show.
+`GetEPGForChannel()` was mapping XMLTV's `<date>` element straight to
+Kodi's `FirstAired` unconditionally (see `docs/EPG.md`), so this
+misleading value surfaced anywhere Kodi shows `FirstAired` for a timer or
+recording tied to that EPG entry. Fixed by only setting `FirstAired` when
+the entry also has a real season or episode number (`entry.seasonNumber
+> 0 || entry.episodeNumber > 0`, the same signal already used for
+`EPG_TAG_FLAG_IS_SERIES`) -- a programme with real episode identity keeps
+getting its `FirstAired` exactly as before.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
