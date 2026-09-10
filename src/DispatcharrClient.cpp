@@ -48,6 +48,10 @@ constexpr const char* kEpgOutputPath = "/output/epg";
 // endpoint/payload notes in DispatcharrClient.h.
 constexpr const char* kRecordingsPath = "/api/channels/recordings/";
 constexpr const char* kSeriesRulesPath = "/api/channels/series-rules/";
+// Confirmed against the live router: apps/epg/api_urls.py registers this
+// viewset as "epgdata" (not "epg-data" or "epg/data/"), a real REST route
+// with a path-addressable id -- unlike series rules, which have none.
+constexpr const char* kEpgDataPath = "/api/epg/epgdata/";
 constexpr const char* kRecurringRulesPath = "/api/channels/recurring-rules/";
 constexpr const char* kCoreSettingsPath = "/api/core/settings/";
 constexpr const char* kVersionPath = "/api/core/version/";
@@ -853,11 +857,18 @@ bool DispatcharrClient::GetChannels(std::vector<Channel>& out, std::string& erro
     {
       ch.groupId = FieldOr(item, "channel_group", FieldOr(item, "channel_group_id", -1));
     }
-    // EPG linkage: try a nested epg_data object first, then a flat field.
+    // EPG linkage: try a nested epg_data object first, then the channel's
+    // own effective (override-aware) field, then its plain one -- the live
+    // channels list carries no nested epg_data object at all, only the
+    // flat/effective fields, but keep the nested-object branch in case a
+    // future Dispatcharr revision adds one back.
     if (item.contains("epg_data") && item["epg_data"].is_object())
       ch.tvgId = FieldOr<std::string>(item["epg_data"], "tvg_id", "");
     else
-      ch.tvgId = FieldOr<std::string>(item, "tvg_id", "");
+      ch.tvgId = FieldOr<std::string>(item, "effective_tvg_id", FieldOr<std::string>(item, "tvg_id", ""));
+    // effective_epg_data_id can point at a *different* EPG source's row
+    // than tvgId above resolves to -- see ResolveSeriesRuleTvgId().
+    ch.epgDataId = FieldOr(item, "effective_epg_data_id", FieldOr(item, "epg_data_id", 0));
 
     ch.catchupEnabled = FieldOr(item, "is_catchup", false);
     ch.catchupDays = FieldOr(item, "catchup_days", 0);
@@ -1595,6 +1606,27 @@ bool DispatcharrClient::UpdateOneTimeRecording(int recordingId, time_t start, ti
   };
   json response;
   return Request("PATCH", std::string(kRecordingsPath) + std::to_string(recordingId) + "/", body, response, error);
+}
+
+std::string DispatcharrClient::ResolveSeriesRuleTvgId(int epgDataId, const std::string& fallbackTvgId)
+{
+  if (epgDataId <= 0)
+    return fallbackTvgId;
+
+  std::string error;
+  if (!EnsureAuthenticated(error))
+    return fallbackTvgId;
+
+  json response;
+  std::string path = std::string(kEpgDataPath) + std::to_string(epgDataId) + "/";
+  if (!Request("GET", path, json(), response, error))
+  {
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: ResolveSeriesRuleTvgId: lookup failed for epg_data %d: %s",
+              epgDataId, error.c_str());
+    return fallbackTvgId;
+  }
+  std::string resolvedTvgId = FieldOr<std::string>(response, "tvg_id", "");
+  return resolvedTvgId.empty() ? fallbackTvgId : resolvedTvgId;
 }
 
 bool DispatcharrClient::CreateSeriesRule(int channelId, const std::string& tvgId, const std::string& titlePattern,
