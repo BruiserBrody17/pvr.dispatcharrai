@@ -618,25 +618,43 @@
     None of these touch `kodi::`-namespaced types, so none need the
     Kodi ABI at all -- a real, buildable-standalone test target, not a
     redesign of the addon's own architecture.
-- **No doc-linting exists (requested 2026-09-10) -- recommended
-  approach, not yet started.** Motivated directly by this session's own
-  experience: found and fixed 9 dangling/stale references across
-  `docs/`/`CHANGELOG.md` in one pass, several tracing back to a feature
-  removal or CI change that was never cross-checked against the docs
-  describing it (see `CLAUDE.md`'s new convention bullet on this). An
-  off-the-shelf markdown-link-checker (e.g. `markdown-link-check`)
-  would catch a genuinely different class of bug than what this session
-  actually found, though -- every dangling reference found here was a
-  plain-English citation (`See docs/EPG.md's "Section Title" section`,
-  or a backtick-quoted function/setting name), not a broken
-  `[text](url)` hyperlink, so a generic link-checker wouldn't have
-  caught any of them. What would: a small custom script, specific to
-  this project's own citation convention, that (1) parses every
-  `See docs/X.md's "..." section` pattern and confirms that heading
-  text actually exists in the target file, and (2) greps every
-  backtick-quoted `PascalCase()`/`camelCase()` function name and
-  `snake_case` setting id mentioned in `docs/*.md`/`CHANGELOG.md`
-  against real occurrences in `src/`/`resources/settings.xml`, flagging
-  anything no longer found. Both checks are cheap and specific enough
-  to actually run by hand periodically (or eventually wire into CI)
-  rather than needing a general-purpose doc-linting product.
+- [x] **No doc-linting exists (requested 2026-09-10) -- built (2026-09-10).**
+  Motivated directly by this session's own experience: found and fixed 9
+  dangling/stale references across `docs/`/`CHANGELOG.md` in one pass,
+  several tracing back to a feature removal or CI change that was never
+  cross-checked against the docs describing it (see `CLAUDE.md`'s new
+  convention bullet on this). An off-the-shelf markdown-link-checker
+  (e.g. `markdown-link-check`) would catch a genuinely different class of
+  bug than what this session actually found -- every dangling reference
+  found here was a plain-English citation (`See docs/EPG.md's "Section
+  Title" section`, or a backtick-quoted function/setting name), not a
+  broken `[text](url)` hyperlink.
+  `tools/check_doc_refs.py`: a small, dependency-free script specific to
+  this project's own citation convention, three checks against
+  `docs/*.md`/`CHANGELOG.md`: (1) `docs/X.md's "..." section`-style
+  citations (also recognizing `[X.md](X.md)`-style relative links and
+  this project's bold `**Title**:` paragraph markers, not just real `#`
+  headings) against that file's real headings; (2) backtick-quoted
+  `Name()` function citations against `src/*.cpp`/`*.h` *and* both
+  plugins' `plugin.py` (an early pass missed the plugins entirely, a real
+  gap, not just noise); (3) backtick-quoted setting ids on lines
+  mentioning "setting" against `resources/settings.xml` *and* both
+  plugins' own settings/action ids (a separate namespace from the Kodi
+  addon's settings.xml).
+  Run by hand for now (`python tools/check_doc_refs.py`), not yet wired
+  into CI. First real run found 78 hits after fixing several bugs in the
+  checker itself found via its own output (the multi-line lookback for
+  which file a citation belongs to, the markdown-link form, the bold-
+  paragraph heading style, and the missing plugin.py corpus) -- the
+  remaining hits are overwhelmingly genuine, correct citations to
+  *external* code this project's docs deliberately reference by design
+  (Kodi-core source, hls.js, Python stdlib/syscalls) or to deliberately-
+  documented historical/removed settings, not real dangling references.
+  Confirmed by spot-checking rather than assumed: `enable_live_timeshift`
+  (flagged as "setting not found") is explicitly, correctly documented in
+  `docs/TIMESHIFT.md` as a removed setting, replaced by
+  `live_timeshift_mode`. This is inherent to a lightweight static-text
+  heuristic given how citation-heavy this project's own docs style is by
+  design (see `CLAUDE.md`'s "Confirmed live" citations bullet) -- the
+  tool's own output says as much and is meant to be eyeballed, not
+  treated as a hard pass/fail gate.
