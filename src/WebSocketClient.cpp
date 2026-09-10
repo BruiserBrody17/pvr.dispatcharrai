@@ -113,7 +113,7 @@ bool WebSocketClient::SendAll(const uint8_t* data, size_t len, int timeoutSecond
       fd_set writeFds;
       FD_ZERO(&writeFds);
       FD_SET(sockfd, &writeFds);
-      struct timeval tv{};
+      timeval tv{};
       tv.tv_sec = static_cast<long>(remainingMs / 1000);
       tv.tv_usec = static_cast<long>((remainingMs % 1000) * 1000);
 #ifdef _WIN32
@@ -173,7 +173,7 @@ int WebSocketClient::FillBuffer(int timeoutSeconds, std::string& error)
       fd_set readFds;
       FD_ZERO(&readFds);
       FD_SET(sockfd, &readFds);
-      struct timeval tv{};
+      timeval tv{};
       tv.tv_sec = static_cast<long>(remainingMs / 1000);
       tv.tv_usec = static_cast<long>((remainingMs % 1000) * 1000);
 #ifdef _WIN32

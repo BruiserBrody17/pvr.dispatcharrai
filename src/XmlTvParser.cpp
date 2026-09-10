@@ -34,7 +34,7 @@ time_t ParseXmlTvTime(const std::string& timeStr)
   if (timeStr.size() < 14)
     return 0;
 
-  struct tm tmVal{};
+  tm tmVal{};
   try
   {
     tmVal.tm_year = std::stoi(timeStr.substr(0, 4)) - 1900;

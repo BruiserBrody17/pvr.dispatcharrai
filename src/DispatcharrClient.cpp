@@ -174,7 +174,7 @@ size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
 std::string IsoFromTime(time_t t)
 {
   char buf[32];
-  struct tm tmVal{};
+  tm tmVal{};
 #if defined(_WIN32)
   gmtime_s(&tmVal, &t);
 #else
@@ -204,7 +204,7 @@ time_t TimeFromIso(const std::string& isoStr)
   if (isoStr.size() < 19)
     return 0;
 
-  struct tm tmVal{};
+  tm tmVal{};
   try
   {
     tmVal.tm_year = std::stoi(isoStr.substr(0, 4)) - 1900;
@@ -251,7 +251,7 @@ int SecondsSinceMidnightFromString(const std::string& hms)
 std::string DateStringFromTime(time_t t)
 {
   char buf[16];
-  struct tm tmVal{};
+  tm tmVal{};
 #if defined(_WIN32)
   gmtime_s(&tmVal, &t);
 #else
@@ -267,7 +267,7 @@ time_t TimeFromDateString(const std::string& dateStr)
 {
   if (dateStr.size() < 10)
     return 0;
-  struct tm tmVal{};
+  tm tmVal{};
   try
   {
     tmVal.tm_year = std::stoi(dateStr.substr(0, 4)) - 1900;
@@ -289,12 +289,12 @@ time_t TimeFromDateString(const std::string& dateStr)
 // (0=Sunday) in the given UTC calendar month.
 int NthWeekdayOfMonth(int year, int month0, int weekday, int n)
 {
-  struct tm first{};
+  tm first{};
   first.tm_year = year - 1900;
   first.tm_mon = month0;
   first.tm_mday = 1;
   time_t firstT = PortableTimeGm(&first);
-  struct tm resolved{};
+  tm resolved{};
 #if defined(_WIN32)
   gmtime_s(&resolved, &firstT);
 #else
@@ -317,12 +317,12 @@ int LastWeekdayOfMonth(int year, int month0, int weekday)
     if (leap)
       days = 29;
   }
-  struct tm last{};
+  tm last{};
   last.tm_year = year - 1900;
   last.tm_mon = month0;
   last.tm_mday = days;
   time_t lastT = PortableTimeGm(&last);
-  struct tm resolved{};
+  tm resolved{};
 #if defined(_WIN32)
   gmtime_s(&resolved, &lastT);
 #else
@@ -342,7 +342,7 @@ int LastWeekdayOfMonth(int year, int month0, int weekday)
 // transition, that's also correctly in the past (standard time again).
 bool IsUsCanadaDstInEffect(time_t nowUtc, int standardOffsetMinutes)
 {
-  struct tm nowTm{};
+  tm nowTm{};
 #if defined(_WIN32)
   gmtime_s(&nowTm, &nowUtc);
 #else
@@ -350,14 +350,14 @@ bool IsUsCanadaDstInEffect(time_t nowUtc, int standardOffsetMinutes)
 #endif
   int year = nowTm.tm_year + 1900;
 
-  struct tm springLocal{};
+  tm springLocal{};
   springLocal.tm_year = year - 1900;
   springLocal.tm_mon = 2; // March
   springLocal.tm_mday = NthWeekdayOfMonth(year, 2, 0, 2);
   springLocal.tm_hour = 2;
   time_t springUtc = PortableTimeGm(&springLocal) - standardOffsetMinutes * 60;
 
-  struct tm fallLocal{};
+  tm fallLocal{};
   fallLocal.tm_year = year - 1900;
   fallLocal.tm_mon = 10; // November
   fallLocal.tm_mday = NthWeekdayOfMonth(year, 10, 0, 1);
@@ -374,7 +374,7 @@ bool IsUsCanadaDstInEffect(time_t nowUtc, int standardOffsetMinutes)
 // the transition moments themselves.
 bool IsEuDstInEffect(time_t nowUtc)
 {
-  struct tm nowTm{};
+  tm nowTm{};
 #if defined(_WIN32)
   gmtime_s(&nowTm, &nowUtc);
 #else
@@ -382,14 +382,14 @@ bool IsEuDstInEffect(time_t nowUtc)
 #endif
   int year = nowTm.tm_year + 1900;
 
-  struct tm springUtcTm{};
+  tm springUtcTm{};
   springUtcTm.tm_year = year - 1900;
   springUtcTm.tm_mon = 2; // March
   springUtcTm.tm_mday = LastWeekdayOfMonth(year, 2, 0);
   springUtcTm.tm_hour = 1;
   time_t springUtc = PortableTimeGm(&springUtcTm);
 
-  struct tm fallUtcTm{};
+  tm fallUtcTm{};
   fallUtcTm.tm_year = year - 1900;
   fallUtcTm.tm_mon = 9; // October
   fallUtcTm.tm_mday = LastWeekdayOfMonth(year, 9, 0);
