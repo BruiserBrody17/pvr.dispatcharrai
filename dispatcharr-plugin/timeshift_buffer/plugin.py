@@ -178,6 +178,19 @@ def _list_buffer_keys():
     return [k.decode() if isinstance(k, bytes) else k for k in _redis().keys(_buffer_key("*"))]
 
 
+def _iter_buffer_states():
+    """Yields the parsed state dict for every currently-tracked buffer,
+    skipping any key whose value is already gone by the time it's read
+    (a real, if narrow, race between _list_buffer_keys() listing it and
+    this read -- TTL expiry or a concurrent delete)."""
+    client = _redis()
+    for key in _list_buffer_keys():
+        raw = client.get(key)
+        if not raw:
+            continue
+        yield json.loads(raw)
+
+
 # ---------------------------------------------------------------------------
 # Storage path
 # ---------------------------------------------------------------------------
@@ -313,16 +326,27 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         provided = parse_qs(urlparse(self.path).query).get("token", [None])[0]
         return provided is not None and secrets.compare_digest(provided, expected)
 
-    def do_GET(self):
+    def _resolve_and_authorize(self):
+        """Shared do_GET/do_HEAD preamble: resolves the request path,
+        checks the access token, and confirms the target file exists --
+        sending the appropriate error response itself on any failure.
+        Returns (channel_uuid, target) on success, (None, None) otherwise
+        (caller should just return immediately in that case)."""
         channel_uuid, target = self._resolve_path()
         if channel_uuid is None:
             self.send_error(404, "Not found")
-            return
+            return None, None
         if not self._check_access_token(channel_uuid):
             self.send_error(403, "Forbidden")
-            return
+            return None, None
         if target is None or not target.is_file():
             self.send_error(404, "Not found")
+            return None, None
+        return channel_uuid, target
+
+    def do_GET(self):
+        channel_uuid, target = self._resolve_and_authorize()
+        if channel_uuid is None:
             return
 
         content_type = mimetypes.guess_type(str(target))[0]
@@ -373,15 +397,8 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_HEAD(self):
-        channel_uuid, target = self._resolve_path()
+        channel_uuid, target = self._resolve_and_authorize()
         if channel_uuid is None:
-            self.send_error(404, "Not found")
-            return
-        if not self._check_access_token(channel_uuid):
-            self.send_error(403, "Forbidden")
-            return
-        if target is None or not target.is_file():
-            self.send_error(404, "Not found")
             return
         self._touch_heartbeat(channel_uuid)
         self.send_response(200)
@@ -750,6 +767,16 @@ def _remove_channel_files(state: dict, logger):
         pass
     except OSError:
         logger.exception("timeshift_buffer: couldn't fully clean up %s", channel_dir)
+
+
+def _teardown_buffer(state: dict, logger):
+    """Stops ffmpeg, removes its segment files, and deletes the tracked
+    state for a buffer -- the full "this buffer is done" sequence shared
+    by the reaper, stop_buffer, a fatal get_live_manifest failure, and
+    stop_all."""
+    _stop_ffmpeg(state, logger)
+    _remove_channel_files(state, logger)
+    _delete_buffer_state(state["channel_uuid"])
 
 
 def _find_orphaned_channel_dirs(storage_path: str, min_age_seconds: int) -> list:
@@ -1198,11 +1225,7 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                 settings_dict = settings_getter()
                 idle_timeout = int(settings_dict.get("idle_timeout_seconds", 30))
                 now = time.time()
-                for key in _list_buffer_keys():
-                    raw = client.get(key)
-                    if not raw:
-                        continue
-                    state = json.loads(raw)
+                for state in _iter_buffer_states():
                     if _prune_stale_viewers(state, idle_timeout, now):
                         logger.info(
                             "timeshift_buffer: pruned stale viewer(s) for channel %s (no heartbeat for %ds)",
@@ -1216,9 +1239,7 @@ def _reaper_loop(settings_getter, logger, stop_event: threading.Event):
                             state["channel_uuid"],
                             int(now - state.get("last_heartbeat", 0)),
                         )
-                        _stop_ffmpeg(state, logger)
-                        _remove_channel_files(state, logger)
-                        _delete_buffer_state(state["channel_uuid"])
+                        _teardown_buffer(state, logger)
 
                 # Reconciles storage_path against Redis directly, catching
                 # the class of leak the loop above structurally can't (see
@@ -1692,9 +1713,7 @@ class Plugin:
                     "remaining_viewers": len(viewers),
                 }
 
-        _stop_ffmpeg(state, logger)
-        _remove_channel_files(state, logger)
-        _delete_buffer_state(channel_uuid)
+        _teardown_buffer(state, logger)
         return {"status": "ok", "message": "Buffer stopped"}
 
     def _heartbeat(self, params, settings_dict, logger):
@@ -1746,9 +1765,7 @@ class Plugin:
             # start_buffer call to notice (see that method's own comment):
             # nothing else will proactively clean this up otherwise, since
             # a dead buffer with no further fetches never goes idle either.
-            _stop_ffmpeg(state, logger)
-            _remove_channel_files(state, logger)
-            _delete_buffer_state(channel_uuid)
+            _teardown_buffer(state, logger)
             return {"status": "error", "fatal": True, "message": str(exc)}
         except RuntimeError as exc:
             return {"status": "error", "message": str(exc)}
@@ -1776,11 +1793,7 @@ class Plugin:
     def _list_buffers(self):
         buffers = []
         now = time.time()
-        for key in _list_buffer_keys():
-            raw = _redis().get(key)
-            if not raw:
-                continue
-            state = json.loads(raw)
+        for state in _iter_buffer_states():
             buffers.append(
                 {
                     "channel_uuid": state["channel_uuid"],
@@ -1814,14 +1827,8 @@ class Plugin:
 
     def _stop_all(self, logger):
         stopped = []
-        for key in _list_buffer_keys():
-            raw = _redis().get(key)
-            if not raw:
-                continue
-            state = json.loads(raw)
-            _stop_ffmpeg(state, logger)
-            _remove_channel_files(state, logger)
-            _delete_buffer_state(state["channel_uuid"])
+        for state in _iter_buffer_states():
+            _teardown_buffer(state, logger)
             stopped.append(state["channel_uuid"])
         message = "No buffers were running" if not stopped else f"Stopped {len(stopped)} buffer(s)"
         return {"status": "ok", "message": message, "stopped": stopped}
