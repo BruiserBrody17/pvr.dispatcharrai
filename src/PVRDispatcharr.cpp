@@ -1281,24 +1281,29 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t 
       tag.SetDirector(entry.director);
     if (!entry.writer.empty())
       tag.SetWriter(entry.writer);
-    if (entry.year > 0)
+    // Year and FirstAired both derive from the same XMLTV <date> element,
+    // and both are only set when the programme also carries a real
+    // season/episode number -- confirmed live against a real instance: a
+    // daily evergreen talk show with no season/episode identity at all
+    // (season and episode both -1, i.e. Dispatcharr's guide source
+    // genuinely has no per-episode data for it) carried the *identical*
+    // <date> value on every single airing across a week of distinct
+    // calendar dates, not a real "this specific episode first aired on
+    // X" fact -- almost certainly a series-level placeholder the guide
+    // source stamps on every instance rather than tracking real
+    // per-airing dates. Showing that as Year/FirstAired is actively
+    // misleading (Kodi surfaces it alongside genuinely-dated recordings),
+    // not just imprecise, so this deliberately drops both rather than
+    // passing through unreliable data -- dropping only FirstAired and
+    // leaving Year set left Kodi falling back to showing the same
+    // misleading placeholder as a bare year instead. A programme with
+    // real episode identity (e.g. TNA iMPACT! S2026E37) is unaffected --
+    // its Year/FirstAired are presumed to be real per-episode data, same
+    // as before.
+    bool hasEpisodeIdentity = entry.seasonNumber > 0 || entry.episodeNumber > 0;
+    if (entry.year > 0 && hasEpisodeIdentity)
       tag.SetYear(entry.year);
-    // Only set FirstAired when the programme also carries a real season/
-    // episode number -- confirmed live against a real instance: a daily
-    // evergreen talk show with no season/episode identity at all (season
-    // and episode both -1, i.e. Dispatcharr's guide source genuinely has
-    // no per-episode data for it) carried the *identical* <date> value on
-    // every single airing across a week of distinct calendar dates, not
-    // a real "this specific episode first aired on X" fact -- almost
-    // certainly a series-level placeholder the guide source stamps on
-    // every instance rather than tracking real per-airing dates. Showing
-    // that as FirstAired is actively misleading (Kodi surfaces it
-    // alongside genuinely-dated recordings), not just imprecise, so this
-    // deliberately drops it rather than passing through unreliable data.
-    // A programme with real episode identity (e.g. TNA iMPACT! S2026E37)
-    // is unaffected -- its FirstAired is presumed to be real per-episode
-    // data, same as before.
-    if (!entry.firstAired.empty() && (entry.seasonNumber > 0 || entry.episodeNumber > 0))
+    if (!entry.firstAired.empty() && hasEpisodeIdentity)
       tag.SetFirstAired(entry.firstAired);
 
     if (!entry.categories.empty())
