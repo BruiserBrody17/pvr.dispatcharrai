@@ -97,6 +97,7 @@ summary compresses, including the exact `av_seek_frame` failure signature
 that motivated moving off ffmpegdirect in the first place.
 """
 
+import contextlib
 import json
 import mimetypes
 import os
@@ -706,10 +707,8 @@ def _stop_ffmpeg(state: dict, logger):
         time.sleep(0.2)
 
     logger.warning("timeshift_buffer: ffmpeg pid %s didn't exit after SIGTERM, sending SIGKILL", pid)
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
 
 def _is_process_alive(pid) -> bool:
@@ -729,7 +728,9 @@ def _is_process_alive(pid) -> bool:
     except ProcessLookupError:
         return False
     except Exception:
-        return True  # e.g. PermissionError against a recycled, unrelated pid -- assume alive rather than reap something still running
+        # e.g. PermissionError against a recycled, unrelated pid -- assume
+        # alive rather than reap something still running
+        return True
 
 
 class BufferFailedError(RuntimeError):
@@ -939,7 +940,11 @@ def _get_live_manifest(state: dict, logger) -> dict:
     try:
         playlist_stat = live_playlist_path.stat()
     except OSError:
-        raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet")
+        # Translates a low-level race (playlist vanished between the
+        # existence check above and this stat()) into the same
+        # caller-facing message as that check -- the original OSError
+        # adds nothing a caller needs, so deliberately not chained.
+        raise RuntimeError("live playlist not found -- the buffer may not have produced any segments yet") from None
 
     # Ties every cache entry to the specific ffmpeg process (buffer
     # *instance*) it was built from -- confirmed live this matters, not
@@ -1005,10 +1010,8 @@ def _get_live_manifest(state: dict, logger) -> dict:
             media_sequence = 0
             for line in lines:
                 if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
-                    try:
+                    with contextlib.suppress(ValueError):
                         media_sequence = int(line[len("#EXT-X-MEDIA-SEQUENCE:") :].strip())
-                    except ValueError:
-                        pass
                     break
 
             # First pass: pure text parsing, no filesystem access yet --
@@ -1413,7 +1416,15 @@ class Plugin:
         {
             "id": "heartbeat",
             "label": "Heartbeat",
-            "description": "Refreshes a channel's idle timeout. Params: channel_uuid (required), viewer_id (optional). The buffer-wide timeout is refreshed by any file fetch regardless -- pass viewer_id to also refresh that specific viewer's own last-seen time, which is what lets stop_buffer tell a still-watching viewer apart from one that crashed without ever calling stop_buffer (see plugin.py's _prune_stale_viewers). A client with viewer_id lifecycle (start_buffer/stop_buffer) should call this on an interval well under idle_timeout_seconds.",
+            "description": (
+                "Refreshes a channel's idle timeout. Params: channel_uuid (required), viewer_id "
+                "(optional). The buffer-wide timeout is refreshed by any file fetch regardless -- "
+                "pass viewer_id to also refresh that specific viewer's own last-seen time, which is "
+                "what lets stop_buffer tell a still-watching viewer apart from one that crashed "
+                "without ever calling stop_buffer (see plugin.py's _prune_stale_viewers). A client "
+                "with viewer_id lifecycle (start_buffer/stop_buffer) should call this on an interval "
+                "well under idle_timeout_seconds."
+            ),
         },
         {
             "id": "get_live_manifest",
@@ -1449,7 +1460,8 @@ class Plugin:
             "confirm": {
                 "required": True,
                 "title": "Stop all buffers?",
-                "message": "This ends every active rolling buffer right now, for every channel and every viewer currently using one.",
+                "message": "This ends every active rolling buffer right now, for every channel and "
+                "every viewer currently using one.",
             },
         },
         {
@@ -1468,7 +1480,9 @@ class Plugin:
             "confirm": {
                 "required": True,
                 "title": "Scrub orphaned directories?",
-                "message": "Permanently deletes any buffer directory under storage_path with no matching tracked state and no recent activity. Does not touch anything currently active.",
+                "message": "Permanently deletes any buffer directory under storage_path with no "
+                "matching tracked state and no recent activity. Does not touch anything currently "
+                "active.",
             },
         },
     ]
@@ -1533,7 +1547,8 @@ class Plugin:
         if not channel_uuid:
             return {
                 "status": "error",
-                "message": "channel_uuid is required (pass it as a param, or paste one into the test_channel_uuid setting for manual testing)",
+                "message": "channel_uuid is required (pass it as a param, or paste one into "
+                "the test_channel_uuid setting for manual testing)",
             }
 
         # Registers this caller as one of the buffer's viewers (a plain
@@ -1547,29 +1562,28 @@ class Plugin:
         viewer_id = params.get("viewer_id")
 
         existing = _get_buffer_state(channel_uuid)
-        if existing:
-            # Confirmed live this check matters, not just theoretical: a
-            # buffer whose ffmpeg already died (see _get_live_manifest()'s
-            # own comment -- e.g. a provider-side concurrent-stream limit
-            # refusing the connection) otherwise stayed "existing" forever.
-            # Every future start_buffer for the same channel would keep
-            # reattaching to it (refreshing last_heartbeat below), which
-            # both kept reporting false success to callers and kept the
-            # idle-timeout reaper from ever reaping a buffer that will
-            # never produce anything -- a permanently zombied channel until
-            # someone noticed and called stop_buffer by hand. Treat a dead
-            # process exactly like "no buffer exists" instead: clean up its
-            # stale state and fall through to a genuinely fresh start.
-            if not _is_process_alive(existing.get("pid")):
-                logger.warning(
-                    "timeshift_buffer: start_buffer found a dead buffer for %s (pid %s no longer running) -- "
-                    "cleaning up and starting fresh instead of reattaching",
-                    channel_uuid,
-                    existing.get("pid"),
-                )
-                _remove_channel_files(existing, logger)
-                _delete_buffer_state(channel_uuid)
-                existing = None
+        # Confirmed live this check matters, not just theoretical: a
+        # buffer whose ffmpeg already died (see _get_live_manifest()'s
+        # own comment -- e.g. a provider-side concurrent-stream limit
+        # refusing the connection) otherwise stayed "existing" forever.
+        # Every future start_buffer for the same channel would keep
+        # reattaching to it (refreshing last_heartbeat below), which
+        # both kept reporting false success to callers and kept the
+        # idle-timeout reaper from ever reaping a buffer that will
+        # never produce anything -- a permanently zombied channel until
+        # someone noticed and called stop_buffer by hand. Treat a dead
+        # process exactly like "no buffer exists" instead: clean up its
+        # stale state and fall through to a genuinely fresh start.
+        if existing and not _is_process_alive(existing.get("pid")):
+            logger.warning(
+                "timeshift_buffer: start_buffer found a dead buffer for %s (pid %s no longer running) -- "
+                "cleaning up and starting fresh instead of reattaching",
+                channel_uuid,
+                existing.get("pid"),
+            )
+            _remove_channel_files(existing, logger)
+            _delete_buffer_state(channel_uuid)
+            existing = None
 
         if existing:
             existing["last_heartbeat"] = time.time()
