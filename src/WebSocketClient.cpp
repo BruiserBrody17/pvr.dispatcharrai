@@ -70,6 +70,28 @@ void RandomBytes(uint8_t* out, size_t len)
     out[i] = static_cast<uint8_t>(dist(rng));
 }
 
+// Shared by SendAll()/FillBuffer(): waits up to `remaining` for `sockfd` to
+// become ready for writing (forWrite=true) or reading (forWrite=false).
+// Returns select()'s own return value unchanged (> 0 ready/spurious
+// wakeup, 0 timeout, < 0 a genuine select() failure) -- callers already
+// each have their own established, differing reasoning for what to do
+// with a timeout vs. a spurious wakeup, so this doesn't collapse that
+// distinction.
+int WaitForSocket(curl_socket_t sockfd, bool forWrite, std::chrono::milliseconds remaining)
+{
+  fd_set fds;
+  FD_ZERO(&fds);
+  FD_SET(sockfd, &fds);
+  timeval tv{};
+  tv.tv_sec = static_cast<long>(remaining.count() / 1000);
+  tv.tv_usec = static_cast<long>((remaining.count() % 1000) * 1000);
+#ifdef _WIN32
+  return select(0, forWrite ? nullptr : &fds, forWrite ? &fds : nullptr, nullptr, &tv);
+#else
+  return select(static_cast<int>(sockfd) + 1, forWrite ? nullptr : &fds, forWrite ? &fds : nullptr, nullptr, &tv);
+#endif
+}
+
 } // namespace
 
 WebSocketClient::WebSocketClient() = default;
@@ -107,20 +129,10 @@ bool WebSocketClient::SendAll(const uint8_t* data, size_t len, int timeoutSecond
         error = "Timed out waiting for the WebSocket send buffer to drain";
         return false;
       }
-      auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+      auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
       curl_socket_t sockfd = CURL_SOCKET_BAD;
       curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sockfd);
-      fd_set writeFds;
-      FD_ZERO(&writeFds);
-      FD_SET(sockfd, &writeFds);
-      timeval tv{};
-      tv.tv_sec = static_cast<long>(remainingMs / 1000);
-      tv.tv_usec = static_cast<long>((remainingMs % 1000) * 1000);
-#ifdef _WIN32
-      int rc = select(0, nullptr, &writeFds, nullptr, &tv);
-#else
-      int rc = select(static_cast<int>(sockfd) + 1, nullptr, &writeFds, nullptr, &tv);
-#endif
+      int rc = WaitForSocket(sockfd, /*forWrite=*/true, remainingMs);
       if (rc < 0)
       {
         error = "WebSocket select() failed while waiting to send";
@@ -169,18 +181,8 @@ int WebSocketClient::FillBuffer(int timeoutSeconds, std::string& error)
       auto now = std::chrono::steady_clock::now();
       if (now >= deadline)
         return 0;
-      auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-      fd_set readFds;
-      FD_ZERO(&readFds);
-      FD_SET(sockfd, &readFds);
-      timeval tv{};
-      tv.tv_sec = static_cast<long>(remainingMs / 1000);
-      tv.tv_usec = static_cast<long>((remainingMs % 1000) * 1000);
-#ifdef _WIN32
-      int rc = select(0, &readFds, nullptr, nullptr, &tv);
-#else
-      int rc = select(static_cast<int>(sockfd) + 1, &readFds, nullptr, nullptr, &tv);
-#endif
+      auto remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+      int rc = WaitForSocket(sockfd, /*forWrite=*/false, remainingMs);
       if (rc == 0)
         return 0; // timed out with nothing to show for it
       if (rc < 0)
