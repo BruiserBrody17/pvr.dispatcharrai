@@ -1690,6 +1690,66 @@ the only `std::stod()`/`std::stof()` call anywhere in the addon's C++
 source (checked directly, not assumed), so this closes the entire class
 of this specific bug on the native side, not just this one call site.
 
+**A series rule created with "Record all episodes" or "Record only new
+episodes" appeared correctly in Kodi and in Dispatcharr, but the actual
+upcoming episode never got marked to record -- reported live (2026-09-10)
+for a channel with a channel-level EPG-data override.** Both
+`POST .../series-rules/` and the immediate `POST .../evaluate/` reported
+success throughout, and the EPG data itself was fine (confirmed the exact
+programme, byte-identical title, was in the live `/output/epg` export for
+that channel) -- so the create/evaluate round trip and the guide data were
+both innocent. Root cause traced to Dispatcharr's own channel data:
+`Channel.tvg_id` and `Channel.effective_epg_data_id` can point at two
+*different* EPGData rows. For the reported channel, an EPG-data override
+(set by an auto-channel-merge process) had repointed `effective_epg_data_id`
+at a different EPG source's row without updating `tvg_id` to match --
+confirmed directly against the API: the channel's own `tvg_id` field
+resolved to one EPGData row (a different, unrelated EPG source), while
+`effective_epg_data_id` -- the one actually driving the channel's displayed
+guide -- pointed at a completely different row with a completely different
+`tvg_id`. `CreateSeriesRule()`/`UpdateTimer()`/`DeleteTimer()` all read
+`Channel.tvgId` (this addon's cached copy of the channel's own field) when
+building a series-rule request, so the rule was created against the
+*wrong* EPGData row every time -- one Dispatcharr's own `evaluate/` could
+successfully resolve (hence "success" with nothing scheduled), but which
+had no matching programme data. This matches a real, general Dispatcharr
+bug class: v0.30.0's own changelog describes "series rules resolving the
+wrong EPG copy when the same tvg_id exists on multiple sources, and rules
+that silently scheduled nothing when the channel used an override EPG,"
+fixed there by letting new rules pin a specific `epg_source_id` -- but that
+fix only helps a rule that already carries the *correct* tvg_id to begin
+with; it doesn't correct a channel whose own `tvg_id` field has drifted
+from what its `effective_epg_data_id` actually points to, which is what
+was reproduced here. Fixed addon-side with `DispatcharrClient::
+ResolveSeriesRuleTvgId()`: before building a series-rule request, look up
+the tvg_id that `Channel.epgDataId` (the effective id) actually resolves
+to via `GET /api/epg/epgdata/{id}/`, and use that instead of the channel's
+own (possibly stale) `tvgId` -- falling back to it if there's no override
+or the lookup fails, so a channel without this kind of drift (the common
+case) is unaffected. Confirmed end-to-end against the live instance:
+deleted the stale rule, recreated it through Kodi with the fix deployed,
+and Dispatcharr immediately scheduled a real recording for the specific
+upcoming episode that had never been matched before.
+
+**A series rule's own row in Kodi's Timer rules list showed `12/31/1969`
+as its start and end time -- reported live (2026-09-10), right after the
+fix above.** A series rule is an EPG-title match, not a fixed schedule, so
+it has no time of its own -- but its `PVR_TIMER` object never called
+`SetStartTime()`/`SetEndTime()` at all, leaving Kodi's zero-initialized
+default (rendered in local time as the Unix epoch). Unlike a recurring
+rule, whose own row already gets a real time window from its own fields,
+and whose materialized children already link back to it via
+`recurringRuleId`/`SetParentClientIndex()`, a series rule's children were
+never linked back to it either. Fixed by matching each series rule to its
+earliest known upcoming/in-progress `Recording` (by channel + title --
+Dispatcharr's own rule identity, title+tvg_id+epg_source_id, already rules
+out two rules sharing a title on one channel, so this is unambiguous) and
+using that occurrence's real times on the rule's own row, plus wiring up
+`SetParentClientIndex()` the same way recurring rules already do so the
+matching recording nests under the rule in Kodi's UI too. Confirmed live:
+after the fix, the rule's own row showed the same real start/end time as
+its matched child recording instead of the epoch.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
