@@ -2895,7 +2895,19 @@ contract that its caller already handles.
 
 Verified: the same UUID-validation logic tested standalone confirms a
 real UUID passes and `"../recordings"` (along with empty/`None`/a
-plain non-UUID string) is rejected. Not independently confirmed
-against a live Dispatcharr instance this pass -- redeploying the fixed
-plugin and re-attempting the exploit payload against a real install
-would be the next step to fully close this out.
+plain non-UUID string) is rejected.
+
+**Confirmed live against a real instance (2026-09-10), fixed plugin
+redeployed.** Deliberately didn't attempt the actual destructive path
+(a traversal `channel_uuid` all the way through to `stop_buffer`'s
+`shutil.rmtree()`) against real data -- the exploit's entry point is
+what needed confirming, not the blast radius. Three malicious
+`start_buffer` payloads (`"../recordings"`, `"not-a-uuid"`,
+`"../../../etc"`) each came back `{"status": "error", "message":
+"channel_uuid is required..."}` -- rejected by `_resolve_channel_uuid()`
+before any path was ever built, confirmed via `list_buffers` showing
+nothing was created. A real channel's `uuid` (fetched live from
+`/api/channels/channels/`) still passed validation and worked
+end-to-end: `start_buffer` returned a real `access_token`/`http_port`,
+`list_buffers` showed it tracked, and `stop_buffer` cleaned it up
+normally afterward -- confirming the fix doesn't break legitimate use.
