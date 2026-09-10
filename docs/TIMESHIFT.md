@@ -2832,3 +2832,70 @@ Verified with a test confirming `round(float("inf"))` genuinely raises
 parser returns the segment with `duration_ms: 0` instead of failing the
 whole manifest.
 
+
+### `channel_uuid` path traversal in every `run/` action, found via a full-codebase security review
+
+Found via a security-focused review pass (2026-09-10), not a live
+incident -- `channel_uuid` arrives at every `run/` action
+(`start_buffer`, `stop_buffer`, `heartbeat`, `get_live_manifest`) as a
+caller-supplied string from `_resolve_channel_uuid()`, with no
+format/UUID validation anywhere in the file and no server-side lookup
+against a real Dispatcharr channel. It flowed unsanitized into
+`_channel_dir()` (`Path(storage_path) / str(channel_uuid)`), used by
+`_start_ffmpeg()` to `mkdir` a channel directory, persisted verbatim
+into Redis-backed buffer state, and later re-read by
+`_remove_channel_files()` to `shutil.rmtree(channel_dir)` -- reachable
+via `stop_buffer`, the idle reaper, and the `BufferFailedError`
+self-heal path in `_get_live_manifest()`.
+
+Confirmed exploitable, not just theoretical: `_BufferRequestHandler.
+_resolve_path()` (the plugin's own HTTP file server) already defends
+against `..` traversal for file-serving -- a real `".." in parts`
+rejection plus a `resolve()`-based containment check -- but that same
+protection was never applied to `channel_uuid` values accepted by the
+`run/` action handlers that build these mkdir/rmtree paths. The `run/`
+API requires a Dispatcharr admin account, but that account is only
+expected to have scoped control (starting/stopping a per-channel live
+buffer under `storage_path`), not unscoped filesystem access. A caller
+sending `{"action": "start_buffer", "params": {"channel_uuid":
+"../recordings"}}` would resolve `_channel_dir` to
+`storage_path/../recordings`; `mkdir(parents=True, exist_ok=True)`
+silently no-ops since it already exists; a later `stop_buffer` (or the
+idle reaper, or a triggered `get_live_manifest` self-heal teardown)
+then runs `shutil.rmtree()` on that resolved path -- recursively
+deleting a directory entirely outside `storage_path`, limited only by
+what the Dispatcharr container process can reach on disk.
+
+**Fixed at two layers.** Primary defense: `_resolve_channel_uuid()` now
+validates the resolved value as a well-formed UUID (`uuid.UUID(...)`)
+and returns `None` for anything else -- every action already treats a
+`None` return identically to a missing `channel_uuid` (their existing
+"channel_uuid is required" response), so this closes the normal attack
+surface with no new error-handling code needed at any of the four call
+sites. Defense in depth: `_channel_dir()` itself -- the one place every
+caller actually builds a filesystem path from a `channel_uuid` --
+raises `ValueError` for a non-UUID value too, in case a pre-fix
+Redis-stored buffer entry still carries an unvalidated value written
+by an older version of this plugin. `_remove_channel_files()` and
+`_get_live_manifest()` (previously inlining `Path(storage_path) /
+channel_uuid` directly rather than calling `_channel_dir()`) were
+switched to call it, closing both the validation gap and a small
+pre-existing code duplication at once. Each of the three call sites
+that can now see this `ValueError` handles it consistently with its
+own existing contract: `_start_ffmpeg()`'s caller (`_start_buffer`)
+already has a broad `except Exception` around the call, converting it
+to the normal `{"status": "error", ...}` response with no change
+needed; `_remove_channel_files()` catches it locally and logs+skips
+the removal (matching its existing best-effort-cleanup handling of
+`OSError`), so `_teardown_buffer()` still proceeds to delete the
+corrupted Redis entry either way rather than getting stuck retrying it
+forever; `_get_live_manifest()` re-raises it as a `RuntimeError`,
+matching its own established "can't produce a manifest" error
+contract that its caller already handles.
+
+Verified: the same UUID-validation logic tested standalone confirms a
+real UUID passes and `"../recordings"` (along with empty/`None`/a
+plain non-UUID string) is rejected. Not independently confirmed
+against a live Dispatcharr instance this pass -- redeploying the fixed
+plugin and re-attempting the exploit payload against a real install
+would be the next step to fully close this out.

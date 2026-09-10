@@ -108,6 +108,7 @@ import socket
 import subprocess
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -197,6 +198,23 @@ def _iter_buffer_states():
 
 
 def _channel_dir(storage_path: str, channel_uuid: str) -> Path:
+    # Validated as a well-formed UUID before ever being used as a path
+    # segment. channel_uuid can reach here from caller-supplied run/
+    # action params (_resolve_channel_uuid() rejects a non-UUID value
+    # before it gets this far, in the normal case) or from Redis-
+    # persisted buffer state (which a pre-fix version of this plugin
+    # could have written unvalidated) -- checking here too, at the one
+    # place every caller actually builds a filesystem path, closes both.
+    # A value like "../recordings" would otherwise let start_buffer's
+    # mkdir and stop_buffer's/the reaper's later shutil.rmtree() (see
+    # _remove_channel_files()) operate entirely outside storage_path --
+    # the same class of traversal _BufferRequestHandler._resolve_path()
+    # already guards against for the HTTP file server, just not
+    # previously applied here.
+    try:
+        uuid.UUID(str(channel_uuid))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(f"invalid channel_uuid: {channel_uuid!r}") from exc
     return Path(storage_path) / str(channel_uuid)
 
 
@@ -760,7 +778,17 @@ def _remove_channel_files(state: dict, logger):
     # shutil.rmtree rather than a flat glob+unlink+rmdir: simpler, and
     # robust to whatever this directory happens to contain rather than
     # assuming a flat file list.
-    channel_dir = Path(state["storage_path"]) / state["channel_uuid"]
+    try:
+        channel_dir = _channel_dir(state["storage_path"], state["channel_uuid"])
+    except ValueError:
+        # A corrupted/pre-fix Redis entry, not a real channel -- nothing
+        # safe to remove. Caller (_teardown_buffer) still proceeds to
+        # delete the Redis state itself either way, so this doesn't get
+        # stuck retrying the same bad entry forever.
+        logger.error(
+            "timeshift_buffer: refusing to remove files for invalid channel_uuid %r", state.get("channel_uuid")
+        )
+        return
     try:
         shutil.rmtree(channel_dir)
     except FileNotFoundError:
@@ -931,7 +959,15 @@ def _get_live_manifest(state: dict, logger) -> dict:
     every call, cache hit or not -- cheap, in-memory-only arithmetic, but
     not themselves cacheable, precisely because they're window-relative.)"""
     channel_uuid = state["channel_uuid"]
-    channel_dir = Path(state["storage_path"]) / channel_uuid
+    try:
+        channel_dir = _channel_dir(state["storage_path"], channel_uuid)
+    except ValueError as exc:
+        # Matches this function's own established contract (raise
+        # RuntimeError for "can't produce a manifest" conditions, already
+        # handled by _get_live_manifest_action()'s caller) rather than
+        # letting a corrupted/pre-fix Redis entry's ValueError propagate
+        # as an unrelated exception type.
+        raise RuntimeError(f"invalid channel_uuid in buffer state: {channel_uuid!r}") from exc
     live_playlist_path = channel_dir / "live.m3u8"
     if not live_playlist_path.is_file():
         # Two very different situations produce the identical symptom here
@@ -1279,7 +1315,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.6.0"
+    version = "0.6.1"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."
@@ -1561,7 +1597,22 @@ class Plugin:
 
     @staticmethod
     def _resolve_channel_uuid(params, settings_dict):
-        return params.get("channel_uuid") or settings_dict.get("test_channel_uuid")
+        raw = params.get("channel_uuid") or settings_dict.get("test_channel_uuid")
+        if not raw:
+            return None
+        # Rejects anything that isn't a real UUID before it ever reaches
+        # _channel_dir() -- every action below treats a None return here
+        # identically to a missing channel_uuid (their existing "channel_uuid
+        # is required" check), so a caller-supplied value like
+        # "../recordings" is refused with the same ordinary error response
+        # rather than being used to build a filesystem path. Dispatcharr's
+        # own channel uuid field is a real UUID, so a non-UUID-shaped value
+        # has no legitimate reason to reach here at all.
+        try:
+            uuid.UUID(str(raw))
+        except (ValueError, AttributeError, TypeError):
+            return None
+        return raw
 
     def _start_buffer(self, params, settings_dict, logger):
         channel_uuid = self._resolve_channel_uuid(params, settings_dict)
