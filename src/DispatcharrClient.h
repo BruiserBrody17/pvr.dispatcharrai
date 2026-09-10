@@ -107,6 +107,14 @@ struct Channel
   int groupId = -1;
   std::string groupName;
   std::string tvgId;
+  // The channel's *effective* epg_data id (its own, or a channel-level
+  // override's -- see effective_epg_data_id in the live schema). NOT
+  // guaranteed to be the EPGData row tvgId actually came from: a
+  // channel-level EPG-data override can repoint this at a different EPG
+  // source's row without updating the channel's own tvg_id field,
+  // confirmed live (an auto-channel-merge tool did exactly this) -- see
+  // ResolveSeriesRuleTvgId()'s own comment. 0 if absent.
+  int epgDataId = 0;
   // Catch-up/archive playback, backed by the upstream provider's own
   // archive (Xtream "tv_archive"), not a generic Dispatcharr-side rolling
   // timeshift buffer for every channel -- see docs/API_NOTES.md.
@@ -465,6 +473,23 @@ public:
   // deleted by DELETE /api/channels/series-rules/?title=...&tvg_id=...
   // (confirmed against the live OpenAPI schema), not by path id.
   bool DeleteSeriesRule(const std::string& title, const std::string& tvgId, std::string& error);
+  // Resolves the tvg_id that actually backs a channel's *effective* EPG
+  // data row (its epgDataId), rather than trusting the channel's own
+  // (possibly stale) tvgId field directly -- confirmed live against a real
+  // instance: a channel-level EPG-data override had repointed epgDataId at
+  // a different EPG source's row (an auto-channel-merge tool's doing)
+  // without updating the channel's own tvg_id, so the channel's tvgId
+  // matched a *different*, non-effective EPGData row entirely. Series-rule
+  // create/evaluate on Dispatcharr's side matches purely by tvg_id, so
+  // that stale value made it resolve against the wrong EPG copy and
+  // silently schedule nothing -- POST .../series-rules/ and .../evaluate/
+  // both reported success throughout. Best-effort: falls back to
+  // fallbackTvgId (the channel's own tvgId) if epgDataId is 0 or the
+  // lookup fails, so a channel without this kind of drift -- the common
+  // case -- behaves exactly as before, at the cost of one extra request
+  // per series-rule add/update/delete (a rare, user-triggered action, not
+  // part of bulk channel refresh).
+  std::string ResolveSeriesRuleTvgId(int epgDataId, const std::string& fallbackTvgId);
 
   bool GetRecurringRules(std::vector<RecurringRule>& out, std::string& error);
   // daysOfWeek: 0=Monday..6=Sunday (see RecurringRule's own comment).
