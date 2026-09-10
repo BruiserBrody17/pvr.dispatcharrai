@@ -55,6 +55,16 @@ platform.
   cite exactly how something was confirmed (a real endpoint response, a
   real device test) rather than just asserting behavior -- keep doing
   that instead of trusting Dispatcharr's own docs/schema at face value.
+- **When removing or changing code, a setting, or CI behavior, grep
+  `docs/` (and `CHANGELOG.md`) for references to it before calling the
+  change done.** `docs/*.md` cites specific function/setting names and
+  exact CI commands as part of its "confirmed against real source"
+  standard -- a removal or behavior change that isn't cross-checked
+  leaves a dangling reference or a stale claim behind, silently, since
+  nothing else in this repo catches it (no automated test suite, no
+  doc-linting). Real recurring failure mode, not hypothetical: found
+  and fixed 9 of these in one pass (2026-09-10) tracing back to feature
+  removals and CI changes that never got cross-checked this way.
 - **Comments explain WHY, not WHAT**: this codebase's existing comments
   document non-obvious constraints, confirmed-live findings, and
   workarounds for specific bugs -- not a restatement of the code. Match
@@ -75,9 +85,12 @@ platform.
   right now, not a literal dependency: Dispatcharr could stay `0.x` for
   years while being perfectly API-stable, or hit `1.0.0` while this addon
   still has open bugs -- either way, judge this project on its own merits.
-- **Branch for anything nontrivial, as of 2026-09-07.** A trivial,
-  low-risk, one-line-shaped fix can still go straight to `master`, same
-  as this project has done so far. Anything bigger -- a real bug
+- **Branch for anything nontrivial, as of 2026-09-07.** The dividing
+  line is functional/behavioral risk, not line count or file count --
+  a trivial, low-risk fix (including a doc-only wording/correction pass
+  spanning multiple paragraphs or files, as long as it changes no code
+  behavior) can still go straight to `master`, same as this project has
+  done so far. Anything that changes real behavior -- a real bug
   investigation, a new feature, a risky refactor -- gets its own
   short-lived branch, merged back to `master` once verified, then
   deleted. This is deliberately not full GitFlow (no perpetual `develop`/
