@@ -203,7 +203,8 @@ Also found via the `pvr.hts`/Tvheadend comparison above: `pvr.hts`
 added support for Kodi requesting a *second* concurrent recording stream
 open on the same addon (its v22.5.0 changelog entry says specifically
 for Kodi's own recording-thumbnail generation). This addon has never
-supported that, and does today, in two separate ways:
+supported that, and still doesn't fully today -- for two separate
+reasons:
 
 1. `CAddonDispatcharr` (`addon.cpp`) used to track the single PVR
    instance it expected via one raw pointer, unconditionally cleared on
