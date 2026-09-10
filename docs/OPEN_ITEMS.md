@@ -559,3 +559,58 @@
   logic is platform-independent and already has real live-verification
   from earlier sessions; the gap is in this testing technique
   (JSON-RPC-driven, not GUI-driven), not in the feature.
+
+## Tooling / infrastructure (not addon-specific)
+
+- **No automated test suite exists (requested 2026-09-10) -- recommended
+  approach, not yet started.** Two genuinely separable problems, since
+  this addon can't be compiled standalone (needs Kodi's own binary-addon
+  build harness) while the two companion plugins are plain Python with
+  no such constraint:
+  - **Python plugins** (`dispatcharr-plugin/recording_edl`,
+    `dispatcharr-plugin/timeshift_buffer`): the lower-effort starting
+    point -- add `pytest` alongside the existing `ruff.toml`. Both
+    plugins already have real, isolated bugs that were verified with
+    one-off manual test scripts during development (e.g.
+    `docs/RECORDING_EDL.md`'s `_parse_edl()` nan/inf fix, "Verified
+    with a test reproducing the exact pre-fix crash") -- a real pytest
+    suite would just formalize and keep that same style of test instead
+    of writing it, running it once, then discarding it.
+  - **C++ addon**: don't attempt to test `PVRDispatcharr`/
+    `DispatcharrClient` wholesale -- that would mean mocking Kodi's
+    entire addon-instance API and/or standing up a fake Dispatcharr
+    HTTP server, disproportionate effort for what's fundamentally still
+    manual/live-hardware verification territory (per this project's own
+    established `CLAUDE.md`/README convention). Instead, add a small,
+    separate CMake target/executable (a header-only framework like
+    Catch2 would avoid a real dependency) that compiles and tests only
+    the Kodi/Dispatcharr-independent pure-logic pieces already living in
+    `src/` -- `XmlTvParser`'s field extraction, the recurring-rule
+    timezone offset math (`ComputeKnownZoneOffsetMinutes()` and its
+    nth-weekday/last-weekday helpers), `MapCategoriesToGenreType()`'s
+    keyword scan, and the broadcast-id hash in `GetEPGForChannel()`.
+    None of these touch `kodi::`-namespaced types, so none need the
+    Kodi ABI at all -- a real, buildable-standalone test target, not a
+    redesign of the addon's own architecture.
+- **No doc-linting exists (requested 2026-09-10) -- recommended
+  approach, not yet started.** Motivated directly by this session's own
+  experience: found and fixed 9 dangling/stale references across
+  `docs/`/`CHANGELOG.md` in one pass, several tracing back to a feature
+  removal or CI change that was never cross-checked against the docs
+  describing it (see `CLAUDE.md`'s new convention bullet on this). An
+  off-the-shelf markdown-link-checker (e.g. `markdown-link-check`)
+  would catch a genuinely different class of bug than what this session
+  actually found, though -- every dangling reference found here was a
+  plain-English citation (`See docs/EPG.md's "Section Title" section`,
+  or a backtick-quoted function/setting name), not a broken
+  `[text](url)` hyperlink, so a generic link-checker wouldn't have
+  caught any of them. What would: a small custom script, specific to
+  this project's own citation convention, that (1) parses every
+  `See docs/X.md's "..." section` pattern and confirms that heading
+  text actually exists in the target file, and (2) greps every
+  backtick-quoted `PascalCase()`/`camelCase()` function name and
+  `snake_case` setting id mentioned in `docs/*.md`/`CHANGELOG.md`
+  against real occurrences in `src/`/`resources/settings.xml`, flagging
+  anything no longer found. Both checks are cheap and specific enough
+  to actually run by hand periodically (or eventually wire into CI)
+  rather than needing a general-purpose doc-linting product.
