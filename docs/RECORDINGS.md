@@ -1750,6 +1750,51 @@ matching recording nests under the rule in Kodi's UI too. Confirmed live:
 after the fix, the rule's own row showed the same real start/end time as
 its matched child recording instead of the epoch.
 
+**A `<date>` value can be a series-level placeholder, not a real
+per-episode original air date -- reported live (2026-09-10) as a
+recording showing "10/15/2001" as its date despite being a genuinely new,
+same-day episode, not a rerun.** Initially assumed to be legitimate data
+(the affected show has aired since 2001, so an old air date isn't implausible on its
+face) until the user pointed out these specific recordings weren't
+reruns. Checked the raw Dispatcharr data for five upcoming instances of
+the same daily show, airing on five different calendar dates: all five
+carried the *identical* `custom_properties.program.original_air_date`
+("2001-10-15"), and none had any `season`/`episode`/`onscreen_episode`
+identifier at all -- unlike an actual episodic programme (an episodic programme),
+which has real, distinct per-episode identifiers. A single fixed date
+across every distinct airing of a still-running daily show is not a real
+fact about any of those specific episodes; it's almost certainly a
+series-level value (possibly from Dispatcharr's TVMaze poster/metadata
+cross-reference, given the poster URL's domain, rather than the raw
+Schedules Direct guide feed itself) stamped onto every instance because
+the guide source has no true per-episode date for an evergreen talk show.
+`GetEPGForChannel()` was mapping XMLTV's `<date>` element straight to
+Kodi's `FirstAired` unconditionally (see `docs/EPG.md`), so this
+misleading value surfaced anywhere Kodi shows `FirstAired` for a timer or
+recording tied to that EPG entry. Fixed by only setting `FirstAired` when
+the entry also has a real season or episode number (`entry.seasonNumber
+> 0 || entry.episodeNumber > 0`, the same signal already used for
+`EPG_TAG_FLAG_IS_SERIES`) -- a programme with real episode identity keeps
+getting its `FirstAired` exactly as before.
+
+**Update: the same `<date>` value also leaked through via `Year`,
+independently of the `FirstAired` fix above -- caught live (2026-09-10)
+immediately after deploying it, when a fixed recording's home-screen date
+badge changed from the full misleading date to a bare misleading year
+("2001") instead of disappearing.** Root cause: `Year` (`SetYear()`,
+`<date>`'s leading 4 digits) was left unconditional in the same pass that
+guarded `FirstAired`, even though it derives from the exact same
+unreliable value for the exact same episode-less programmes -- Kodi's
+widget fell back to it once `FirstAired` was empty rather than showing
+nothing. Fixed by applying the identical `entry.seasonNumber > 0 ||
+entry.episodeNumber > 0` guard to `Year` too. Confirmed live: of the five
+"the affected show" broadcasts checked via `PVR.GetBroadcasts`,
+four now return both `firstaired: ""` and `year: 0`; the fifth (already
+actively recording at deploy time) still returns the old cached
+`2001-10-15`/`2001` for both fields, from Kodi's own separate EPG cache
+-- the same pre-existing gotcha noted in the entry above, not a gap in
+this fix.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
