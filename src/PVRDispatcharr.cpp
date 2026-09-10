@@ -2005,7 +2005,7 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
-    std::string tvgId = ch ? ch->tvgId : "";
+    std::string tvgId = ch ? m_client.ResolveSeriesRuleTvgId(ch->epgDataId, ch->tvgId) : "";
     ok = m_client.CreateSeriesRule(static_cast<int>(timer.GetClientChannelUid()), tvgId, timer.GetTitle(),
                                    timer.GetPreventDuplicateEpisodes() != 0, error);
   }
@@ -2082,7 +2082,7 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
   {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
-    std::string tvgId = ch ? ch->tvgId : "";
+    std::string tvgId = ch ? m_client.ResolveSeriesRuleTvgId(ch->epgDataId, ch->tvgId) : "";
     // Upsert semantics, same call AddTimer() uses to create one --
     // confirmed against Dispatcharr's own source that re-POSTing with
     // the same identity (title + tvg_id) edits mode/title_mode/
@@ -2205,7 +2205,7 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
     // create them (see CreateSeriesRule() above).
     std::lock_guard<std::mutex> lock(m_dataMutex);
     const Channel* ch = FindChannelByUid(static_cast<int>(timer.GetClientChannelUid()));
-    std::string tvgId = ch ? ch->tvgId : "";
+    std::string tvgId = ch ? m_client.ResolveSeriesRuleTvgId(ch->epgDataId, ch->tvgId) : "";
     ok = m_client.DeleteSeriesRule(timer.GetTitle(), tvgId, error);
   }
   else if (isRecurring)
