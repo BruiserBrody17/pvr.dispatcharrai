@@ -432,8 +432,8 @@ void PVRDispatcharr::StartRecordingRefreshThread()
           if (stopped)
             break;
           RenewRecurringRules();
-          TriggerRecordingUpdate();
-          TriggerTimerUpdate();
+          InvalidateAndTriggerRecordingUpdate();
+          InvalidateAndTriggerTimerUpdate();
         }
       });
 }
@@ -567,8 +567,8 @@ void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
 
     if (m_debugLogging)
       kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharrai: realtime update received: %s", eventType.c_str());
-    TriggerRecordingUpdate();
-    TriggerTimerUpdate();
+    InvalidateAndTriggerRecordingUpdate();
+    InvalidateAndTriggerTimerUpdate();
   }
   catch (const nlohmann::json::exception&)
   {
@@ -816,6 +816,58 @@ bool PVRDispatcharr::EnsureEpgLoaded()
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_epgByChannelNumber = std::move(parsed);
   m_epgLoadedAt = now;
+  return true;
+}
+
+bool PVRDispatcharr::EnsureRecordingsLoaded()
+{
+  auto now = std::chrono::steady_clock::now();
+  bool stale = m_recordingsCachedAt.time_since_epoch().count() == 0 ||
+               now - m_recordingsCachedAt > std::chrono::seconds(kRecordingsAndTimersCacheTtlSeconds);
+  if (!stale)
+    return false;
+
+  std::vector<Recording> recordings;
+  std::string error;
+  if (!m_client.GetRecordings(recordings, error))
+  {
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load recordings: %s", error.c_str());
+    return false;
+  }
+
+  if (m_debugLogging)
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: recordings cache refreshed (%zu recording(s))", recordings.size());
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  m_cachedRecordings = std::move(recordings);
+  m_recordingsCachedAt = now;
+  return true;
+}
+
+bool PVRDispatcharr::EnsureTimerRulesLoaded()
+{
+  auto now = std::chrono::steady_clock::now();
+  bool stale = m_timerRulesCachedAt.time_since_epoch().count() == 0 ||
+               now - m_timerRulesCachedAt > std::chrono::seconds(kRecordingsAndTimersCacheTtlSeconds);
+  if (!stale)
+    return false;
+
+  // Both best-effort, same as before this cache existed: an empty rules
+  // list (rather than a hard failure) just means no series/recurring
+  // timers show up this refresh, not that recordings/one-time timers
+  // should be unavailable too.
+  std::vector<TimerRule> rules;
+  std::vector<RecurringRule> recurringRules;
+  std::string error;
+  m_client.GetTimerRules(rules, error);
+  m_client.GetRecurringRules(recurringRules, error);
+
+  if (m_debugLogging)
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: timer-rules cache refreshed (%zu series, %zu recurring)",
+              rules.size(), recurringRules.size());
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  m_cachedTimerRules = std::move(rules);
+  m_cachedRecurringRules = std::move(recurringRules);
+  m_timerRulesCachedAt = now;
   return true;
 }
 
@@ -1499,10 +1551,8 @@ PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
     amount = 0; // Dispatcharr recording trash/undelete not implemented here
     return PVR_ERROR_NO_ERROR;
   }
-  std::vector<Recording> recordings;
-  std::string error;
-  if (!m_client.GetRecordings(recordings, error))
-    return PVR_ERROR_SERVER_ERROR;
+  EnsureRecordingsLoaded();
+  std::lock_guard<std::mutex> lock(m_dataMutex);
   // In-progress recordings belong here too, not just upcoming/scheduled
   // ones excluded below -- Kodi's own CPVRRecording::IsInProgress() cross-
   // references GetRecordings() against the active timer list by
@@ -1511,8 +1561,8 @@ PVR_ERROR PVRDispatcharr::GetRecordingsAmount(bool deleted, int& amount)
   // recording. Omitting in-progress ones here (as an earlier version of
   // this code did) made them show up only as an uneditable timer entry,
   // with nothing to actually click and play.
-  amount = static_cast<int>(
-      std::count_if(recordings.begin(), recordings.end(), [](const Recording& r) { return !r.isUpcoming; }));
+  amount = static_cast<int>(std::count_if(m_cachedRecordings.begin(), m_cachedRecordings.end(),
+                                          [](const Recording& r) { return !r.isUpcoming; }));
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -1521,15 +1571,9 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   if (deleted)
     return PVR_ERROR_NO_ERROR;
 
-  std::vector<Recording> recordings;
-  std::string error;
-  if (!m_client.GetRecordings(recordings, error))
-  {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to load recordings: %s", error.c_str());
-    return PVR_ERROR_SERVER_ERROR;
-  }
-
-  for (const auto& rec : recordings)
+  EnsureRecordingsLoaded();
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  for (const auto& rec : m_cachedRecordings)
   {
     // Only a not-yet-started recording has nothing to play at all; skip
     // that case. In-progress ones belong here too (see
@@ -1567,19 +1611,27 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
 
 bool PVRDispatcharr::FindRecordingById(int id, dispatcharr::Recording& recordingOut)
 {
-  std::vector<Recording> recordings;
   std::string error;
-  if (!m_client.GetRecordings(recordings, error))
-    return false;
-  for (const auto& rec : recordings)
+  return m_client.GetRecordingById(id, recordingOut, error);
+}
+
+void PVRDispatcharr::InvalidateAndTriggerRecordingUpdate()
+{
   {
-    if (rec.id == id)
-    {
-      recordingOut = rec;
-      return true;
-    }
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    m_recordingsCachedAt = {};
   }
-  return false;
+  TriggerRecordingUpdate();
+}
+
+void PVRDispatcharr::InvalidateAndTriggerTimerUpdate()
+{
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    m_recordingsCachedAt = {};
+    m_timerRulesCachedAt = {};
+  }
+  TriggerTimerUpdate();
 }
 
 void PVRDispatcharr::PersistApiKeyIfChanged(const std::string& keyBefore)
@@ -1636,7 +1688,7 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete recording %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
-  TriggerRecordingUpdate();
+  InvalidateAndTriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -1649,7 +1701,7 @@ PVR_ERROR PVRDispatcharr::RenameRecording(const kodi::addon::PVRRecording& recor
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to rename recording %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
-  TriggerRecordingUpdate();
+  InvalidateAndTriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -1856,28 +1908,32 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
 
 PVR_ERROR PVRDispatcharr::GetTimersAmount(int& amount)
 {
-  std::vector<Recording> recordings;
-  std::vector<TimerRule> rules;
-  std::vector<RecurringRule> recurringRules;
-  std::string error;
-  m_client.GetRecordings(recordings, error);
-  m_client.GetTimerRules(rules, error);
-  m_client.GetRecurringRules(recurringRules, error);
-  int scheduled = static_cast<int>(std::count_if(recordings.begin(), recordings.end(),
+  EnsureRecordingsLoaded();
+  EnsureTimerRulesLoaded();
+  std::lock_guard<std::mutex> lock(m_dataMutex);
+  int scheduled = static_cast<int>(std::count_if(m_cachedRecordings.begin(), m_cachedRecordings.end(),
                                                  [](const Recording& r) { return r.isInProgress || r.isUpcoming; }));
-  amount = scheduled + static_cast<int>(rules.size()) + static_cast<int>(recurringRules.size());
+  amount = scheduled + static_cast<int>(m_cachedTimerRules.size()) + static_cast<int>(m_cachedRecurringRules.size());
   return PVR_ERROR_NO_ERROR;
 }
 
 PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
 {
-  std::string error;
-
+  EnsureRecordingsLoaded();
+  EnsureTimerRulesLoaded();
+  // Copied out under the lock, then processed lock-free below -- this
+  // function's own processing (hashing, multi-pass matching) never
+  // touches any other shared state, so there's no need to hold
+  // m_dataMutex for all of it, only for this snapshot.
   std::vector<Recording> recordings;
-  m_client.GetRecordings(recordings, error);
-
   std::vector<TimerRule> rules;
-  m_client.GetTimerRules(rules, error);
+  std::vector<RecurringRule> recurringRules;
+  {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    recordings = m_cachedRecordings;
+    rules = m_cachedTimerRules;
+    recurringRules = m_cachedRecurringRules;
+  }
 
   // Series rules have no numeric id at all in Dispatcharr's API (confirmed
   // against a real rule: {mode, title, tvg_id, channel_id, title_mode,
@@ -1975,8 +2031,6 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
     results.Add(timer);
   }
 
-  std::vector<RecurringRule> recurringRules;
-  if (m_client.GetRecurringRules(recurringRules, error))
   {
     int offsetSeconds = EffectiveRecurringRuleUtcOffsetMinutes() * 60;
     for (const auto& rule : recurringRules)
@@ -2105,7 +2159,7 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to create timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
-  TriggerTimerUpdate();
+  InvalidateAndTriggerTimerUpdate();
   // A one-time recording for a start time at or near "now" (or an already
   // in-progress EPG event, e.g. Kodi's "Record" button on a live guide
   // entry) may already be actively recording by the time this returns.
@@ -2114,27 +2168,29 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
   // did not appear under Recordings for several minutes without it, and a
   // full Kodi restart was what actually surfaced it. Harmless no-op for a
   // genuinely future recording or a series rule.
-  TriggerRecordingUpdate();
+  InvalidateAndTriggerRecordingUpdate();
   // Dispatcharr fills in the recording's real title (custom_properties.
   // program.title, see GetRecordings()) asynchronously, a moment after it
   // actually starts -- confirmed: right at creation, custom_properties is
-  // still `{}`. The immediate TriggerRecordingUpdate() above fires before
-  // that happens, so Kodi's first (and, confirmed, often *only* --
-  // nothing else prompts it to ask again) fetch gets our "Recording <id>"
-  // fallback and keeps showing it indefinitely, even after the recording
-  // finishes. A second, delayed trigger gives Dispatcharr time to enrich
-  // it first. Detached: AddTimer() shouldn't block Kodi's calling thread
-  // for this. Recurring rules are excluded the same way series rules
-  // are: no Recording exists yet right after creation either -- the
-  // first one only appears once Dispatcharr's own hourly scheduler task
-  // materializes it, not synchronously here.
+  // still `{}`. The immediate InvalidateAndTriggerRecordingUpdate() above
+  // fires before that happens, so Kodi's first (and, confirmed, often
+  // *only* -- nothing else prompts it to ask again) fetch gets our
+  // "Recording <id>" fallback and keeps showing it indefinitely, even
+  // after the recording finishes. A second, delayed trigger (also
+  // invalidating the cache, not just re-triggering against a still-fresh
+  // one) gives Dispatcharr time to enrich it first. Detached: AddTimer()
+  // shouldn't block Kodi's calling thread for this. Recurring rules are
+  // excluded the same way series rules are: no Recording exists yet
+  // right after creation either -- the first one only appears once
+  // Dispatcharr's own hourly scheduler task materializes it, not
+  // synchronously here.
   if (timer.GetTimerType() != kTimerTypeSeries && timer.GetTimerType() != kTimerTypeRecurring)
   {
     std::thread(
         [this]()
         {
           std::this_thread::sleep_for(std::chrono::seconds(5));
-          TriggerRecordingUpdate();
+          InvalidateAndTriggerRecordingUpdate();
         })
         .detach();
   }
@@ -2245,14 +2301,14 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to update timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
-  TriggerTimerUpdate();
+  InvalidateAndTriggerTimerUpdate();
   // A rescheduled one-time recording (or a recurring rule's own edit,
   // which can add/remove materialized occurrences) changes what
   // GetRecordings() would return too, same reasoning as AddTimer()'s own
   // trigger -- series rules have no recording-list-visible effect from
   // an edit alone (evaluation is a separate, explicit step).
   if (!isSeries)
-    TriggerRecordingUpdate();
+    InvalidateAndTriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
 
@@ -2282,9 +2338,10 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
     // Deleting the rule also purges its future materialized recordings
     // server-side (confirmed against Dispatcharr's source:
     // RecurringRecordingRuleViewSet.perform_destroy calls
-    // purge_recurring_rule_impl), so the TriggerRecordingUpdate() below
-    // (fires for anything other than a series rule) correctly reflects
-    // those disappearing too, not just the rule itself.
+    // purge_recurring_rule_impl), so the
+    // InvalidateAndTriggerRecordingUpdate() below (fires for anything
+    // other than a series rule) correctly reflects those disappearing
+    // too, not just the rule itself.
     int ruleId = static_cast<int>(timer.GetClientIndex() & ~kRecurringRuleIndexFlag);
     ok = m_client.DeleteRecurringRule(ruleId, error);
   }
@@ -2308,12 +2365,12 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
     kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to delete timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
-  TriggerTimerUpdate();
+  InvalidateAndTriggerTimerUpdate();
   // Stopping a recording (forceDelete=true, see above) turns it into a
   // normal completed recording immediately, not just a future timer-list
   // change -- make sure Kodi's Recordings view picks that up too, same
   // reasoning as AddTimer()'s trigger.
   if (!isSeries)
-    TriggerRecordingUpdate();
+    InvalidateAndTriggerRecordingUpdate();
   return PVR_ERROR_NO_ERROR;
 }
