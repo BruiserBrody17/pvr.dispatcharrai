@@ -44,9 +44,9 @@
   ODROID/CoreELEC, and macOS (via the peer session) -> settle the
   settings-carryover question per device -> cut a release under the new
   name once all four platforms are confirmed working.
-- **Follow-up API survey: three more genuinely implementable findings,
-  beyond the recording-management ones below (found 2026-09-08, not
-  yet implemented).** Diffed all ~196 of Dispatcharr's real API paths
+- [x] **Follow-up API survey: three more genuinely implementable findings,
+  beyond the recording-management ones below (found 2026-09-08, all
+  four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths
   (its live `/api/schema/`) against every endpoint this addon actually
   calls (grepped from `src/DispatcharrClient.cpp`), then checked the
   promising gaps against Dispatcharr's real source rather than guessing:
@@ -174,9 +174,9 @@
   ruled out permanently -- revisit if either premise changes (e.g. a
   second Kodi device actually wants a different lineup than the main
   one).
-- **Three recording-management features TVHeadend has that this addon
+- [x] **Three recording-management features TVHeadend has that this addon
   doesn't, all confirmed implementable against Dispatcharr's real API
-  (found 2026-09-08, not yet implemented).** Recording rename/
+  (found 2026-09-08, all three implemented by 2026-09-09).** Recording rename/
   description edit (`POST /api/channels/recordings/{id}/update-metadata/`,
   writes into the exact `custom_properties.program.*` fields already
   read on the way in), recording file size (not a JSON field, but a
@@ -261,8 +261,8 @@
   seek-both-directions test, same clean result. Windows and CoreELEC
   now confirmed; macOS/Rocky Linux still untested for this specific
   fix.
-- **A consistent ~89.4s audio-sync-error reading on fresh stream opens,
-  harmless (2026-09-08).** Seen independently on Windows and Rocky
+- [x] **A consistent ~89.4s audio-sync-error reading on fresh stream opens,
+  harmless -- mechanism found, closed (2026-09-08/09).** Seen independently on Windows and Rocky
   Linux (addon 0.9.0 on both), clustered right around -89,400 to
   -89,500ms, only near the start of a stream and never recurring. No
   playback impact on either machine. Purely informational -- not
@@ -519,7 +519,7 @@
   churn pattern that broke the pid-based version -- both clean. Shipped
   in `1.0.7` / `timeshift_buffer` `1.0.5`. See `docs/TIMESHIFT.md`'s
   "1.0.7 follow-up #2" section for the full account.
-- **All four platforms now have a completed smoke-test pass** (Windows,
+- [x] **All four platforms now have a completed smoke-test pass** (Windows,
   Rocky Linux, CoreELEC/ODROID, macOS) -- Local timeshift mode is
   confirmed live on all four, closing out what was the last real gap in
   platform coverage.
