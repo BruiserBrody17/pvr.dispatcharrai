@@ -1731,6 +1731,25 @@ deleted the stale rule, recreated it through Kodi with the fix deployed,
 and Dispatcharr immediately scheduled a real recording for the specific
 upcoming episode that had never been matched before.
 
+**A series rule's own row in Kodi's Timer rules list showed `12/31/1969`
+as its start and end time -- reported live (2026-09-10), right after the
+fix above.** A series rule is an EPG-title match, not a fixed schedule, so
+it has no time of its own -- but its `PVR_TIMER` object never called
+`SetStartTime()`/`SetEndTime()` at all, leaving Kodi's zero-initialized
+default (rendered in local time as the Unix epoch). Unlike a recurring
+rule, whose own row already gets a real time window from its own fields,
+and whose materialized children already link back to it via
+`recurringRuleId`/`SetParentClientIndex()`, a series rule's children were
+never linked back to it either. Fixed by matching each series rule to its
+earliest known upcoming/in-progress `Recording` (by channel + title --
+Dispatcharr's own rule identity, title+tvg_id+epg_source_id, already rules
+out two rules sharing a title on one channel, so this is unambiguous) and
+using that occurrence's real times on the rule's own row, plus wiring up
+`SetParentClientIndex()` the same way recurring rules already do so the
+matching recording nests under the rule in Kodi's UI too. Confirmed live:
+after the fix, the rule's own row showed the same real start/end time as
+its matched child recording instead of the epoch.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
