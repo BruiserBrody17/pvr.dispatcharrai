@@ -167,9 +167,9 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
           {
             bool realZone = std::find(supported.begin(), supported.end(), timeZone) != supported.end();
             zoneKindNote = realZone ? "a real IANA zone, but this addon has no DST rule for it yet -- falling "
-                                       "back to manual offset entry"
-                                     : "not a recognized IANA zone at all (per Dispatcharr's own timezone list) "
-                                       "-- falling back to manual offset entry";
+                                      "back to manual offset entry"
+                                    : "not a recognized IANA zone at all (per Dispatcharr's own timezone list) "
+                                      "-- falling back to manual offset entry";
           }
         }
         kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: setting recurring_rule_timezone=%s (%s)",
@@ -219,17 +219,15 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       // comment), with nothing but a kodi.log line explaining why.
       if (m_liveTimeshiftMode == kLiveTimeshiftServer && !isAdmin)
       {
-        kodi::QueueNotification(
-            QUEUE_WARNING, "",
-            "Live TV pause/rewind is set to Server-side, but this Dispatcharr account "
-            "isn't an admin -- live channels will fail to play. Switch to Off or Local, "
-            "or use an admin account.");
+        kodi::QueueNotification(QUEUE_WARNING, "",
+                                "Live TV pause/rewind is set to Server-side, but this Dispatcharr account "
+                                "isn't an admin -- live channels will fail to play. Switch to Off or Local, "
+                                "or use an admin account.");
       }
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: could not check Dispatcharr admin status: %s",
-                adminError.c_str());
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: could not check Dispatcharr admin status: %s", adminError.c_str());
     }
   }
 
@@ -1688,9 +1686,8 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
             "pvr.dispatcharrai: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0, hlsDirStillPresent ? 1 : 0);
-  bool opened = useGrowingBuffer
-                    ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error)
-                    : m_client.OpenRecordingStream(id, error);
+  bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error)
+                                 : m_client.OpenRecordingStream(id, error);
   kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
             opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (!opened)

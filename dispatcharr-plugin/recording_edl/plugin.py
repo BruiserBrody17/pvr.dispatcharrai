@@ -647,7 +647,8 @@ class Plugin:
         if not recording_id:
             return {
                 "status": "error",
-                "message": "recording_id is required (pass it as a param, or paste one into the test_recording_id setting for manual testing)",
+                "message": "recording_id is required (pass it as a param, or paste one into "
+                "the test_recording_id setting for manual testing)",
             }
 
         from apps.channels.models import Recording
