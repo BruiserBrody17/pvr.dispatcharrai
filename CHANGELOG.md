@@ -126,7 +126,7 @@ the plugin-side half to take effect.
 ### Fixed
 
 - Live TV server-side timeshift: a second, distinct freeze from the
-  1.0.6 fix above, reported immediately after upgrading -- playback
+  1.0.6 fix below, reported immediately after upgrading -- playback
   could still stall permanently, this time within seconds of opening,
   with `ffmpeg`'s own demuxer logging `Packet corrupt`. Root cause: if
   the plugin ever reports a segment's byte size before a write has
@@ -295,8 +295,9 @@ Addon only, same as 1.0.1.
 - A self-heal API-key regeneration during an in-progress recording's open
   or a completed recording's read could immediately kill the playback
   that had just started, prompting a spurious "needs to restart" dialog.
-  Not a regression from either fix above -- an older, separate bug this
-  session's testing happened to surface. See `docs/RECORDINGS.md` for the
+  Not a regression from the macOS crash fix above or the 1.0.1 speed fix
+  below -- an older, separate bug this session's testing happened to
+  surface. See `docs/RECORDINGS.md` for the
   full root cause.
 
 ## [1.0.1] - 2026-09-06
