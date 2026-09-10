@@ -1795,6 +1795,32 @@ actively recording at deploy time) still returns the old cached
 -- the same pre-existing gotcha noted in the entry above, not a gap in
 this fix.
 
+**`RefreshInProgressRecordingManifest()` fetched every recording just to
+check one's `isInProgress` flag -- found via an efficiency review
+(2026-09-10), fixed and live-verified the same day.** This runs on every
+throttled manifest refresh during in-progress-recording playback (up to
+~2/sec), and was calling `GetRecordings()` -- a full `GET
+/api/channels/recordings/` plus a JSON parse of every recording returned
+-- purely to find the one matching `recordingId` and read its
+`isInProgress` flag. The original note flagging this left `GET
+/api/channels/recordings/{id}/` as "likely supports... but unconfirmed
+against real source" -- confirmed directly against a live instance before
+writing any code: real, `HTTP 200`, identical shape to a list item, a
+standard DRF `retrieve` route matching the already-used
+`{id}/stop/`/`{id}/extend/` siblings. New
+`DispatcharrClient::GetRecordingById()` uses it; `GetRecordings()`'s own
+per-item field-mapping was pulled out into `ParseRecordingJson()` so both
+paths share identical parsing rather than duplicating it. Live-verified
+against a real in-progress recording during actual playback: `kodi.log`'s
+existing timing breakdown showed `GetRecordingById 0.006-0.009s` on every
+refresh cycle (down from fetching and parsing the full recordings list --
+41 recordings on the live instance this was tested against), with
+`finished=0` correctly reflected throughout, exercising the exact same
+code path a real playback session already relies on. Deliberately not
+also `PVRDispatcharr::FindRecordingById()` -- a different, pre-existing
+helper that scans an already-in-memory `std::vector<Recording>` a caller
+already fetched, not a new REST call.
+
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
 Prompted by a "what does TVHeadend have that this addon doesn't"
