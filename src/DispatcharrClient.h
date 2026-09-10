@@ -756,6 +756,22 @@ private:
   // specific concurrency pattern. See m_probeCurlShareState's own comment.
   void* GetProbeCurlShare() const;
 
+  // Appends "X-API-Key: <apiKey>" to a curl_slist if apiKey is non-empty,
+  // returning the (possibly unchanged) list -- the "attach the current API
+  // key if we have one" step every raw-curl call site below needs. `headers`
+  // and the return value are void* (actually curl_slist*) for the same
+  // <curl/curl.h>-avoidance reason as GetCurlShare().
+  static void* AppendApiKeyHeaderIfPresent(void* headers, const std::string& apiKey);
+
+  // Sets the small group of curl options every easy handle in this class
+  // configures identically: SSL verification per m_config.verifySsl,
+  // m_config.timeoutSeconds, and the given share handle (GetCurlShare() for
+  // most callers, GetProbeCurlShare() for ProbeSegmentByteSize()'s
+  // concurrent probe burst -- see its own comment for why that one's kept
+  // separate). `curl`/`share` are void* (actually CURL*/CURLSH*) for the
+  // same reason as GetCurlShare().
+  void ApplyStandardCurlOptions(void* curl, void* share) const;
+
   // A tiny ranged GET with the current API key attached, used by
   // RefreshInProgressRecordingManifest() as a proactive self-heal check
   // (cheaper to catch a stale key here than mid-read of an actual
@@ -782,6 +798,20 @@ private:
   // returns false rather than blocking indefinitely if it times out, but
   // callers proceed with the URL regardless either way.
   bool WaitForTimeshiftPlaylistReady(const std::string& playlistUrl);
+
+  // Shared by every plugin run/ caller below (CallTimeshiftPluginAction(),
+  // StopTimeshiftBuffer(), GetRecordingEdl(), RefreshLiveManifest()):
+  // checks the outer {"success", "error"} envelope PluginRunAPIView always
+  // wraps a response in, then the plugin's own inner {"status", "message"}
+  // result -- see CallTimeshiftPluginAction()'s own comment for why both
+  // layers need checking. `pluginLabel` (e.g. "timeshift_buffer",
+  // "recording_edl") only feeds the two generic fallback error messages
+  // used when the response doesn't carry its own. `resultOut` is always
+  // set to the (possibly empty) inner result object on return, even on
+  // failure, so a caller needing a field from it either way (e.g.
+  // RefreshLiveManifest()'s "fatal") still can.
+  bool UnwrapPluginRunResult(const nlohmann::json& response, const char* pluginLabel, nlohmann::json& resultOut,
+                             std::string& error);
 
   // Calls the timeshift_buffer plugin's run/ endpoint for `action` and
   // unwraps a {status, http_port, playlist_route} response shape. Only

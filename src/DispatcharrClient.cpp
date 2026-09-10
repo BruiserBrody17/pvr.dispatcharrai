@@ -1,5 +1,7 @@
 #include "DispatcharrClient.h"
 
+#include "TimeUtil.h"
+
 #include <curl/curl.h>
 #include <kodi/General.h>
 #include <nlohmann/json.hpp>
@@ -175,24 +177,9 @@ std::string IsoFromTime(time_t t)
 {
   char buf[32];
   tm tmVal{};
-#if defined(_WIN32)
-  gmtime_s(&tmVal, &t);
-#else
-  gmtime_r(&t, &tmVal);
-#endif
+  GmTimeUtc(t, &tmVal);
   std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmVal);
   return std::string(buf);
-}
-
-// Portable timegm(): interprets a struct tm as UTC and returns a time_t,
-// without touching the process-wide TZ setting (unlike mktime()).
-time_t PortableTimeGm(struct tm* tmVal)
-{
-#if defined(_WIN32)
-  return _mkgmtime(tmVal);
-#else
-  return timegm(tmVal);
-#endif
 }
 
 // Parses the "YYYY-MM-DDTHH:MM:SS" prefix of a Dispatcharr date-time field
@@ -252,11 +239,7 @@ std::string DateStringFromTime(time_t t)
 {
   char buf[16];
   tm tmVal{};
-#if defined(_WIN32)
-  gmtime_s(&tmVal, &t);
-#else
-  gmtime_r(&t, &tmVal);
-#endif
+  GmTimeUtc(t, &tmVal);
   std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tmVal);
   return std::string(buf);
 }
@@ -295,11 +278,7 @@ int NthWeekdayOfMonth(int year, int month0, int weekday, int n)
   first.tm_mday = 1;
   time_t firstT = PortableTimeGm(&first);
   tm resolved{};
-#if defined(_WIN32)
-  gmtime_s(&resolved, &firstT);
-#else
-  gmtime_r(&firstT, &resolved);
-#endif
+  GmTimeUtc(firstT, &resolved);
   int offset = (weekday - resolved.tm_wday + 7) % 7;
   return 1 + offset + (n - 1) * 7;
 }
@@ -323,11 +302,7 @@ int LastWeekdayOfMonth(int year, int month0, int weekday)
   last.tm_mday = days;
   time_t lastT = PortableTimeGm(&last);
   tm resolved{};
-#if defined(_WIN32)
-  gmtime_s(&resolved, &lastT);
-#else
-  gmtime_r(&lastT, &resolved);
-#endif
+  GmTimeUtc(lastT, &resolved);
   int diff = (resolved.tm_wday - weekday + 7) % 7;
   return days - diff;
 }
@@ -343,11 +318,7 @@ int LastWeekdayOfMonth(int year, int month0, int weekday)
 bool IsUsCanadaDstInEffect(time_t nowUtc, int standardOffsetMinutes)
 {
   tm nowTm{};
-#if defined(_WIN32)
-  gmtime_s(&nowTm, &nowUtc);
-#else
-  gmtime_r(&nowUtc, &nowTm);
-#endif
+  GmTimeUtc(nowUtc, &nowTm);
   int year = nowTm.tm_year + 1900;
 
   tm springLocal{};
@@ -375,11 +346,7 @@ bool IsUsCanadaDstInEffect(time_t nowUtc, int standardOffsetMinutes)
 bool IsEuDstInEffect(time_t nowUtc)
 {
   tm nowTm{};
-#if defined(_WIN32)
-  gmtime_s(&nowTm, &nowUtc);
-#else
-  gmtime_r(&nowUtc, &nowTm);
-#endif
+  GmTimeUtc(nowUtc, &nowTm);
   int year = nowTm.tm_year + 1900;
 
   tm springUtcTm{};
@@ -701,11 +668,8 @@ bool DispatcharrClient::Request(const std::string& method, const std::string& pa
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+  ApplyStandardCurlOptions(curl, GetCurlShare());
 
   if (method == "POST")
   {
@@ -1081,6 +1045,23 @@ bool DispatcharrClient::WaitForTimeshiftPlaylistReady(const std::string& playlis
   return false;
 }
 
+bool DispatcharrClient::UnwrapPluginRunResult(const json& response, const char* pluginLabel, json& resultOut,
+                                              std::string& error)
+{
+  if (!FieldOr(response, "success", false))
+  {
+    error = FieldOr<std::string>(response, "error", std::string(pluginLabel) + " plugin call did not succeed");
+    return false;
+  }
+  resultOut = response.contains("result") ? response["result"] : json();
+  if (FieldOr<std::string>(resultOut, "status", "") != "ok")
+  {
+    error = FieldOr<std::string>(resultOut, "message", std::string(pluginLabel) + " plugin returned an error");
+    return false;
+  }
+  return true;
+}
+
 bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, const std::string& channelUuid,
                                                   std::string& playlistUrlOut, std::string& error,
                                                   const json& extraParams)
@@ -1113,18 +1094,9 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, con
   if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
     return false;
 
-  if (!FieldOr(response, "success", false))
-  {
-    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
+  json result;
+  if (!UnwrapPluginRunResult(response, "timeshift_buffer", result, error))
     return false;
-  }
-
-  const json& result = response.contains("result") ? response["result"] : json();
-  if (FieldOr<std::string>(result, "status", "") != "ok")
-  {
-    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
-    return false;
-  }
 
   int httpPort = FieldOr(result, "http_port", 0);
   std::string playlistRoute = FieldOr<std::string>(result, "playlist_route", "");
@@ -1213,18 +1185,8 @@ bool DispatcharrClient::StopTimeshiftBuffer(const std::string& channelUuid, cons
   json response;
   if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
     return false;
-  if (!FieldOr(response, "success", false))
-  {
-    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
-    return false;
-  }
-  const json& result = response.contains("result") ? response["result"] : json();
-  if (FieldOr<std::string>(result, "status", "") != "ok")
-  {
-    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
-    return false;
-  }
-  return true;
+  json result;
+  return UnwrapPluginRunResult(response, "timeshift_buffer", result, error);
 }
 
 void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId)
@@ -1460,18 +1422,9 @@ bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEd
   if (!Request("POST", kRecordingEdlPluginRunPath, body, response, error))
     return false;
 
-  if (!FieldOr(response, "success", false))
-  {
-    error = FieldOr<std::string>(response, "error", "recording_edl plugin call did not succeed");
+  json result;
+  if (!UnwrapPluginRunResult(response, "recording_edl", result, error))
     return false;
-  }
-
-  const json& result = response.contains("result") ? response["result"] : json();
-  if (FieldOr<std::string>(result, "status", "") != "ok")
-  {
-    error = FieldOr<std::string>(result, "message", "recording_edl plugin returned an error");
-    return false;
-  }
 
   const json& entries = result.contains("entries") ? result["entries"] : json();
   if (entries.is_array())
@@ -1962,15 +1915,30 @@ bool DispatcharrClient::ComputeKnownZoneOffsetMinutes(const std::string& ianaZon
   return false;
 }
 
+void* DispatcharrClient::AppendApiKeyHeaderIfPresent(void* headers, const std::string& apiKey)
+{
+  if (apiKey.empty())
+    return headers;
+  std::string apiKeyHeader = "X-API-Key: " + apiKey;
+  return curl_slist_append(static_cast<struct curl_slist*>(headers), apiKeyHeader.c_str());
+}
+
+void DispatcharrClient::ApplyStandardCurlOptions(void* curlPtr, void* share) const
+{
+  CURL* curl = static_cast<CURL*>(curlPtr);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
+  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(share));
+}
+
 bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
 {
   CURL* curl = curl_easy_init();
   if (!curl)
     return true; // fail open: a local curl-init failure isn't evidence the key is bad
 
-  struct curl_slist* headers = nullptr;
-  std::string apiKeyHeader = "X-API-Key: " + GetApiKey();
-  headers = curl_slist_append(headers, apiKeyHeader.c_str());
+  struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
   std::string discard;
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -1978,10 +1946,7 @@ bool DispatcharrClient::IsApiKeyValidFor(const std::string& url) const
   curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &discard);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+  ApplyStandardCurlOptions(curl, GetCurlShare());
 
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
@@ -2006,24 +1971,14 @@ bool DispatcharrClient::FetchRawInProgressPlaylist(int recordingId, const std::s
       return false;
     }
 
-    struct curl_slist* headers = nullptr;
-    std::string apiKeyHeader;
-    std::string apiKey = GetApiKey();
-    if (!apiKey.empty())
-    {
-      apiKeyHeader = "X-API-Key: " + apiKey;
-      headers = curl_slist_append(headers, apiKeyHeader.c_str());
-    }
+    struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
     playlistText.clear();
     curl_easy_setopt(curl, CURLOPT_URL, playlistUrl.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &playlistText);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+    ApplyStandardCurlOptions(curl, GetCurlShare());
 
     CURLcode res = curl_easy_perform(curl);
     long httpCode = 0;
@@ -2060,14 +2015,7 @@ int64_t DispatcharrClient::ProbeSegmentByteSize(const std::string& segmentUrl) c
   if (!curl)
     return -1;
 
-  struct curl_slist* headers = nullptr;
-  std::string apiKeyHeader;
-  std::string apiKey = GetApiKey();
-  if (!apiKey.empty())
-  {
-    apiKeyHeader = "X-API-Key: " + apiKey;
-    headers = curl_slist_append(headers, apiKeyHeader.c_str());
-  }
+  struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
   int64_t totalLength = -1;
   curl_easy_setopt(curl, CURLOPT_URL, segmentUrl.c_str());
@@ -2075,14 +2023,11 @@ int64_t DispatcharrClient::ProbeSegmentByteSize(const std::string& segmentUrl) c
   curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, ContentLengthHeaderCallback);
   curl_easy_setopt(curl, CURLOPT_HEADERDATA, &totalLength);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
   // GetProbeCurlShare(), not GetCurlShare() -- this is the one call site
   // invoked concurrently in a tight same-host burst (see
   // m_probeCurlShareState's own comment for why that specifically needs a
   // connection-cache-free share).
-  curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetProbeCurlShare()));
+  ApplyStandardCurlOptions(curl, GetProbeCurlShare());
 
   CURLcode res = curl_easy_perform(curl);
   long httpCode = 0;
@@ -2555,14 +2500,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
         m_inProgressRecordingStream.curl = curl;
       }
 
-      struct curl_slist* headers = nullptr;
-      std::string apiKeyHeader;
-      std::string apiKey = GetApiKey();
-      if (!apiKey.empty())
-      {
-        apiKeyHeader = "X-API-Key: " + apiKey;
-        headers = curl_slist_append(headers, apiKeyHeader.c_str());
-      }
+      struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
       std::string body;
       body.reserve(static_cast<size_t>(seg->byteSize));
@@ -2570,10 +2508,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
       curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-      curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+      ApplyStandardCurlOptions(curl, GetCurlShare());
 
       CURLcode res = curl_easy_perform(curl);
       long httpCode = 0;
@@ -2760,14 +2695,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
       return false;
     }
 
-    struct curl_slist* headers = nullptr;
-    std::string apiKeyHeader;
-    std::string apiKey = GetApiKey();
-    if (!apiKey.empty())
-    {
-      apiKeyHeader = "X-API-Key: " + apiKey;
-      headers = curl_slist_append(headers, apiKeyHeader.c_str());
-    }
+    struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
     // A tiny ranged GET rather than a HEAD request: confirmed the "in
     // progress -> redirect to HLS" behaviour on this endpoint, and it's
@@ -2783,10 +2711,7 @@ bool DispatcharrClient::OpenRecordingStream(int recordingId, std::string& error)
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, RecordingHeaderCallback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &totalLength);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+    ApplyStandardCurlOptions(curl, GetCurlShare());
 
     CURLcode res = curl_easy_perform(curl);
     long httpCode = 0;
@@ -2865,14 +2790,7 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
       m_recordingStream.curl = curl;
     }
 
-    struct curl_slist* headers = nullptr;
-    std::string apiKeyHeader;
-    std::string apiKey = GetApiKey();
-    if (!apiKey.empty())
-    {
-      apiKeyHeader = "X-API-Key: " + apiKey;
-      headers = curl_slist_append(headers, apiKeyHeader.c_str());
-    }
+    struct curl_slist* headers = static_cast<struct curl_slist*>(AppendApiKeyHeaderIfPresent(nullptr, GetApiKey()));
 
     FixedBufferSink sink{buffer, size, 0};
     curl_easy_setopt(curl, CURLOPT_URL, m_recordingStream.url.c_str());
@@ -2880,10 +2798,7 @@ int DispatcharrClient::ReadRecordingStream(uint8_t* buffer, unsigned int size)
     curl_easy_setopt(curl, CURLOPT_RANGE, range.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FixedBufferWriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &sink);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, m_config.verifySsl ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, m_config.verifySsl ? 2L : 0L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(m_config.timeoutSeconds));
-    curl_easy_setopt(curl, CURLOPT_SHARE, static_cast<CURLSH*>(GetCurlShare()));
+    ApplyStandardCurlOptions(curl, GetCurlShare());
 
     CURLcode res = curl_easy_perform(curl);
     long httpCode = 0;
@@ -2991,15 +2906,12 @@ bool DispatcharrClient::RefreshLiveManifest(bool force, std::string& error, bool
   json response;
   if (!Request("POST", kTimeshiftPluginRunPath, body, response, error))
     return false;
-  if (!FieldOr(response, "success", false))
+  json result;
+  if (!UnwrapPluginRunResult(response, "timeshift_buffer", result, error))
   {
-    error = FieldOr<std::string>(response, "error", "timeshift_buffer plugin call did not succeed");
-    return false;
-  }
-  const json& result = response.contains("result") ? response["result"] : json();
-  if (FieldOr<std::string>(result, "status", "") != "ok")
-  {
-    error = FieldOr<std::string>(result, "message", "timeshift_buffer plugin returned an error");
+    // result is still populated (empty json() if the outer envelope itself
+    // failed) -- FieldOr() on that safely yields false either way, matching
+    // this function's own pre-set default.
     if (fatalOut)
       *fatalOut = FieldOr(result, "fatal", false);
     return false;

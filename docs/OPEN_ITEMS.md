@@ -4,6 +4,32 @@
 
 ## Ongoing (more will likely come up)
 
+- **Three real recordings/timers hot-path inefficiencies, found via a
+  full-codebase Efficiency review (2026-09-10, not yet applied -- would
+  need live-hardware verification this pass didn't have).**
+  `RefreshInProgressRecordingManifest()` re-fetches the *entire*
+  recordings list (a full `GET /api/channels/recordings/` plus JSON
+  parse of every recording) on every throttled call (up to ~2/sec
+  during in-progress-recording playback/scrubbing), just to read one
+  recording's `isInProgress` flag -- a targeted single-recording lookup
+  (Dispatcharr's REST API likely supports `GET
+  /api/channels/recordings/{id}/`, a standard DRF `retrieve` action
+  matching the already-used `{id}/stop/`/`{id}/extend/` siblings, but
+  this is unconfirmed against real source/a live instance) would replace
+  an O(all recordings) cost with O(1) on this hot path.
+  `GetRecordingsAmount()`/`GetRecordings()` and
+  `GetTimersAmount()`/`GetTimers()` are each called back-to-back by Kodi
+  on every recordings/timers refresh with no caching between the pair
+  (unlike channels/EPG, which have `EnsureChannelsLoaded()`/
+  `EnsureEpgLoaded()` staleness caches) -- doubles/triples the real
+  REST-fetch cost of what's logically one refresh. Not applied this
+  pass: adding a new, unconfirmed API endpoint or a caching layer with
+  its own staleness/thread-safety behavior are both real behavior
+  changes needing live verification, not pure refactors -- see
+  `chore/simplify-pass`/PR #12 for the full review this came out of
+  (including a `FindRecordingById()` helper that *did* get applied,
+  consolidating the repeated fetch-and-scan code without changing its
+  cost).
 - **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
   (requested 2026-09-09, not yet started -- user asked for scope/steps
   first, no action taken pending consent).** Mechanically straightforward
