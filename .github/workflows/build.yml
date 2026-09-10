@@ -19,6 +19,30 @@ env:
   KODI_BRANCH: Omega # match whatever Kodi major version you're targeting
 
 jobs:
+  # Enforces CLAUDE.md's "run clang-format/ruff format before committing"
+  # convention -- previously undocumented-as-checked anywhere, so drift
+  # could accumulate silently. Pinned tool versions (rather than
+  # ubuntu-latest's own apt/pip defaults) so a CI failure means a real
+  # formatting/lint violation, not just this job's toolchain moving out
+  # from under an already-correct commit.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install clang-format and ruff (pinned versions)
+        run: pip install clang-format==18.1.8 ruff==0.6.9
+
+      - name: clang-format check (src/)
+        run: clang-format --dry-run -Werror src/*.cpp src/*.h
+
+      - name: ruff format check (dispatcharr-plugin/)
+        run: ruff format --check dispatcharr-plugin/
+
+      - name: ruff lint (dispatcharr-plugin/)
+        run: ruff check dispatcharr-plugin/
+
   build-unix:
     strategy:
       fail-fast: false
