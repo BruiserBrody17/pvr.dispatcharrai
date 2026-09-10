@@ -10,6 +10,32 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.9.3] - 2026-09-10
+
+Addon only, but this release also bundles the already-published
+`timeshift_buffer` `0.6.1` security fix (see its own entry below) --
+redeploy that plugin to Dispatcharr separately if you haven't already
+applied it.
+
+### Added
+
+- Recording pre/post padding settings now grey out automatically when
+  the configured Dispatcharr account isn't an admin -- pushing a
+  padding change needs admin access, and Dispatcharr silently rejects
+  the write otherwise, so this makes that limitation visible instead
+  of a silent failure. Re-checked on every restart.
+- A one-time startup warning if live TV pause/rewind
+  (`live_timeshift_mode`) is set to Server-side but the configured
+  account isn't an admin -- that combination fails live channel
+  playback outright, not just timeshift, with previously nothing but a
+  `kodi.log` line explaining why.
+
+### Removed
+
+- The "Extra padding for sports (minutes)" setting, and the automatic
+  end-of-recording padding it applied to one-time recordings created
+  from EPG entries tagged as sports. Originally added in `1.0.0`.
+
 ## `timeshift_buffer` [0.6.1] - 2026-09-10
 
 Plugin only -- the addon and `recording_edl` didn't change for this fix.
