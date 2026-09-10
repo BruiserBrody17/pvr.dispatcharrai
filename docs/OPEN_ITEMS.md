@@ -44,13 +44,39 @@
   in-progress recording during real playback: `kodi.log`'s own timing
   breakdown showed `GetRecordingById 0.006-0.009s` on every refresh
   (down from a full 41-recording list fetch+parse), `finished=0`
-  correctly reflected throughout. The `GetRecordingsAmount()`/
-  `GetTimersAmount()` double-fetch (a bigger design decision --
-  recordings/timers change far more dynamically than channels/EPG, so a
-  correct cache needs a short TTL plus invalidation tied to
-  `TriggerTimerUpdate()`/`TriggerRecordingUpdate()`, not just a
-  channels/EPG-style hours-scale staleness window) is still open,
-  deliberately deferred as its own decision.
+  correctly reflected throughout.
+  **Update: the `GetRecordingsAmount()`/`GetTimersAmount()` double-fetch
+  piece also implemented and confirmed live (2026-09-10) -- all three
+  original findings now closed.** New `EnsureRecordingsLoaded()`/
+  `EnsureTimerRulesLoaded()`, mirroring `EnsureChannelsLoaded()`/
+  `EnsureEpgLoaded()`'s own staleness-cache shape but with a
+  `kRecordingsAndTimersCacheTtlSeconds` (2s) TTL instead of
+  `channel_refresh_hours`/`epg_refresh_hours` -- short enough that a
+  user's own change is never meaningfully delayed even before the
+  invalidation below, long enough to collapse the Amount()+List() pair
+  Kodi calls back-to-back into one real fetch.
+  `TriggerRecordingUpdate()`/`TriggerTimerUpdate()` (Kodi SDK base-class
+  methods, not something this addon defines, so their own implementation
+  can't be edited directly) are now only ever called through two new
+  wrappers, `InvalidateAndTriggerRecordingUpdate()`/
+  `InvalidateAndTriggerTimerUpdate()`, which reset the relevant cache
+  timestamp to force a fresh fetch on the very next call before
+  delegating to the real trigger -- applied mechanically across all ~10
+  existing call sites. `PVRDispatcharr::FindRecordingById()` was also
+  simplified to call the new `GetRecordingById()` directly instead of
+  its own separate full-list fetch+scan, now that that REST call exists,
+  a small additional win beyond the original three findings.
+  Live-verified against the real instance: 8 rapid-fire `PVR.GetTimers`/
+  `PVR.GetRecordings` calls (matching Kodi's own Amount()+List() pattern)
+  produced only 2 real cache refreshes in `kodi.log`, correctly
+  straddling the 2s TTL, instead of 8 independent fetches under the old
+  code. Separately confirmed invalidation: added a real one-time timer
+  via `PVR.AddTimer`, and the very next `PVR.GetTimers` call already
+  reflected the updated recordings count (a momentary miss right at the
+  exact instant of creation traced to a pre-existing sub-second race in
+  the `isInProgress`/`isUpcoming` time-window check, unrelated to this
+  cache -- resolved within ~3s and confirmed as the correct, pre-existing
+  behavior, not a regression from this change).
 - **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
   (requested 2026-09-09, not yet started -- user asked for scope/steps
   first, no action taken pending consent).** Mechanically straightforward
