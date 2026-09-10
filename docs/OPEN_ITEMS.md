@@ -30,6 +30,27 @@
   (including a `FindRecordingById()` helper that *did* get applied,
   consolidating the repeated fetch-and-scan code without changing its
   cost).
+  **Update: the single-recording-lookup piece implemented and confirmed
+  live (2026-09-10).** Confirmed `GET /api/channels/recordings/{id}/`
+  directly against the live instance first (real, HTTP 200, identical
+  shape to a list item), closing the "unconfirmed" gap. New
+  `DispatcharrClient::GetRecordingById()` (a REST call -- not to be
+  confused with the pre-existing `PVRDispatcharr::FindRecordingById()`,
+  which scans an already-fetched in-memory list) replaces the
+  `GetRecordings()` call in `RefreshInProgressRecordingManifest()`;
+  `GetRecordings()`'s own per-item parsing was pulled out into
+  `ParseRecordingJson()` so both call sites stay identical rather than
+  duplicating the field-mapping logic. Live-verified against an actual
+  in-progress recording during real playback: `kodi.log`'s own timing
+  breakdown showed `GetRecordingById 0.006-0.009s` on every refresh
+  (down from a full 41-recording list fetch+parse), `finished=0`
+  correctly reflected throughout. The `GetRecordingsAmount()`/
+  `GetTimersAmount()` double-fetch (a bigger design decision --
+  recordings/timers change far more dynamically than channels/EPG, so a
+  correct cache needs a short TTL plus invalidation tied to
+  `TriggerTimerUpdate()`/`TriggerRecordingUpdate()`, not just a
+  channels/EPG-style hours-scale staleness window) is still open,
+  deliberately deferred as its own decision.
 - **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
   (requested 2026-09-09, not yet started -- user asked for scope/steps
   first, no action taken pending consent).** Mechanically straightforward
