@@ -159,11 +159,10 @@ identical outright -- differing by an exact multiple of 2^32 seconds
 (~136 years), rather than 65536.
 
 Confirmed live (Windows): compiles cleanly and the addon reloads
-normally. The actual consequence of the original collision (which Kodi-
-side EPG functionality keys off `SetUniqueBroadcastId()` versus deriving
-identity some other way, e.g. this addon's own `ComputeOneTimeRecording
-EndTime()` matches by channel+start+end time directly, unaffected either
-way) wasn't independently traced through Kodi's own source this pass --
-the fix is unambiguously correct regardless, so it shipped without first
-pinning down the exact blast radius of the bug it closes.
+normally. The actual consequence of the original collision (i.e., which
+Kodi-side EPG functionality keys off `SetUniqueBroadcastId()` versus
+deriving identity some other way instead) wasn't independently traced
+through Kodi's own source this pass -- the fix is unambiguously correct
+regardless, so it shipped without first pinning down the exact blast
+radius of the bug it closes.
 
