@@ -276,7 +276,8 @@ Addon only.
   `sports_extra_padding_minutes` setting -- off by default, opt-in).
   Doesn't apply if the timer's end time has already been manually
   adjusted, or to recurring/series rules. See `docs/EPG.md`'s "Sports
-  events get extra recording padding automatically" section.
+  events get extra recording padding automatically" section (removed
+  in a later release).
 
 ## [1.0.2] - 2026-09-06
 
