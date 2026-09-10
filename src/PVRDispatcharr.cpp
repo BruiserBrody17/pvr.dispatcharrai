@@ -1854,56 +1854,105 @@ PVR_ERROR PVRDispatcharr::GetTimers(kodi::addon::PVRTimersResultSet& results)
   std::string error;
 
   std::vector<Recording> recordings;
-  if (m_client.GetRecordings(recordings, error))
-  {
-    for (const auto& rec : recordings)
-    {
-      // Completed recordings are surfaced via GetRecordings(), not as timers.
-      if (!rec.isInProgress && !rec.isUpcoming)
-        continue;
-      kodi::addon::PVRTimer timer;
-      timer.SetClientIndex(static_cast<unsigned int>(rec.id));
-      timer.SetTimerType(kTimerTypeOneTime);
-      timer.SetTitle(rec.title);
-      timer.SetClientChannelUid(rec.channelId);
-      timer.SetStartTime(rec.startTime);
-      timer.SetEndTime(rec.endTime);
-      timer.SetState(rec.isInProgress ? PVR_TIMER_STATE_RECORDING : PVR_TIMER_STATE_SCHEDULED);
-      // Links this one occurrence back to its parent recurring rule (see
-      // the recurring-rules loop below) as a Kodi PVR_TIMER child -- the
-      // standard Kodi PVR convention for a repeating timer's individual
-      // materialized instances (kodi-dev-kit's PVR_TIMER_NO_PARENT is 0,
-      // SetParentClientIndex()'s own default, so this is a plain
-      // stand-alone one-time timer when recurringRuleId is 0).
-      if (rec.recurringRuleId != 0)
-        timer.SetParentClientIndex(static_cast<unsigned int>(rec.recurringRuleId) | kRecurringRuleIndexFlag);
-      results.Add(timer);
-    }
-  }
+  m_client.GetRecordings(recordings, error);
 
   std::vector<TimerRule> rules;
-  if (m_client.GetTimerRules(rules, error))
+  m_client.GetTimerRules(rules, error);
+
+  // Series rules have no numeric id at all in Dispatcharr's API (confirmed
+  // against a real rule: {mode, title, tvg_id, channel_id, title_mode,
+  // description, description_mode} -- nothing else), so rule.id is always
+  // 0 and can't be used for a ClientIndex -- every series rule would
+  // collide on the same one. Hash the (title, tvgId) pair instead, the
+  // same identity DeleteSeriesRule() uses, masked into the lower 30 bits
+  // so the series-rule flag bit above it is never disturbed. Computed once
+  // per rule up front (rather than inline in the rules loop below) so the
+  // recordings loop can also use it, to link a matching recording back to
+  // its parent rule.
+  //
+  // earliestMatch tracks, per rule, the earliest upcoming/in-progress
+  // Recording found to belong to it (matched by channel + title below) --
+  // a series rule has no fixed time of its own (it's an EPG-title match,
+  // not a schedule), so without this its own row had nothing real to show
+  // and defaulted to PVR_TIMER's zero-initialized StartTime/EndTime
+  // (Kodi renders that as the Unix epoch, reported live as a "12/31/1969"
+  // display bug). Mirrors how a recurring rule's own row already gets a
+  // real time window from its own fields, and how its children already
+  // link back to it via recurringRuleId/SetParentClientIndex() below.
+  std::vector<unsigned int> ruleClientIndex(rules.size());
+  std::vector<const Recording*> earliestMatch(rules.size(), nullptr);
+  for (std::size_t i = 0; i < rules.size(); ++i)
   {
-    for (const auto& rule : rules)
+    std::size_t h = std::hash<std::string>()(rules[i].title + '\x1f' + rules[i].tvgId);
+    ruleClientIndex[i] = (static_cast<unsigned int>(h) & 0x3FFFFFFFu) | 0x40000000;
+  }
+  // A series rule's own channel_id + title is enough to identify which of
+  // its upcoming Recordings this is -- Dispatcharr's own rule identity
+  // (title+tvg_id+epg_source_id) already guarantees at most one rule per
+  // channel can share a title, so there's no realistic ambiguity here.
+  auto findRuleIndex = [&rules](const Recording& rec) -> int
+  {
+    for (std::size_t i = 0; i < rules.size(); ++i)
     {
-      kodi::addon::PVRTimer timer;
-      // Series rules have no numeric id at all in Dispatcharr's API
-      // (confirmed against a real rule: {mode, title, tvg_id, channel_id,
-      // title_mode, description, description_mode} -- nothing else), so
-      // rule.id is always 0 and can't be used here -- every series rule
-      // would collide on the same ClientIndex. Hash the (title, tvgId)
-      // pair instead, the same identity DeleteSeriesRule() uses, masked
-      // into the lower 30 bits so the series-rule flag bit above it is
-      // never disturbed.
-      std::size_t h = std::hash<std::string>()(rule.title + '\x1f' + rule.tvgId);
-      timer.SetClientIndex((static_cast<unsigned int>(h) & 0x3FFFFFFFu) | 0x40000000);
-      timer.SetTimerType(kTimerTypeSeries);
-      timer.SetTitle(rule.title);
-      timer.SetClientChannelUid(rule.channelId);
-      timer.SetState(PVR_TIMER_STATE_SCHEDULED);
-      timer.SetPreventDuplicateEpisodes(rule.recordNewOnly ? 1 : 0);
-      results.Add(timer);
+      if (rules[i].channelId == rec.channelId && rules[i].title == rec.title)
+        return static_cast<int>(i);
     }
+    return -1;
+  };
+
+  for (const auto& rec : recordings)
+  {
+    // Completed recordings are surfaced via GetRecordings(), not as timers.
+    if (!rec.isInProgress && !rec.isUpcoming)
+      continue;
+    kodi::addon::PVRTimer timer;
+    timer.SetClientIndex(static_cast<unsigned int>(rec.id));
+    timer.SetTimerType(kTimerTypeOneTime);
+    timer.SetTitle(rec.title);
+    timer.SetClientChannelUid(rec.channelId);
+    timer.SetStartTime(rec.startTime);
+    timer.SetEndTime(rec.endTime);
+    timer.SetState(rec.isInProgress ? PVR_TIMER_STATE_RECORDING : PVR_TIMER_STATE_SCHEDULED);
+    // Links this one occurrence back to its parent rule (recurring or
+    // series) as a Kodi PVR_TIMER child -- the standard Kodi PVR
+    // convention for a repeating timer's individual materialized
+    // instances (kodi-dev-kit's PVR_TIMER_NO_PARENT is 0,
+    // SetParentClientIndex()'s own default, so this is a plain
+    // stand-alone one-time timer when neither matches).
+    if (rec.recurringRuleId != 0)
+    {
+      timer.SetParentClientIndex(static_cast<unsigned int>(rec.recurringRuleId) | kRecurringRuleIndexFlag);
+    }
+    else
+    {
+      int ruleIdx = findRuleIndex(rec);
+      if (ruleIdx >= 0)
+      {
+        timer.SetParentClientIndex(ruleClientIndex[ruleIdx]);
+        const Recording*& earliest = earliestMatch[ruleIdx];
+        if (!earliest || rec.startTime < earliest->startTime)
+          earliest = &rec;
+      }
+    }
+    results.Add(timer);
+  }
+
+  for (std::size_t i = 0; i < rules.size(); ++i)
+  {
+    const TimerRule& rule = rules[i];
+    kodi::addon::PVRTimer timer;
+    timer.SetClientIndex(ruleClientIndex[i]);
+    timer.SetTimerType(kTimerTypeSeries);
+    timer.SetTitle(rule.title);
+    timer.SetClientChannelUid(rule.channelId);
+    timer.SetState(PVR_TIMER_STATE_SCHEDULED);
+    timer.SetPreventDuplicateEpisodes(rule.recordNewOnly ? 1 : 0);
+    if (earliestMatch[i])
+    {
+      timer.SetStartTime(earliestMatch[i]->startTime);
+      timer.SetEndTime(earliestMatch[i]->endTime);
+    }
+    results.Add(timer);
   }
 
   std::vector<RecurringRule> recurringRules;
