@@ -20,10 +20,13 @@ actually is, since it's easy to conflate with TVHeadend-style timeshifting:
   *within that one programme* (the catch-up endpoint supports HTTP Range,
   confirmed with a real `206` on a ranged request). It is not "press
   rewind while watching live and seamlessly scroll back" the way TVHeadend's
-  HTSP-based timeshift buffer works -- Dispatcharr has no equivalent concept
-  of a generic rolling per-channel live buffer, and this addon's live
-  playback (`GetChannelStreamProperties()`) is still plain URL passthrough
-  with no addon-managed stream lifecycle.
+  HTSP-based timeshift buffer works -- catch-up and this addon's separate
+  server-side live timeshift feature (`live_timeshift_mode` set to
+  `Server-side`, see [TIMESHIFT.md](TIMESHIFT.md)) are unrelated code
+  paths. Dispatcharr itself has no *native* concept of a rolling
+  per-channel live buffer; the rolling buffer that feature provides comes
+  entirely from this addon's own companion `timeshift_buffer` plugin,
+  layered on top.
 - `IsEPGTagPlayable()` only reports true once the programme has actually
   started (`GetStartTime() <= now`) and is still within the channel's
   `catchupDays` retention window -- there's no way to query the provider's
