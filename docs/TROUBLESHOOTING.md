@@ -193,14 +193,15 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
   only candidate on the `Recording` object, whose write semantics
   (whether a `PATCH` merges or replaces the field) need to be verified
   against a **disposable test recording** before ever touching a real
-  one, given `custom_properties` was already confirmed to be fully
-  replaced rather than merged on `POST` create (see above).
+  one -- `custom_properties` is already confirmed to be fully replaced
+  rather than merged on `POST` create, and `PATCH` needs the same
+  verification before assuming otherwise.
 - **One install's addon can silently invalidate another install's stored
   API key, breaking recording playback with no obvious cause.** Dispatcharr
-  keeps exactly one active API key per account (see the permissions note
-  above); if two Kodi installs share an account and each generates its own
-  key once, whichever install last regenerated invalidates the other's
-  stored copy. Confirmed end-to-end (Windows + macOS installs against the
+  keeps exactly one active API key per account; if two Kodi installs
+  share an account and each generates its own key once, whichever
+  install last regenerated invalidates the other's stored copy.
+  Confirmed end-to-end (Windows + macOS installs against the
   same account, same recording): the macOS side got `CCurlFile ... Failed:
   HTTP returned code 401` on a key that was valid when it was generated,
   while a fresh `generate/` call from either side proved the account only
