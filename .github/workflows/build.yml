@@ -43,6 +43,9 @@ jobs:
       - name: ruff lint (dispatcharr-plugin/)
         run: ruff check dispatcharr-plugin/
 
+      - name: doc reference check (baselined -- fails only on new dangling refs)
+        run: python3 tools/check_doc_refs.py
+
   build-unix:
     strategy:
       fail-fast: false
