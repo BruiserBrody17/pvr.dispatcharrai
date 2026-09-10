@@ -12,49 +12,41 @@ plugin's own byte-range file server) is documented in
 ## How it works, briefly
 
 `start_buffer` launches `ffmpeg` per channel against Dispatcharr's own
-live proxy (the same URL any viewer uses), writing rolling `.ts` segments
-and a playlist under `storage_path`. Segments are served by this plugin's
-own minimal HTTP server (bound to `http_port`) rather than through
-Django's `MEDIA_ROOT` route, which a routing order issue in Dispatcharr's
-own `urls.py` makes unreachable for this purpose. `get_live_manifest`
-returns the buffer's current segments (with a stable sequence number, so
-a client can address the rolling window correctly across refreshes); the
-file server answers HTTP Range requests against them, which is what lets
-`pvr.dispatcharrai` treat the buffer as one growing, byte-seekable
-stream. Viewers are reference-counted; the ffmpeg process stops as soon
-as the last one deregisters. A background reaper (leader-elected across
-worker processes) is just the backstop for viewers that vanish without
-deregistering -- a crash, network drop, force-quit -- reaping anything
-idle past `idle_timeout_seconds`.
+live proxy, writing rolling `.ts` segments and a playlist under
+`storage_path`, served by this plugin's own minimal HTTP server (bound
+to `http_port`) rather than Django's `MEDIA_ROOT` route (unreachable
+here due to a routing-order issue in Dispatcharr's own `urls.py`).
+`get_live_manifest` returns the current segment list with a stable
+sequence number; the file server answers HTTP Range requests against
+them, letting `pvr.dispatcharrai` treat the buffer as one growing,
+byte-seekable stream. Viewers are reference-counted -- the ffmpeg
+process stops as soon as the last one deregisters -- with a background
+reaper (leader-elected across worker processes) as the backstop for
+viewers that vanish without deregistering (crash, network drop,
+force-quit), reaping anything idle past `idle_timeout_seconds`.
 
 Multiple devices watching the same channel share this one buffer
-process -- Dispatcharr opens a single upstream connection to your
-provider per channel regardless of how many devices are watching, not
-one per viewer. That sharing doesn't extend to rewind depth, though:
-`pvr.dispatcharrai` deliberately trims what it exposes locally to a
-small near-live-edge window on every fresh channel open, so a device
-can only rewind into what it's personally been watching since it opened
-the channel, never another device's earlier viewing or time from before
-it joined. See [docs/TIMESHIFT.md](../../docs/TIMESHIFT.md)'s
-"Concurrent viewers" section for why -- Kodi's own demuxer can't
-reliably seek backward into buffer content it hasn't personally read
-through this session, confirmed live via a seek landing on the MPEG-TS
-PTS wraparound point instead of anywhere near its target.
+process -- Dispatcharr opens a single upstream connection per channel
+regardless of viewer count. That sharing doesn't extend to rewind
+depth: `pvr.dispatcharrai` trims what it exposes locally to a small
+near-live-edge window on every fresh channel open, so a device can only
+rewind into what it's personally watched since opening the channel,
+never another device's earlier viewing. See
+[docs/TIMESHIFT.md](../../docs/TIMESHIFT.md)'s "Concurrent viewers"
+section for why.
 
 ## Installing
 
 1. Download `timeshift_buffer.zip` from the
    [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases)'s
-   Assets, and upload it via Dispatcharr's Plugins page **Import** button
-   -- its top-level folder is already named exactly `timeshift_buffer`,
-   which Dispatcharr requires for it to load (**the folder name inside
-   the zip must match exactly**, or every call 404s with "Plugin not
-   found"). Alternatively, copy this directory directly to
-   `data/plugins/timeshift_buffer/` on the host (or
-   `/app/data/plugins/timeshift_buffer/` inside the container), matching
-   however you already reach the `data/` directory Dispatcharr's compose
-   file bind-mounts -- useful if you're working from a repo checkout
-   rather than a release.
+   Assets and upload it via Dispatcharr's Plugins page **Import** button
+   (**the folder name inside the zip must match `timeshift_buffer`
+   exactly**, or every call 404s with "Plugin not found" -- already
+   correct in the release zip). Alternatively, copy this directory to
+   `data/plugins/timeshift_buffer/` on the host
+   (`/app/data/plugins/timeshift_buffer/` inside the container), wherever
+   your compose file bind-mounts `data/` -- useful if you're working from
+   a repo checkout rather than a release.
 2. In Dispatcharr's UI, open the Plugins page, click refresh, enable
    "Timeshift Buffer" (accept the trust-warning modal -- this plugin runs
    arbitrary server-side code, same as any other).
