@@ -10,6 +10,28 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `timeshift_buffer` [0.6.1] - 2026-09-10
+
+Plugin only -- the addon and `recording_edl` didn't change for this fix.
+**Requires redeploying the updated plugin to Dispatcharr** for the fix to
+take effect server-side.
+
+### Fixed
+
+- **Security: a caller-supplied `channel_uuid` on any `run/` action
+  (`start_buffer`, `stop_buffer`, `heartbeat`, `get_live_manifest`) was
+  never validated as a real UUID before being used to build a
+  filesystem path.** A value like `"../recordings"` could make
+  `start_buffer`'s directory creation and a later `stop_buffer`/idle-
+  reaper `shutil.rmtree()` operate entirely outside the plugin's own
+  `storage_path`, deleting an arbitrary directory the Dispatcharr
+  process can reach. Found via a full-codebase security review.
+  `channel_uuid` is now validated as a well-formed UUID at the point
+  every action resolves it, plus defensively wherever a filesystem path
+  is actually built from it, in case a pre-fix Redis-stored buffer
+  entry still carries an unvalidated value. See `docs/TIMESHIFT.md`'s
+  "channel_uuid path traversal" section for the full write-up.
+
 ## [0.9.2] - 2026-09-09
 
 Addon only -- neither companion plugin changed for this pass.
