@@ -156,6 +156,40 @@ first, previously-working channel failed identically).
   library/metadata display quirk for an item Kodi has cached stream
   details for.
 
+- **The TV Guide/EPG grid's visible time window can jump to an unrelated
+  time of day after switching channel-group tabs a few times -- reported
+  live (2026-09-10), e.g. going from a window centered near the current
+  time to one showing mid-morning hours after switching between "Local"
+  affiliate groups.** Confirmed via Kodi's own source (`xbmc/pvr/guilib/
+  GUIEPGGridContainer.cpp`, checked against the `Omega` branch matching
+  the exact Kodi version this was reproduced on, `21.3`) that this is
+  entirely Kodi-core grid-widget behavior -- this addon only supplies
+  channel/EPG data through the standard `GetChannels()`/
+  `GetChannelGroups()`/`GetEPGForChannel()` PVR API and never touches the
+  grid's own rendering, scrolling, or selection state.
+  `CGUIEPGGridContainer::UpdateItems()` tries to preserve the current
+  selection across any grid-model rebuild, including a channel-group
+  switch (which changes the visible channel list): it remembers the
+  previously-selected programme's channel+broadcast id and tries to
+  relocate that *same* programme in the new group's grid via
+  `FindChannelAndBlockIndex()`. Switching to an unrelated group (a
+  different channel lineup entirely) means that lookup fails every time.
+  The fallback only re-centers on "now" (`GoToNow()`) if the block index
+  carried over from the *old* selection's position arithmetic ends up
+  literally out of bounds in the new grid -- if it happens to still be a
+  valid block position (likely, since different groups' grids usually
+  span a similar overall time range), Kodi silently keeps that stale,
+  unrelated position instead, landing on whatever time-of-day block it
+  happens to be rather than "now" or the old selection. Because each
+  switch chains off the (now wrong) previous selection, this can drift
+  further with repeated switching, matching the reported symptom.
+  Not something this addon can influence: Kodi's own grid widget owns
+  100% of this selection-preservation logic, with no PVR client API to
+  opt out of it or request a specific scroll position after a group
+  switch. If you hit this, switching to a genuinely different date/time
+  (e.g. paging a day forward and back) or reopening the Guide window
+  re-centers the grid correctly.
+
 ## Known limitations with more than one Kodi client
 
 Not bugs in this addon -- inherent to running multiple, fully independent
