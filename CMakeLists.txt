@@ -66,6 +66,7 @@ set(DISPATCHARR_HEADERS
     src/DispatcharrClient.h
     src/XmlTvParser.h
     src/WebSocketClient.h
+    src/TimeUtil.h
 )
 
 # Modern FindCURL provides the CURL::libcurl imported target; ${CURL_LIBRARIES}

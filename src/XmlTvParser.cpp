@@ -1,32 +1,17 @@
 #include "XmlTvParser.h"
 
+#include "TimeUtil.h"
+
 #include <pugixml.hpp>
 
 #include <cstdlib>
 #include <sstream>
-
-#if defined(_WIN32)
-#include <time.h>
-#else
-#include <ctime>
-#endif
 
 namespace dispatcharr
 {
 
 namespace
 {
-
-// Portable timegm(): interprets a struct tm as UTC and returns a time_t,
-// without touching the process-wide TZ setting (unlike mktime()).
-time_t PortableTimeGm(struct tm* tmVal)
-{
-#if defined(_WIN32)
-  return _mkgmtime(tmVal);
-#else
-  return timegm(tmVal);
-#endif
-}
 
 // XMLTV date format: "YYYYMMDDHHMMSS" optionally followed by " +HHMM".
 time_t ParseXmlTvTime(const std::string& timeStr)

@@ -16,6 +16,24 @@
 
 using namespace dispatcharr;
 
+namespace
+{
+
+// Shared by the destructor for each of the three background threads below:
+// set the stop flag under its mutex, wake it, then join.
+void StopWorkerThread(std::mutex& mutex, std::atomic<bool>& stopFlag, std::condition_variable& cv, std::thread& thread)
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    stopFlag = true;
+  }
+  cv.notify_all();
+  if (thread.joinable())
+    thread.join();
+}
+
+} // namespace
+
 dispatcharr::Config PVRDispatcharr::LoadConfigFromSettings() const
 {
   Config config;
@@ -239,29 +257,11 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
 
 PVRDispatcharr::~PVRDispatcharr()
 {
-  {
-    std::lock_guard<std::mutex> lock(m_recordingRefreshMutex);
-    m_stopRecordingRefreshThread = true;
-  }
-  m_recordingRefreshCv.notify_all();
-  if (m_recordingRefreshThread.joinable())
-    m_recordingRefreshThread.join();
-
-  {
-    std::lock_guard<std::mutex> lock(m_channelEpgRefreshMutex);
-    m_stopChannelEpgRefreshThread = true;
-  }
-  m_channelEpgRefreshCv.notify_all();
-  if (m_channelEpgRefreshThread.joinable())
-    m_channelEpgRefreshThread.join();
-
-  {
-    std::lock_guard<std::mutex> lock(m_realtimeUpdateMutex);
-    m_stopRealtimeUpdateThread = true;
-  }
-  m_realtimeUpdateCv.notify_all();
-  if (m_realtimeUpdateThread.joinable())
-    m_realtimeUpdateThread.join();
+  StopWorkerThread(m_recordingRefreshMutex, m_stopRecordingRefreshThread, m_recordingRefreshCv,
+                   m_recordingRefreshThread);
+  StopWorkerThread(m_channelEpgRefreshMutex, m_stopChannelEpgRefreshThread, m_channelEpgRefreshCv,
+                   m_channelEpgRefreshThread);
+  StopWorkerThread(m_realtimeUpdateMutex, m_stopRealtimeUpdateThread, m_realtimeUpdateCv, m_realtimeUpdateThread);
 }
 
 ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingName,
@@ -1543,6 +1543,35 @@ PVR_ERROR PVRDispatcharr::GetRecordings(bool deleted, kodi::addon::PVRRecordings
   return PVR_ERROR_NO_ERROR;
 }
 
+bool PVRDispatcharr::FindRecordingById(int id, dispatcharr::Recording& recordingOut)
+{
+  std::vector<Recording> recordings;
+  std::string error;
+  if (!m_client.GetRecordings(recordings, error))
+    return false;
+  for (const auto& rec : recordings)
+  {
+    if (rec.id == id)
+    {
+      recordingOut = rec;
+      return true;
+    }
+  }
+  return false;
+}
+
+void PVRDispatcharr::PersistApiKeyIfChanged(const std::string& keyBefore)
+{
+  std::string keyAfter = m_client.GetApiKey();
+  if (keyAfter == keyBefore)
+    return;
+  {
+    std::lock_guard<std::mutex> apiKeyLock(m_lastAppliedApiKeyMutex);
+    m_lastAppliedConfig.apiKey = keyAfter;
+  }
+  kodi::addon::SetSettingString("api_key", keyAfter);
+}
+
 PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRecording& recording,
                                                        std::vector<kodi::addon::PVRStreamProperty>& properties)
 {
@@ -1561,23 +1590,15 @@ PVR_ERROR PVRDispatcharr::GetRecordingStreamProperties(const kodi::addon::PVRRec
   bool isRealTime = false;
   {
     int id = std::atoi(recording.GetRecordingId().c_str());
-    std::vector<Recording> recordings;
-    std::string error;
-    if (m_client.GetRecordings(recordings, error))
+    Recording rec;
+    if (FindRecordingById(id, rec))
     {
-      for (const auto& rec : recordings)
-      {
-        if (rec.id == id)
-        {
-          // hlsDirStillPresent alongside isInProgress: see its own comment
-          // in DispatcharrClient.h -- a just-stopped recording still needs
-          // the growing-buffer path (and is therefore still "real-time" in
-          // the sense Kodi cares about here) for the whole window until
-          // Dispatcharr's own HLS-to-MKV concat actually finishes.
-          isRealTime = rec.isInProgress || rec.hlsDirStillPresent;
-          break;
-        }
-      }
+      // hlsDirStillPresent alongside isInProgress: see its own comment in
+      // DispatcharrClient.h -- a just-stopped recording still needs the
+      // growing-buffer path (and is therefore still "real-time" in the
+      // sense Kodi cares about here) for the whole window until
+      // Dispatcharr's own HLS-to-MKV concat actually finishes.
+      isRealTime = rec.isInProgress || rec.hlsDirStillPresent;
     }
   }
   properties.emplace_back(PVR_STREAM_PROPERTY_ISREALTIMESTREAM, isRealTime ? "true" : "false");
@@ -1653,19 +1674,11 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   bool inProgress = false;
   bool hlsDirStillPresent = false;
   {
-    std::vector<Recording> recordings;
-    std::string recError;
-    if (m_client.GetRecordings(recordings, recError))
+    Recording rec;
+    if (FindRecordingById(id, rec))
     {
-      for (const auto& rec : recordings)
-      {
-        if (rec.id == id)
-        {
-          inProgress = rec.isInProgress;
-          hlsDirStillPresent = rec.hlsDirStillPresent;
-          break;
-        }
-      }
+      inProgress = rec.isInProgress;
+      hlsDirStillPresent = rec.hlsDirStillPresent;
     }
   }
 
@@ -1700,21 +1713,13 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   // another Kodi install using this same Dispatcharr account had
   // invalidated the one persisted here. Save the new one so a restart of
   // this install doesn't immediately invalidate it again -- but update
-  // m_lastAppliedConfig.apiKey first (see its own comment): the stream
-  // above already opened successfully with the new key live in
-  // DispatcharrClient's own m_config.apiKey, so the SetSettingString()
-  // call below is purely for persistence, not something this already-open
-  // stream needs a restart to pick up. Confirmed live as a real bug
-  // without this: it tore down the very stream that had just opened.
-  std::string keyAfter = m_client.GetApiKey();
-  if (keyAfter != keyBefore)
-  {
-    {
-      std::lock_guard<std::mutex> apiKeyLock(m_lastAppliedApiKeyMutex);
-      m_lastAppliedConfig.apiKey = keyAfter;
-    }
-    kodi::addon::SetSettingString("api_key", keyAfter);
-  }
+  // m_lastAppliedConfig.apiKey first (see PersistApiKeyIfChanged()'s own
+  // comment): the stream above already opened successfully with the new
+  // key live in DispatcharrClient's own m_config.apiKey, so persisting it
+  // is purely for durability, not something this already-open stream
+  // needs a restart to pick up. Confirmed live as a real bug without
+  // this: it tore down the very stream that had just opened.
+  PersistApiKeyIfChanged(keyBefore);
   return true;
 }
 
@@ -1740,15 +1745,7 @@ int PVRDispatcharr::ReadRecordedStream(unsigned char* buffer, unsigned int size)
   // keep using the new one.
   std::string keyBefore = m_client.GetApiKey();
   int result = m_client.ReadRecordingStream(buffer, size);
-  std::string keyAfter = m_client.GetApiKey();
-  if (keyAfter != keyBefore)
-  {
-    {
-      std::lock_guard<std::mutex> apiKeyLock(m_lastAppliedApiKeyMutex);
-      m_lastAppliedConfig.apiKey = keyAfter;
-    }
-    kodi::addon::SetSettingString("api_key", keyAfter);
-  }
+  PersistApiKeyIfChanged(keyBefore);
   return result;
 }
 
@@ -2138,28 +2135,13 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
       // the current end time has to be fetched fresh first -- Kodi
       // doesn't send the pre-edit value, and this addon's own last-polled
       // copy could be stale.
-      std::vector<Recording> recordings;
-      std::string fetchError;
-      time_t currentEndTime = 0;
-      bool found = false;
-      if (m_client.GetRecordings(recordings, fetchError))
+      Recording rec;
+      if (!FindRecordingById(id, rec))
       {
-        for (const auto& rec : recordings)
-        {
-          if (rec.id == id)
-          {
-            currentEndTime = rec.endTime;
-            found = true;
-            break;
-          }
-        }
-      }
-      if (!found)
-      {
-        kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to update timer: recording %d not found (%s)", id,
-                  fetchError.c_str());
+        kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharrai: failed to update timer: recording %d not found", id);
         return PVR_ERROR_SERVER_ERROR;
       }
+      time_t currentEndTime = rec.endTime;
       time_t deltaSeconds = timer.GetEndTime() - currentEndTime;
       if (deltaSeconds <= 0)
       {

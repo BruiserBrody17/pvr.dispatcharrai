@@ -259,6 +259,20 @@ private:
   bool EnsureChannelsLoaded();
   bool EnsureEpgLoaded();
   const dispatcharr::Channel* FindChannelByUid(int uid) const;
+  // Fetches the full recordings list and scans it for `id` -- shared by
+  // GetRecordingStreamProperties()/OpenRecordedStream() (both need a
+  // recording's isInProgress/hlsDirStillPresent flags right before
+  // playback) and UpdateTimer()'s extend-recording branch (needs
+  // currentEndTime). Returns false (recordingOut left untouched) if the
+  // fetch failed or no recording with that id was found.
+  bool FindRecordingById(int id, dispatcharr::Recording& recordingOut);
+  // If m_client's current API key differs from keyBefore (captured by the
+  // caller right before whatever DispatcharrClient call may have
+  // self-healed it -- see OpenRecordedStream()'s own comment for why this
+  // can happen and why m_lastAppliedConfig.apiKey is updated before the
+  // SetSettingString() below), persists the new key so a later restart of
+  // this install doesn't immediately invalidate it again.
+  void PersistApiKeyIfChanged(const std::string& keyBefore);
   // Shared by AddTimer()/UpdateTimer() for kTimerTypeRecurring -- converts
   // Kodi's UTC-based weekday bitmask/start-end-time-of-day/first-day into
   // Dispatcharr's own representation (0-6 day list, its configured-system-
