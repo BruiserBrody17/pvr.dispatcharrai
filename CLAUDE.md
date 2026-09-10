@@ -158,6 +158,22 @@ platform.
   zips whatever's currently committed either way. `CHANGELOG.md` should
   say explicitly which piece(s) moved in a given entry rather than
   implying all three share one number.
+- **A GitHub Release's notes must inline any bundled plugin's own
+  changelog entry, not just point at it, as of 2026-09-10.** When a tag
+  bundles an already-published plugin version that didn't move for *this*
+  release (the addon's own `CHANGELOG.md` entry says as much, e.g. "this
+  release also bundles the already-published `timeshift_buffer` `0.6.1`
+  fix"), the release notes need that plugin's actual Added/Fixed/etc.
+  bullets reproduced in the release body itself -- not just a sentence
+  pointing the reader at `CHANGELOG.md` (a separate file, off the release
+  page entirely) or even at "its own entry below" (still real navigation
+  friction if it's actually in a different scope). `CHANGELOG.md` itself
+  can keep each piece's entry separate (that's still correct, per the
+  bullet above) -- this only applies to the release notes actually posted
+  to the GitHub Release, since duplicating content within `CHANGELOG.md`
+  itself risks the two copies drifting apart on a later edit, while a
+  past release's notes are already a frozen, one-time snapshot with no
+  such risk.
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure
