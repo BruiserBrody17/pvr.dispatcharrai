@@ -334,6 +334,14 @@ public:
   void SendTimeshiftHeartbeat(const std::string& channelUuid, const std::string& viewerId);
 
   bool GetRecordings(std::vector<Recording>& out, std::string& error);
+  // Confirmed live: GET /api/channels/recordings/{id}/ is a real,
+  // standard DRF retrieve route -- same response shape as one item from
+  // GetRecordings()'s own list, just scoped to a single recording.
+  // RefreshInProgressRecordingManifest() uses this instead of a full
+  // GetRecordings() call every ~500ms during in-progress playback, since
+  // it only ever needs one recording's current state (was previously
+  // O(every recording) just to check one id's isInProgress flag).
+  bool GetRecordingById(int id, Recording& out, std::string& error);
   // Fetches comskip-detected commercial-break markers for a completed
   // recording via this addon's companion Dispatcharr plugin
   // (dispatcharr-plugin/recording_edl/ in this repo -- not built into
@@ -759,6 +767,13 @@ private:
   // (key kSystemSettingsKey) all need this same lookup, just against
   // different rows of the same /api/core/settings/ list.
   bool FindCoreSettingsRow(const std::string& key, int& idOut, nlohmann::json& valueOut, std::string& error);
+
+  // Shared by GetRecordings() (once per list item) and GetRecordingById()
+  // (once, for its single item) so the two never drift apart -- same
+  // Recording, whether Dispatcharr handed it over as part of a list or on
+  // its own. `now` is passed in (rather than called here) so a caller
+  // parsing a whole list only reads the clock once, not once per item.
+  Recording ParseRecordingJson(const nlohmann::json& item, time_t now);
 
   // Fetches the raw HLS playlist text for an in-progress recording, with a
   // self-healing retry on a 401. Returns false (with `error` set) on a

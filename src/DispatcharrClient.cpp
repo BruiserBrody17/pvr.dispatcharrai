@@ -1304,114 +1304,132 @@ bool DispatcharrClient::GetRecordings(std::vector<Recording>& out, std::string& 
 
   time_t now = time(nullptr);
   out.clear();
+  out.reserve(list.size());
   for (const auto& item : list)
-  {
-    Recording r;
-    r.id = FieldOr(item, "id", 0);
-    r.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
-    r.startTime = TimeFromIso(FieldOr<std::string>(item, "start_time", ""));
-    r.endTime = TimeFromIso(FieldOr<std::string>(item, "end_time", ""));
-    r.durationSeconds = (r.endTime > r.startTime) ? static_cast<int>(r.endTime - r.startTime) : 0;
-    r.isInProgress = r.startTime > 0 && r.startTime <= now && now < r.endTime;
-    r.isUpcoming = r.startTime > now;
-
-    // Dispatcharr's Recording object has no title/subtitle/description
-    // fields of its own. Confirmed against a real recording: when created
-    // without an explicit custom_properties, Dispatcharr auto-populates it
-    // from the EPG programme that was airing, nested under
-    // custom_properties.program.{title,sub_title,description} (alongside
-    // status/file_url/etc. -- see CreateOneTimeRecording() for why this
-    // addon no longer sends its own custom_properties on create, to avoid
-    // stomping on that auto-enrichment). Also checks a flat
-    // custom_properties.title as a fallback, in case something else wrote
-    // one directly there.
-    const json& custom = item.contains("custom_properties") ? item["custom_properties"] : json();
-    if (custom.is_object())
-    {
-      // custom_properties.status is a more authoritative signal than the
-      // start/end time window above when present: a recording stopped
-      // early (see StopRecording()) keeps its originally-scheduled
-      // end_time untouched, so the time-window check alone would keep
-      // reporting it as in-progress for the rest of that original
-      // duration even though it finished the moment it was stopped.
-      // Confirmed values: "recording" (still active), "completed"/
-      // "stopped"/"interrupted" (all finished, one way or another) --
-      // exact enum not documented, so only treat "recording" as
-      // authoritative for in-progress and fall back to the time window
-      // for anything else/absent, rather than assuming a closed list.
-      std::string status = FieldOr<std::string>(custom, "status", "");
-      if (status == "recording")
-        r.isInProgress = true;
-      else if (!status.empty())
-        r.isInProgress = false;
-
-      // See this field's own comment in DispatcharrClient.h: present for
-      // the whole window between "user stopped it" and "concat + viewer-wait
-      // actually finished," regardless of what status already says.
-      r.hlsDirStillPresent = custom.contains("_hls_dir") && !custom["_hls_dir"].is_null();
-
-      // custom_properties.bytes_written is only written by Dispatcharr's
-      // recording task at finalization (confirmed against its source,
-      // apps/channels/tasks.py: summed from HLS segment file sizes and
-      // stored into custom_properties only once the task reaches its
-      // post-processing step) -- absent while genuinely still recording,
-      // hence the 0 default here rather than treating absence as an error.
-      r.bytesWritten = FieldOr<int64_t>(custom, "bytes_written", 0);
-
-      const json& program = custom.contains("program") ? custom["program"] : json();
-      if (program.is_object())
-      {
-        r.title = FieldOr<std::string>(program, "title", "");
-        r.subtitle = FieldOr<std::string>(program, "sub_title", "");
-        r.description = FieldOr<std::string>(program, "description", "");
-      }
-      if (r.title.empty())
-        r.title = FieldOr<std::string>(custom, "title", "");
-      if (r.subtitle.empty())
-        r.subtitle = FieldOr<std::string>(custom, "sub_title", "");
-      if (r.description.empty())
-        r.description = FieldOr<std::string>(custom, "description", "");
-
-      // Tagged by Dispatcharr's own recurring-rule scheduler (confirmed
-      // against its source: custom_properties.rule =
-      // {"type": "recurring", "id": <rule id>, ...}) -- see
-      // RecurringRule's own comment for how this links back to its
-      // parent rule as a Kodi timer.
-      const json& rule = custom.contains("rule") ? custom["rule"] : json();
-      if (rule.is_object() && FieldOr<std::string>(rule, "type", "") == "recurring")
-        r.recurringRuleId = FieldOr(rule, "id", 0);
-    }
-    if (r.title.empty())
-    {
-      // See PendingTitle's comment on why this can be filled in before
-      // Dispatcharr's own async enrichment has caught up, and why it's
-      // matched by channel alone rather than also start time.
-      std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
-      constexpr auto kPendingTitleTtl = std::chrono::minutes(3);
-      auto now = std::chrono::steady_clock::now();
-      m_pendingTitles.erase(std::remove_if(m_pendingTitles.begin(), m_pendingTitles.end(), [&](const PendingTitle& p)
-                                           { return now - p.insertedAt > kPendingTitleTtl; }),
-                            m_pendingTitles.end());
-      // Deliberately NOT erased on match: this runs on every poll until
-      // Dispatcharr's own enrichment lands (at which point r.title is no
-      // longer empty and this isn't consulted again for that recording), so
-      // erasing after the first match would make the title flicker back to
-      // "Recording <id>" on the very next poll if enrichment hadn't caught
-      // up yet. Left to expire via the TTL prune above instead.
-      const PendingTitle* latest = nullptr;
-      for (const auto& pending : m_pendingTitles)
-      {
-        if (pending.channelId == r.channelId && (!latest || pending.insertedAt > latest->insertedAt))
-          latest = &pending;
-      }
-      if (latest)
-        r.title = latest->title;
-    }
-    if (r.title.empty())
-      r.title = "Recording " + std::to_string(r.id);
-    out.push_back(std::move(r));
-  }
+    out.push_back(ParseRecordingJson(item, now));
   return true;
+}
+
+bool DispatcharrClient::GetRecordingById(int id, Recording& out, std::string& error)
+{
+  if (!EnsureAuthenticated(error))
+    return false;
+
+  json response;
+  std::string path = std::string(kRecordingsPath) + std::to_string(id) + "/";
+  if (!Request("GET", path, json(), response, error))
+    return false;
+
+  out = ParseRecordingJson(response, time(nullptr));
+  return true;
+}
+
+Recording DispatcharrClient::ParseRecordingJson(const json& item, time_t now)
+{
+  Recording r;
+  r.id = FieldOr(item, "id", 0);
+  r.channelId = FieldOr(item, "channel", FieldOr(item, "channel_id", 0));
+  r.startTime = TimeFromIso(FieldOr<std::string>(item, "start_time", ""));
+  r.endTime = TimeFromIso(FieldOr<std::string>(item, "end_time", ""));
+  r.durationSeconds = (r.endTime > r.startTime) ? static_cast<int>(r.endTime - r.startTime) : 0;
+  r.isInProgress = r.startTime > 0 && r.startTime <= now && now < r.endTime;
+  r.isUpcoming = r.startTime > now;
+
+  // Dispatcharr's Recording object has no title/subtitle/description
+  // fields of its own. Confirmed against a real recording: when created
+  // without an explicit custom_properties, Dispatcharr auto-populates it
+  // from the EPG programme that was airing, nested under
+  // custom_properties.program.{title,sub_title,description} (alongside
+  // status/file_url/etc. -- see CreateOneTimeRecording() for why this
+  // addon no longer sends its own custom_properties on create, to avoid
+  // stomping on that auto-enrichment). Also checks a flat
+  // custom_properties.title as a fallback, in case something else wrote
+  // one directly there.
+  const json& custom = item.contains("custom_properties") ? item["custom_properties"] : json();
+  if (custom.is_object())
+  {
+    // custom_properties.status is a more authoritative signal than the
+    // start/end time window above when present: a recording stopped
+    // early (see StopRecording()) keeps its originally-scheduled
+    // end_time untouched, so the time-window check alone would keep
+    // reporting it as in-progress for the rest of that original
+    // duration even though it finished the moment it was stopped.
+    // Confirmed values: "recording" (still active), "completed"/
+    // "stopped"/"interrupted" (all finished, one way or another) --
+    // exact enum not documented, so only treat "recording" as
+    // authoritative for in-progress and fall back to the time window
+    // for anything else/absent, rather than assuming a closed list.
+    std::string status = FieldOr<std::string>(custom, "status", "");
+    if (status == "recording")
+      r.isInProgress = true;
+    else if (!status.empty())
+      r.isInProgress = false;
+
+    // See this field's own comment in DispatcharrClient.h: present for
+    // the whole window between "user stopped it" and "concat + viewer-wait
+    // actually finished," regardless of what status already says.
+    r.hlsDirStillPresent = custom.contains("_hls_dir") && !custom["_hls_dir"].is_null();
+
+    // custom_properties.bytes_written is only written by Dispatcharr's
+    // recording task at finalization (confirmed against its source,
+    // apps/channels/tasks.py: summed from HLS segment file sizes and
+    // stored into custom_properties only once the task reaches its
+    // post-processing step) -- absent while genuinely still recording,
+    // hence the 0 default here rather than treating absence as an error.
+    r.bytesWritten = FieldOr<int64_t>(custom, "bytes_written", 0);
+
+    const json& program = custom.contains("program") ? custom["program"] : json();
+    if (program.is_object())
+    {
+      r.title = FieldOr<std::string>(program, "title", "");
+      r.subtitle = FieldOr<std::string>(program, "sub_title", "");
+      r.description = FieldOr<std::string>(program, "description", "");
+    }
+    if (r.title.empty())
+      r.title = FieldOr<std::string>(custom, "title", "");
+    if (r.subtitle.empty())
+      r.subtitle = FieldOr<std::string>(custom, "sub_title", "");
+    if (r.description.empty())
+      r.description = FieldOr<std::string>(custom, "description", "");
+
+    // Tagged by Dispatcharr's own recurring-rule scheduler (confirmed
+    // against its source: custom_properties.rule =
+    // {"type": "recurring", "id": <rule id>, ...}) -- see
+    // RecurringRule's own comment for how this links back to its
+    // parent rule as a Kodi timer.
+    const json& rule = custom.contains("rule") ? custom["rule"] : json();
+    if (rule.is_object() && FieldOr<std::string>(rule, "type", "") == "recurring")
+      r.recurringRuleId = FieldOr(rule, "id", 0);
+  }
+  if (r.title.empty())
+  {
+    // See PendingTitle's comment on why this can be filled in before
+    // Dispatcharr's own async enrichment has caught up, and why it's
+    // matched by channel alone rather than also start time.
+    std::lock_guard<std::mutex> lock(m_pendingTitlesMutex);
+    constexpr auto kPendingTitleTtl = std::chrono::minutes(3);
+    auto now = std::chrono::steady_clock::now();
+    m_pendingTitles.erase(std::remove_if(m_pendingTitles.begin(), m_pendingTitles.end(),
+                                         [&](const PendingTitle& p) { return now - p.insertedAt > kPendingTitleTtl; }),
+                          m_pendingTitles.end());
+    // Deliberately NOT erased on match: this runs on every poll until
+    // Dispatcharr's own enrichment lands (at which point r.title is no
+    // longer empty and this isn't consulted again for that recording), so
+    // erasing after the first match would make the title flicker back to
+    // "Recording <id>" on the very next poll if enrichment hadn't caught
+    // up yet. Left to expire via the TTL prune above instead.
+    const PendingTitle* latest = nullptr;
+    for (const auto& pending : m_pendingTitles)
+    {
+      if (pending.channelId == r.channelId && (!latest || pending.insertedAt > latest->insertedAt))
+        latest = &pending;
+    }
+    if (latest)
+      r.title = latest->title;
+  }
+  if (r.title.empty())
+    r.title = "Recording " + std::to_string(r.id);
+  return r;
 }
 
 bool DispatcharrClient::GetRecordingEdl(int recordingId, std::vector<RecordingEdlEntry>& out, std::string& error)
@@ -2092,10 +2110,10 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // Timing breakdown for diagnosing "seek to live took ~10s"-type reports:
   // this one call does up to three separate HTTP round trips (playlist
   // fetch, one ranged-GET probe per newly-discovered segment, and an
-  // unconditional GetRecordings() call below just to re-check this one
-  // recording's isInProgress flag), any of which could plausibly dominate
-  // depending on network conditions -- log each piece rather than
-  // guessing which one matters.
+  // unconditional GetRecordingById() call below just to re-check this
+  // one recording's isInProgress flag), any of which could plausibly
+  // dominate depending on network conditions -- log each piece rather
+  // than guessing which one matters.
   auto refreshStart = std::chrono::steady_clock::now();
 
   std::string baseDir = BaseUrl() + kRecordingsPath + std::to_string(m_inProgressRecordingStream.recordingId) + "/hls/";
@@ -2242,22 +2260,15 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   // lets ReadInProgressRecordingStream() eventually stop waiting for a
   // recording that's actually finished, and CanPauseStream()/
   // IsRealTimeStream() reflect current reality rather than whatever was
-  // true when the stream was opened.
+  // true when the stream was opened. GetRecordingById() (a single-item
+  // GET, not the full list) -- this used to call GetRecordings() and
+  // scan the entire result just to read one id's isInProgress flag,
+  // O(every recording) on a call made up to twice a second.
   auto getRecordingsStart = std::chrono::steady_clock::now();
-  bool stillInProgress = false;
-  std::vector<Recording> recordings;
+  Recording rec;
   std::string recordingsError;
-  if (GetRecordings(recordings, recordingsError))
-  {
-    for (const auto& rec : recordings)
-    {
-      if (rec.id == m_inProgressRecordingStream.recordingId)
-      {
-        stillInProgress = rec.isInProgress;
-        break;
-      }
-    }
-  }
+  bool stillInProgress =
+      GetRecordingById(m_inProgressRecordingStream.recordingId, rec, recordingsError) && rec.isInProgress;
   m_inProgressRecordingStream.finished = !stillInProgress;
   double getRecordingsSec =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - getRecordingsStart).count();
@@ -2300,7 +2311,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
   double totalSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
   kodi::Log(ADDON_LOG_DEBUG,
             "pvr.dispatcharrai: RefreshInProgressRecordingManifest: %.3fs total (playlist fetch "
-            "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordings %.3fs), "
+            "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordingById %.3fs), "
             "totalBytes=%lld totalDurationMs=%lld finished=%d",
             totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, getRecordingsSec,
             static_cast<long long>(m_inProgressRecordingStream.totalBytes),
