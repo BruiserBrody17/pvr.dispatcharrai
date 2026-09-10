@@ -96,9 +96,10 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   }
   else if (!m_client.HasApiKey())
   {
-    // Recording playback needs an API key (see GetRecordingStreamUrl()) --
-    // a JWT would work too, but expires after 30 minutes, which is shorter
-    // than most recordings. Generate one once and persist it so it isn't
+    // Recording playback needs an API key (see OpenRecordingStream()/
+    // ReadRecordingStream()) -- a JWT would work too, but expires after
+    // 30 minutes, which is shorter than most recordings. Generate one
+    // once and persist it so it isn't
     // silently regenerated (and any other use of this account's key
     // invalidated) on every addon restart.
     std::string key;
@@ -936,11 +937,12 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   }
 
   // Live pause/rewind ("timeshift") is opt-in via live_timeshift_mode --
-  // see docs/TIMESHIFT.md for the full history, including the earlier
-  // local (inputstream.ffmpegdirect on-device buffer) mode this addon
-  // used to also offer, removed once server-side proved stable and never
-  // reintroduced (Off returned instead, once a real need for a
-  // non-admin-account path came up -- see that setting's own help text).
+  // see docs/TIMESHIFT.md for the full history: an earlier local
+  // (inputstream.ffmpegdirect on-device buffer) mode was removed once
+  // server-side proved stable, then reintroduced once a real need for a
+  // non-admin-account path came up (see kLiveTimeshiftLocal's own comment
+  // and that setting's help text) -- Off and Local are both handled in
+  // the branch below, alongside Server-side here.
   if (m_liveTimeshiftMode == kLiveTimeshiftServer)
   {
     // Server-side: deliberately leaves STREAMURL unset (confirmed elsewhere
@@ -1788,9 +1790,10 @@ PVR_ERROR PVRDispatcharr::GetTimerTypes(std::vector<kodi::addon::PVRTimerType>& 
   // EPG event" flow), and the series type below has IS_REPEATING set, so
   // neither one qualifies -- without this type, CreateFromEpg() always
   // returned null and "Record" from the guide could never create a real
-  // timer. AddTimer()/DeleteTimer() already treat anything that isn't
-  // kTimerTypeSeries as a one-time recording, so no other code needed to
-  // change for this type to work.
+  // timer. AddTimer()/DeleteTimer() already branch on kTimerTypeSeries and
+  // kTimerTypeRecurring separately, falling through to one-time handling
+  // for anything else -- this type isn't either of those, so no other
+  // code needed to change for it to work.
   kodi::addon::PVRTimerType oneTimeEpg;
   oneTimeEpg.SetId(kTimerTypeOneTimeEpgBased);
   oneTimeEpg.SetAttributes(PVR_TIMER_TYPE_SUPPORTS_CHANNELS | PVR_TIMER_TYPE_SUPPORTS_START_TIME |

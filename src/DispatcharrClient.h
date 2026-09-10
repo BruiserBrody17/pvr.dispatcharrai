@@ -419,8 +419,8 @@ public:
     return m_config.apiKey;
   }
   // Generates a new Dispatcharr API key and stores it in this client's own
-  // config for immediate use by GetRecordingStreamUrl(). Regenerating
-  // replaces any previous key for the account (confirmed against a live
+  // config for immediate use by OpenRecordingStream()/ReadRecordingStream().
+  // Regenerating replaces any previous key for the account (confirmed against a live
   // instance) -- Dispatcharr keeps only one active key account-wide, so
   // running this addon against the same account from more than one Kodi
   // install means whichever one last called this silently invalidates
@@ -1131,12 +1131,15 @@ private:
   // from re-fetching on every single call.
   bool RefreshInProgressRecordingManifest(bool force, std::string& error);
 
-  // A tiny ranged GET (mirrors OpenRecordingStream()'s own probe) to learn
-  // one segment's total byte size -- HLS playlists carry each segment's
-  // duration (#EXTINF) but never its size. Returns -1 on any failure
-  // (network error, non-2xx/206, or no parseable Content-Range); the
-  // caller skips a segment it can't size rather than corrupting the
-  // cumulative offsets that follow.
+  // A tiny HEAD request to learn one segment's total byte size via
+  // Content-Length -- HLS playlists carry each segment's duration
+  // (#EXTINF) but never its size. Not a ranged GET: Dispatcharr's
+  // in-progress-recording HLS segment endpoint ignores Range entirely and
+  // always serves the full body with a 200 (see ContentLengthHeaderCallback's
+  // own comment), so this reads Content-Length off a HEAD instead. Returns
+  // -1 on any failure (network error, non-200, or no parseable
+  // Content-Length); the caller skips a segment it can't size rather than
+  // corrupting the cumulative offsets that follow.
   int64_t ProbeSegmentByteSize(const std::string& segmentUrl) const;
 
   // Client-side placeholder for a just-created one-time recording's title,
@@ -1157,10 +1160,11 @@ private:
   // (e.g. "now"), not the EPG programme's own start time this addon sent --
   // exact-time matching missed every such case, which is the single most
   // common one ("Record" on something currently on). Matching by channel
-  // alone (picking the most recently inserted match, and consuming it so it
-  // isn't reused for a later recording on the same channel) is good enough
-  // for what this is: a short-lived, best-effort bridge, not an
-  // authoritative mapping. Entries expire after a few minutes regardless
+  // alone (picking the most recently inserted match, left in place rather
+  // than erased -- see GetRecordings()'s own comment for why erasing on
+  // match would make the title flicker) is good enough for what this is:
+  // a short-lived, best-effort bridge, not an authoritative mapping.
+  // Entries expire after a few minutes regardless
   // (pruned in GetRecordings()) since Dispatcharr's own enrichment should
   // have long since caught up by then, and to avoid an unbounded cache.
   struct PendingTitle
