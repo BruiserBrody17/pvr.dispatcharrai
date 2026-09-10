@@ -641,20 +641,32 @@
   mentioning "setting" against `resources/settings.xml` *and* both
   plugins' own settings/action ids (a separate namespace from the Kodi
   addon's settings.xml).
-  Run by hand for now (`python tools/check_doc_refs.py`), not yet wired
-  into CI. First real run found 78 hits after fixing several bugs in the
-  checker itself found via its own output (the multi-line lookback for
-  which file a citation belongs to, the markdown-link form, the bold-
-  paragraph heading style, and the missing plugin.py corpus) -- the
-  remaining hits are overwhelmingly genuine, correct citations to
-  *external* code this project's docs deliberately reference by design
-  (Kodi-core source, hls.js, Python stdlib/syscalls) or to deliberately-
-  documented historical/removed settings, not real dangling references.
-  Confirmed by spot-checking rather than assumed: `enable_live_timeshift`
-  (flagged as "setting not found") is explicitly, correctly documented in
+  First real run found 78 hits after fixing several bugs in the checker
+  itself found via its own output (the multi-line lookback for which file
+  a citation belongs to, the markdown-link form, the bold-paragraph
+  heading style, and the missing plugin.py corpus) -- the remaining hits
+  are overwhelmingly genuine, correct citations to *external* code this
+  project's docs deliberately reference by design (Kodi-core source,
+  hls.js, Python stdlib/syscalls) or to deliberately-documented
+  historical/removed settings, not real dangling references. Confirmed by
+  spot-checking rather than assumed: `enable_live_timeshift` (flagged as
+  "setting not found") is explicitly, correctly documented in
   `docs/TIMESHIFT.md` as a removed setting, replaced by
   `live_timeshift_mode`. This is inherent to a lightweight static-text
   heuristic given how citation-heavy this project's own docs style is by
-  design (see `CLAUDE.md`'s "Confirmed live" citations bullet) -- the
-  tool's own output says as much and is meant to be eyeballed, not
-  treated as a hard pass/fail gate.
+  design (see `CLAUDE.md`'s "Confirmed live" citations bullet).
+  **Update: baselined and wired into CI (2026-09-10).** Re-triaging the
+  same 76 known-legitimate hits (a couple resolved themselves once the
+  checker's own remaining bugs above were fixed) on every run wasn't
+  useful, so `tools/doc_refs_baseline.txt` records them (keyed on the
+  citation itself, not its line number, so an unrelated doc edit doesn't
+  shift the baseline) and the CI `lint` job now runs
+  `python3 tools/check_doc_refs.py` unconditionally, failing only on a
+  genuinely new dangling reference not already in the baseline --
+  confirmed by a throwaway test file with a fake dangling function
+  reference, which the script correctly flagged and failed on (exit 1),
+  while a real, clean run stayed silent (exit 0). `--update-baseline`
+  accepts new legitimate hits (a real external citation, or documenting a
+  newly-reverted approach) into the baseline by hand when that judgment
+  call is needed -- this still isn't a fully automatic pass/fail gate for
+  *legitimacy*, just for *novelty*.
