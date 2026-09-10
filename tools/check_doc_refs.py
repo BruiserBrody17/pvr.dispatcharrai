@@ -66,6 +66,15 @@ HEADING_RE = re.compile(r"^#{1,6}\s+(.*)")
 BOLD_PSEUDO_HEADING_RE = re.compile(r"^[\s\-*]*\*\*(.+?)\*\*:?")
 
 
+def rel(path: Path) -> str:
+    # Always forward slashes, regardless of platform -- Path.relative_to()
+    # otherwise renders with the OS-native separator, which would make
+    # every baseline key generated on Windows mismatch on Linux CI (and
+    # vice versa). Confirmed the hard way: CI failed with every known
+    # finding showing as "new" the first time this script ran there.
+    return path.relative_to(REPO_ROOT).as_posix()
+
+
 def normalize(text: str) -> str:
     return re.sub(r"[`*_]", "", text).strip().lower()
 
@@ -109,8 +118,8 @@ def check_section_titles() -> list[tuple[str, str]]:
                 headings = heading_cache[target_path]
                 normalized_title = normalize(title)
                 if not any(normalized_title in h or h in normalized_title for h in headings):
-                    doc_rel = doc.relative_to(REPO_ROOT)
-                    target_rel = target_path.relative_to(REPO_ROOT)
+                    doc_rel = rel(doc)
+                    target_rel = rel(target_path)
                     key = f"{doc_rel}|section|{title}|{target_rel}"
                     message = f'{doc_rel}:{lineno}: cites "{title}" section in {target_rel}, no matching heading found'
                     errors.append((key, message))
@@ -122,7 +131,7 @@ def check_functions() -> list[tuple[str, str]]:
     code_files = list(SRC_DIR.glob("*.cpp")) + list(SRC_DIR.glob("*.h")) + PLUGIN_FILES
     src_text = "\n".join(p.read_text(encoding="utf-8") for p in code_files)
     for doc in DOC_FILES:
-        doc_rel = doc.relative_to(REPO_ROOT)
+        doc_rel = rel(doc)
         for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), start=1):
             for m in FUNCTION_REF_RE.finditer(line):
                 name = m.group(1).split("::")[-1]
@@ -151,7 +160,7 @@ def check_settings() -> list[tuple[str, str]]:
     errors = []
     known = get_setting_ids()
     for doc in DOC_FILES:
-        doc_rel = doc.relative_to(REPO_ROOT)
+        doc_rel = rel(doc)
         for lineno, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), start=1):
             if "setting" not in line.lower():
                 continue
@@ -161,7 +170,7 @@ def check_settings() -> list[tuple[str, str]]:
                     key = f"{doc_rel}|setting|{token}"
                     message = (
                         f"{doc_rel}:{lineno}: references setting `{token}`, not found in "
-                        f"{SETTINGS_XML.relative_to(REPO_ROOT)} or either plugin's own settings/actions -- "
+                        f"{rel(SETTINGS_XML)} or either plugin's own settings/actions -- "
                         "verify it isn't a Dispatcharr API field or a deliberately-documented removed setting"
                     )
                     errors.append((key, message))
@@ -183,7 +192,7 @@ def main() -> int:
 
     if "--update-baseline" in sys.argv[1:]:
         write_baseline({key for key, _ in findings})
-        print(f"check_doc_refs: wrote {len(findings)} finding(s) to {BASELINE_PATH.relative_to(REPO_ROOT)}")
+        print(f"check_doc_refs: wrote {len(findings)} finding(s) to {rel(BASELINE_PATH)}")
         return 0
 
     baseline = load_baseline()
