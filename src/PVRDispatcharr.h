@@ -258,14 +258,39 @@ private:
   // either way.
   bool EnsureChannelsLoaded();
   bool EnsureEpgLoaded();
+  // Same staleness-cache shape as the pair above, but a much shorter TTL
+  // (kRecordingsAndTimersCacheTtlSeconds, not channel_refresh_hours-scale)
+  // -- recordings/timers can change the instant the user acts, unlike
+  // channels/EPG. Exists so GetRecordingsAmount()+GetRecordings() (and
+  // GetTimersAmount()+GetTimers()) don't each independently re-fetch:
+  // Kodi calls the Amount() half and the List() half back-to-back on
+  // every refresh, and this TTL is enough to collapse that pair into one
+  // real fetch without meaningfully risking staleness for anything else.
+  // The addon's own writes (AddTimer()/UpdateTimer()/DeleteTimer()/...)
+  // don't wait out this TTL at all -- see
+  // InvalidateAndTriggerRecordingUpdate()/InvalidateAndTriggerTimerUpdate().
+  bool EnsureRecordingsLoaded();
+  bool EnsureTimerRulesLoaded();
   const dispatcharr::Channel* FindChannelByUid(int uid) const;
-  // Fetches the full recordings list and scans it for `id` -- shared by
+  // Looks up one recording by id -- shared by
   // GetRecordingStreamProperties()/OpenRecordedStream() (both need a
   // recording's isInProgress/hlsDirStillPresent flags right before
   // playback) and UpdateTimer()'s extend-recording branch (needs
-  // currentEndTime). Returns false (recordingOut left untouched) if the
-  // fetch failed or no recording with that id was found.
+  // currentEndTime). A direct single-item REST call
+  // (DispatcharrClient::GetRecordingById()), not a scan of
+  // m_cachedRecordings -- these callers want this recording's truly
+  // current state right before acting on it, not a copy that could be up
+  // to kRecordingsAndTimersCacheTtlSeconds stale. Returns false
+  // (recordingOut left untouched) if the fetch failed or no recording
+  // with that id was found.
   bool FindRecordingById(int id, dispatcharr::Recording& recordingOut);
+  // Wrap the base class's own TriggerRecordingUpdate()/TriggerTimerUpdate()
+  // so every call site that reports "something changed" also invalidates
+  // the relevant cache above -- otherwise a timer/recording the user just
+  // added or deleted could still read back the pre-change state for up to
+  // kRecordingsAndTimersCacheTtlSeconds on the very next refresh.
+  void InvalidateAndTriggerRecordingUpdate();
+  void InvalidateAndTriggerTimerUpdate();
   // If m_client's current API key differs from keyBefore (captured by the
   // caller right before whatever DispatcharrClient call may have
   // self-healed it -- see OpenRecordedStream()'s own comment for why this
@@ -294,6 +319,17 @@ private:
 
   std::chrono::steady_clock::time_point m_channelsLoadedAt{};
   std::chrono::steady_clock::time_point m_epgLoadedAt{};
+
+  // See EnsureRecordingsLoaded()/EnsureTimerRulesLoaded()'s own comment
+  // for why these need a much shorter TTL than the channels/EPG pair
+  // above. Two separate timestamps: recordings and timer-rules are
+  // fetched (and go stale) independently of each other.
+  static constexpr int kRecordingsAndTimersCacheTtlSeconds = 2;
+  std::vector<dispatcharr::Recording> m_cachedRecordings;
+  std::chrono::steady_clock::time_point m_recordingsCachedAt{};
+  std::vector<dispatcharr::TimerRule> m_cachedTimerRules;
+  std::vector<dispatcharr::RecurringRule> m_cachedRecurringRules;
+  std::chrono::steady_clock::time_point m_timerRulesCachedAt{};
   // Every setting below is atomic rather than plain, and updated live by
   // OnAddonSettingChanged() (called via CAddonDispatcharr::SetSetting() in
   // addon.cpp, Kodi's own per-setting change notification) rather than

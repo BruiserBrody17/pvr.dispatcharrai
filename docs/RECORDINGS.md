@@ -1816,10 +1816,63 @@ existing timing breakdown showed `GetRecordingById 0.006-0.009s` on every
 refresh cycle (down from fetching and parsing the full recordings list --
 41 recordings on the live instance this was tested against), with
 `finished=0` correctly reflected throughout, exercising the exact same
-code path a real playback session already relies on. Deliberately not
-also `PVRDispatcharr::FindRecordingById()` -- a different, pre-existing
-helper that scans an already-in-memory `std::vector<Recording>` a caller
-already fetched, not a new REST call.
+code path a real playback session already relies on. At the time this
+was written, deliberately left `PVRDispatcharr::FindRecordingById()`
+alone -- a different, pre-existing helper that scanned an *already-fetched*
+`std::vector<Recording>` a caller passed in, not a new REST call itself.
+**Update: simplified anyway once `GetRecordingById()` existed -- see the
+recordings/timers caching entry below.**
+
+**`GetRecordingsAmount()`/`GetRecordings()` and `GetTimersAmount()`/
+`GetTimers()` each independently re-fetched on every Kodi refresh --
+the other two findings from the same efficiency review as the entry
+above, fixed and live-verified the same day (2026-09-10).** Kodi calls
+the `Amount()` half of each pair and then the `List()` half essentially
+back-to-back on every refresh; both halves called `m_client.GetRecordings()`/
+`GetTimerRules()`/`GetRecurringRules()` completely independently, so a
+single logical refresh cost 2-3x the real REST round trips it needed.
+Fixed with `EnsureRecordingsLoaded()`/`EnsureTimerRulesLoaded()`, the
+same staleness-cache shape as the pre-existing `EnsureChannelsLoaded()`/
+`EnsureEpgLoaded()` pair, but with a 2-second TTL
+(`kRecordingsAndTimersCacheTtlSeconds`) instead of
+`channel_refresh_hours`/`epg_refresh_hours` -- recordings/timers can
+change the instant the user acts, unlike channels/EPG, so an hours-scale
+cache would risk showing stale state right after the user's own change.
+That TTL alone isn't enough on its own, though: `TriggerRecordingUpdate()`/
+`TriggerTimerUpdate()` are Kodi SDK base-class methods (not something this
+addon defines, so their own implementation can't be edited to add
+invalidation), so two new wrapper methods,
+`InvalidateAndTriggerRecordingUpdate()`/`InvalidateAndTriggerTimerUpdate()`,
+reset the relevant cache timestamp before delegating to the real
+trigger -- applied mechanically across every one of the ~10 existing call
+sites (confirmed via `grep` that none were missed), so a change from
+`AddTimer()`/`UpdateTimer()`/`DeleteTimer()`/the realtime-update
+WebSocket handler/the recording-refresh background thread is never
+delayed by the TTL, only genuinely idle refreshes are. Also simplified
+`PVRDispatcharr::FindRecordingById()` (see the entry above) to call
+`DispatcharrClient::GetRecordingById()` directly instead of its own
+separate full-list fetch+scan, now that that REST call exists -- a small
+additional win beyond the original three findings, since its callers
+(`GetRecordingStreamProperties()`/`OpenRecordedStream()`/`UpdateTimer()`'s
+extend-recording branch) want this one recording's truly current state
+right before acting on it, so it deliberately stays a fresh single-item
+lookup rather than reading the (up to 2s stale) cache.
+Live-verified against the real instance: 8 rapid-fire `PVR.GetTimers`/
+`PVR.GetRecordings` calls, matching Kodi's own Amount()+List() pattern,
+produced exactly 2 real cache-refresh log lines (not 8), correctly
+straddling the 2-second TTL across the two request batches. Separately
+confirmed invalidation actually works, not just the TTL: added a real
+one-time timer via `PVR.AddTimer` and watched `kodi.log` -- the very
+next `GetRecordings()` call (triggered by the addon's own
+`InvalidateAndTriggerRecordingUpdate()`) refetched immediately and
+picked up the new recording (43 -> 44) well within the 2-second window
+that would otherwise still have been "fresh." A momentary miss in the
+timer *count* right at the exact instant of creation was traced
+separately to a pre-existing sub-second race in the `isInProgress`/
+`isUpcoming` time-window check (the new recording's `start_time` landed
+at essentially the same wall-clock instant as the query itself) --
+resolved on its own within ~3 seconds and confirmed unrelated to this
+cache, not a regression it introduced.
 
 ## Recording-management feature gaps vs. TVHeadend, checked against Dispatcharr's real API (2026-09-08)
 
