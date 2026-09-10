@@ -194,8 +194,9 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
   (whether a `PATCH` merges or replaces the field) need to be verified
   against a **disposable test recording** before ever touching a real
   one -- `custom_properties` is already confirmed to be fully replaced
-  rather than merged on `POST` create, and `PATCH` needs the same
-  verification before assuming otherwise.
+  rather than merged on `POST` create (see [RECORDINGS.md](RECORDINGS.md)'s
+  first entry), and `PATCH` needs the same verification before assuming
+  otherwise.
 - **One install's addon can silently invalidate another install's stored
   API key, breaking recording playback with no obvious cause.** Dispatcharr
   keeps exactly one active API key per account; if two Kodi installs
