@@ -1348,7 +1348,8 @@ PVR_ERROR PVRDispatcharr::GetEPGForChannel(int channelUid, time_t start, time_t 
     // passing through unreliable data -- dropping only FirstAired and
     // leaving Year set left Kodi falling back to showing the same
     // misleading placeholder as a bare year instead. A programme with
-    // real episode identity (e.g. an episodic programme S2026E37) is unaffected --
+    // real episode identity (e.g. a real season/episode number like
+    // S2026E37) is unaffected --
     // its Year/FirstAired are presumed to be real per-episode data, same
     // as before.
     bool hasEpisodeIdentity = entry.seasonNumber > 0 || entry.episodeNumber > 0;
