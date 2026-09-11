@@ -126,6 +126,20 @@ platform.
   in, but a dependency whose *behavior* changed without its signature
   changing won't -- nothing will flag it except actually re-testing the
   branch after syncing, since there's no test suite to catch it instead.
+- **Every external contributor's PR gets a real manual review before
+  merging, as of 2026-09-11 -- never auto-merged on green CI alone.**
+  The bullet above's "no multi-contributor coordination problem" framing
+  stops holding the moment someone outside the project opens a PR.
+  Green CI (`build`/`lint`) only proves it compiles and formats cleanly
+  -- with no automated test suite, it proves nothing about whether the
+  change is actually correct, so it's necessary but never sufficient on
+  its own. This doesn't require GitHub's "require pull request reviews"
+  branch-protection rule to be technically enforced: only the
+  maintainer has write access to this repo right now, so an outside
+  contributor's PR literally cannot merge itself regardless -- this
+  bullet exists to keep that a stated, deliberate policy rather than an
+  accident of current permissions, so it doesn't quietly erode later
+  (e.g. if another collaborator ever gets write access).
 - **Batch fixes into releases -- don't tag/release per individual fix.**
   Early on this project tagged and released (including the full manual
   CoreELEC build-and-upload dance) after nearly every single bug fix,
