@@ -3,7 +3,9 @@
 A Kodi PVR binary addon (C++) for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr),
 plus two optional Python plugins that install on the Dispatcharr server
 itself. See [README.md](README.md) for what it does; this file is for
-working in the codebase, not using the addon.
+working in the codebase, not using the addon. If you're a human
+contributor rather than an AI assistant, [CONTRIBUTING.md](CONTRIBUTING.md)
+is the shorter, more direct version of what's below.
 
 ## Repo layout
 
