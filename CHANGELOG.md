@@ -10,6 +10,55 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.9.4] - 2026-09-10
+
+Addon only -- neither companion plugin changed for this pass (a few of
+this release's commits touch plugin doc/comment text for the rename
+below, but not their behavior or version).
+
+**The addon's Kodi id changed from `pvr.dispatcharrai` to
+`pvr.dispatcharr`.** Kodi treats an addon-id change as a brand-new
+addon, not an in-place upgrade, so this is not a seamless update:
+install the new addon, copy your old `settings.xml` over by hand (its
+format is unchanged), then disable the old addon once the new one is
+confirmed working. See [README.md](README.md) for the exact steps. The
+GitHub repository itself was also renamed to match
+(`BruiserBrody17/pvr.dispatcharr`); old repo URLs redirect automatically.
+
+### Fixed
+
+- A series rule ("record all episodes"/"record only new episodes")
+  could create successfully and report success, yet never actually
+  schedule the upcoming episode. Root cause: a channel's own `tvg_id`
+  can drift from what its effective (possibly overridden) EPG data
+  actually resolves to, so the rule was silently created against the
+  wrong EPG data. The addon now resolves the rule's tvg_id from the
+  channel's real effective EPG data instead of the channel's own
+  (possibly stale) field.
+- A series rule's own row in Kodi's Timers list showed `12/31/1969` as
+  its start/end time instead of a real date, since a series rule has no
+  fixed schedule of its own. It now shows its earliest matched
+  upcoming/in-progress recording's real time, and nests under it in
+  Kodi's UI the same way a recurring rule already did.
+- A recording's date badge could show a misleading, years-old date for
+  a genuinely new episode of a long-running daily show -- the guide
+  data's `<date>` field is a series-level placeholder for a show like
+  that, not a real per-episode fact, when the guide provides no
+  season/episode identifier alongside it. The addon now only shows a
+  first-aired date/year when the guide data also identifies a real
+  season or episode number.
+
+### Changed
+
+- A hot path during in-progress-recording playback that re-fetched and
+  parsed every recording just to check one recording's status now
+  fetches only that one recording instead.
+- Recordings and timers are now cached for a short 2-second window
+  (invalidated immediately on the addon's own writes) instead of being
+  re-fetched from scratch on every one of Kodi's back-to-back
+  count-then-list calls, cutting redundant REST traffic during normal
+  browsing without adding any real staleness.
+
 ## [0.9.3] - 2026-09-10
 
 Addon only, but this release also bundles the already-published
