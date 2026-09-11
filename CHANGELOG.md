@@ -10,6 +10,27 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## `timeshift_buffer` [0.6.2] - 2026-09-11
+
+Plugin only -- the addon and `recording_edl` didn't change for this fix.
+**Requires redeploying the updated plugin to Dispatcharr** for the fix to
+take effect server-side.
+
+### Fixed
+
+- **Security: a caller-supplied `client_ip` on `start_buffer` was never
+  validated before being interpolated into an HTTP header ffmpeg sends
+  on its own connection to Dispatcharr's internal proxy.** A value
+  containing embedded `\r\n` could smuggle a second, pipelined HTTP
+  request onto that connection, appearing to originate from Dispatcharr's
+  own loopback interface. Found via the same full-codebase security
+  review that caught the `channel_uuid` path-traversal fix below.
+  `client_ip` is now validated as a well-formed IP address before use;
+  anything else is rejected (logged, buffer still starts normally
+  without that attribution header) rather than used as-is. See
+  `docs/TIMESHIFT.md`'s "client_ip header injection" section for the
+  full write-up.
+
 ## [0.9.4] - 2026-09-10
 
 Addon only -- neither companion plugin changed for this pass (a few of
