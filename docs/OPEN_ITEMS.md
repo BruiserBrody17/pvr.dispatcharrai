@@ -272,7 +272,62 @@
   the other two platforms), audio decoder opened successfully, only the
   same already-documented benign startup noise -- no new errors. Old
   `pvr.dispatcharrai` left in place, disabled, as a rollback path.
-  Still not done: CoreELEC/ODROID, or the eventual release cut.
+  **Update: fresh-installed and verified live on CoreELEC/ODROID N2+
+  (2026-09-10) -- fourth and final platform, driven directly.** No
+  tagged release exists yet for this rename (deliberately deferred until
+  all platform testing is done), and CoreELEC's package.mk convention
+  only supports pointing `PKG_URL` at a resolvable ref, not a live
+  branch -- worked around by pointing it at this branch's exact commit
+  SHA instead of a tag (GitHub serves an archive tarball for any ref,
+  not just tags) and computing the real `PKG_SHA256` for that tarball
+  directly (`curl -L .../archive/<sha>.tar.gz | sha256sum`). This edit
+  was only ever made to the out-of-tree package.mk copy inside the
+  WSL2/Ubuntu CoreELEC build checkout (`~/coreelec-build-21/packages/
+  mediacenter/kodi-binary-addons/pvr.dispatcharr/package.mk`), never to
+  this repo's own tracked `packaging/coreelec/pvr.dispatcharr/
+  package.mk` -- so no revert was needed before this could be part of a
+  merge; the tracked file stayed on the all-zeros `PKG_SHA256` placeholder
+  the whole time. That build machine's persistent toolchain cache
+  survived from earlier sessions, so the cross-compile
+  (`PROJECT=Amlogic-ce ARCH=arm DEVICE=Amlogic-ng ./scripts/create_addon
+  pvr.dispatcharr`) finished in seconds and produced
+  `pvr.dispatcharr-0.9.3.1.zip`. Deployed it alongside the existing
+  `pvr.dispatcharrai` install via `scp`+`unzip` (no in-tree CoreELEC
+  package-manager install path available for an out-of-tree/unreleased
+  build), copied `addon_data/pvr.dispatcharrai/settings.xml` verbatim to
+  `addon_data/pvr.dispatcharr/settings.xml`. Unlike the other three
+  platforms, Kodi was already running before the new addon directory was
+  dropped in, so it needed an explicit restart to discover it --
+  `Application.Quit` via JSON-RPC, then CoreELEC's own systemd unit
+  auto-restarted Kodi (~40s) and the new addon showed up in
+  `Addons.GetAddons`. Disabled `pvr.dispatcharrai` and enabled
+  `pvr.dispatcharr` via `Addons.SetAddonEnabled`; confirmed exactly one
+  active client afterward. Real data loaded correctly: `PVR.GetChannels`
+  returned the full 9,080-channel lineup, and the addon's own
+  recordings/timer-rules cache-refresh log lines reported 47 recordings
+  and 11 series rules -- the same order of magnitude as the other
+  platforms (exact counts drift over time since this is a live account,
+  not a discrepancy to chase). Live playback smoke-tested end to end on
+  Channel H (same generic-label convention as Channels A-G elsewhere in
+  this file's history): `kodi.log` confirmed the stream genuinely routed
+  through the new addon (`pvr.dispatcharr_68829.pvr`, the same real
+  channel id as the other three platforms), `CallTimeshiftPluginAction
+  (start_buffer)` started a new buffer, and `ReadLiveTimeshiftStream`'s
+  catch-up-to-tail loop completed normally across several consecutive
+  segments -- no errors. One harness-only gotcha worth noting for future
+  sessions, not an addon bug: chaining `Player.Open` together with
+  several follow-up JSON-RPC calls in one long `ssh`-piped shell command
+  left the whole chain hanging indefinitely even though the webserver
+  itself stayed responsive to fresh, independent connections the whole
+  time -- switching to one plain, single-purpose SSH command per JSON-RPC
+  call resolved it immediately. Old `pvr.dispatcharrai` left in place,
+  disabled, as a rollback path. All four platforms (Windows, macOS,
+  Rocky Linux, CoreELEC/ODROID) are now fresh-installed and verified live
+  under the renamed addon id. Still not done: merging this branch and
+  cutting the real tagged release (real `PKG_SHA256`, CoreELEC zip
+  attached by hand per `docs/BUILDING.md`), and the deferred git-history
+  purge of the real channel/programme names leaked before the privacy
+  scrub.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths
