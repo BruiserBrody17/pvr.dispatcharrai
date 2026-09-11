@@ -180,7 +180,9 @@
   real live counts (43 recordings, 11 series rules -- same numbers as
   under the old addon, confirming the same account), and `PVR.GetChannels`
   returned the full real 9,080-channel lineup. Live playback smoke-tested
-  end to end, not just data loading: opened a real channel (AMC),
+  end to end, not just data loading: opened a real channel (Channel H,
+  same generic-label convention as Channels A-G elsewhere in this file's
+  history -- see the earlier "Packet corrupt"/EPG-matching entries),
   confirmed via `kodi.log` the stream URL was genuinely routed through
   the new addon (`pvr.dispatcharr_68829.pvr`), audio decoder opened
   successfully, only the same already-documented benign startup noise
@@ -210,9 +212,10 @@
   errors in `kodi.log` either way. Re-ran the same three counts under
   the new addon: identical (9,080/7/50), confirming the same account/
   data, not something broken. EPG also confirmed loading real programme
-  data for a real channel (`PVR.GetBroadcasts` on AMC returned 112 real
-  broadcasts, e.g. "TNA iMPACT!", "Men in Black"). Live playback
-  smoke-tested end to end on AMC: `kodi.log` confirmed the stream
+  data for a real channel (`PVR.GetBroadcasts` on Channel H returned 112
+  real broadcasts with real, distinct titles -- not placeholder/empty
+  data). Live playback smoke-tested end to end on Channel H: `kodi.log`
+  confirmed the stream
   genuinely routed through the new addon
   (`pvr.dispatcharr_68829.pvr`, `CallTimeshiftPluginAction(start_buffer)`
   logged under the `pvr.dispatcharr` prefix), and a real screenshot
