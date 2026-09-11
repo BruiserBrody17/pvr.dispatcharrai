@@ -190,6 +190,49 @@
   Still not done: the other three devices (Rocky Linux laptop,
   ODROID/CoreELEC, macOS via the peer session), or the eventual release
   cut.
+  **Update: fresh-installed and verified live on macOS (2026-09-10) --
+  second of four platforms.** No persistent build workspace survived
+  from earlier sessions, so this was a from-scratch setup (fresh Kodi
+  source checkout, a separate local addon copy synced via `rsync -az
+  --delete`, `addon-defs` pointing at it) -- built cleanly on the first
+  attempt. Same settings-carryover approach as Windows: copied
+  `addon_data/pvr.dispatcharrai/settings.xml` verbatim to a new
+  `addon_data/pvr.dispatcharr/settings.xml` (byte-identical, confirmed
+  via `diff`). Installed the renamed build alongside the old one,
+  recorded real baseline counts under the old addon first (9,080
+  channels, 7 recordings, 50 timers via `PVR.GetChannels`/
+  `GetRecordings`/`GetTimers`), then disabled `pvr.dispatcharrai` and
+  enabled `pvr.dispatcharr` via `Addons.SetAddonEnabled`. `PVR.GetClients`
+  confirmed exactly one active client afterward (`pvr.dispatcharr`,
+  clientid 2 -- the old one had been clientid 1). Unlike Windows, no
+  `Client '-1' not found` burst appeared at all here (not a discrepancy --
+  the task description flagged it as "likely", not guaranteed); no
+  errors in `kodi.log` either way. Re-ran the same three counts under
+  the new addon: identical (9,080/7/50), confirming the same account/
+  data, not something broken. EPG also confirmed loading real programme
+  data for a real channel (`PVR.GetBroadcasts` on AMC returned 112 real
+  broadcasts, e.g. "TNA iMPACT!", "Men in Black"). Live playback
+  smoke-tested end to end on AMC: `kodi.log` confirmed the stream
+  genuinely routed through the new addon
+  (`pvr.dispatcharr_68829.pvr`, `CallTimeshiftPluginAction(start_buffer)`
+  logged under the `pvr.dispatcharr` prefix), and a real screenshot
+  confirmed live video actually playing (not just a JSON-RPC state
+  claim -- `Player.GetActivePlayers`/`GetProperties` returned transient
+  empty/`None` responses immediately after `Player.Open` that turned out
+  to be socket-timing noise in the test harness, not a real problem;
+  retrying a few seconds later, and the screenshot, confirmed playback
+  was actually healthy the whole time: `canseek: true, speed: 1`). Only
+  the same already-documented benign startup noise appeared
+  (`non-existing SPS/PPS referenced`, a `-245ms` self-correcting
+  `ActiveAE::SyncStream` adjustment) -- no new errors. One channel-id
+  gotcha worth noting for future sessions: Kodi's PVR `channelid`s are
+  scoped to the active client instance, not stable across a client
+  switch -- a channelid cached from before the switch (752, used in
+  earlier macOS sessions) returned "Invalid params" against the new
+  client and had to be re-looked-up by channel label instead. Old
+  `pvr.dispatcharrai` left in place, disabled, as a rollback path.
+  Still not done: the other two devices (Rocky Linux laptop,
+  ODROID/CoreELEC), or the eventual release cut.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths
