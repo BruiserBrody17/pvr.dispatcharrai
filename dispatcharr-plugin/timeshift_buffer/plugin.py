@@ -98,6 +98,7 @@ that motivated moving off ffmpegdirect in the first place.
 """
 
 import contextlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -580,7 +581,24 @@ def _stream_attribution_headers(params: dict, logger):
 
     client_ip = (params.get("client_ip") or "").strip()
     if client_ip:
-        lines.append(f"X-Real-IP: {client_ip}\r\n")
+        try:
+            ipaddress.ip_address(client_ip)
+        except ValueError:
+            # A bare IP is all X-Real-IP is for -- anything else (in
+            # particular embedded \r\n, which .strip() above only trims
+            # from the ends, not the middle) doesn't belong in an HTTP
+            # header value at all. Found via a full-codebase security
+            # review (2026-09-10): unvalidated, this let a caller smuggle
+            # a second, pipelined request onto ffmpeg's connection to
+            # Dispatcharr's own loopback proxy. See docs/TIMESHIFT.md's
+            # "client_ip header injection" section for the full writeup.
+            logger.warning(
+                "timeshift_buffer: rejecting non-IP client_ip value %r "
+                "(stream will start without X-Real-IP attribution)",
+                client_ip,
+            )
+        else:
+            lines.append(f"X-Real-IP: {client_ip}\r\n")
 
     return "".join(lines) or None
 
@@ -1315,7 +1333,7 @@ def _ensure_reaper_running(settings_getter, logger):
 
 class Plugin:
     name = "Timeshift Buffer"
-    version = "0.6.1"
+    version = "0.6.2"
     description = (
         "Server-side rolling live-TV buffer per channel, so clients can "
         "pause/rewind live playback without a local on-device buffer."

@@ -2911,3 +2911,62 @@ nothing was created. A real channel's `uuid` (fetched live from
 end-to-end: `start_buffer` returned a real `access_token`/`http_port`,
 `list_buffers` showed it tracked, and `stop_buffer` cleaned it up
 normally afterward -- confirming the fix doesn't break legitimate use.
+
+
+### `client_ip` header injection in `start_buffer`, found via the same full-codebase security review
+
+Found in the same review pass (2026-09-10) that caught the `channel_uuid`
+traversal bug above -- same shape (a caller-supplied `run/` param used
+unsanitized in a sensitive operation), different sink.
+`_stream_attribution_headers()` takes the caller-supplied `client_ip`
+param, `.strip()`s it (trims leading/trailing whitespace only, not
+anything embedded in the middle), and interpolates it directly into an
+`X-Real-IP: {client_ip}\r\n` line that becomes part of the `-headers`
+string ffmpeg sends on its own connection to `internal_base_url`
+(Dispatcharr's loopback proxy, `http://127.0.0.1:9191` by default).
+
+A `client_ip` value containing embedded `\r\n` sequences is not filtered
+at all. Since ffmpeg places caller-supplied headers immediately before
+the request's own terminating blank line, an injected `\r\n\r\n` closes
+the header block early -- everything the caller put after it in the same
+string is sent as a second, pipelined HTTP request on that same
+connection, originating from `127.0.0.1` as far as Dispatcharr's own
+`get_client_ip()` can tell (it trusts `X-Real-IP` at face value once
+`REMOTE_ADDR` is loopback -- see this file's own note on why `X-Real-IP`
+was chosen over `X-Forwarded-For` in the first place). That's a real,
+if capped, blast radius: forged headers/spoofed attribution on
+Dispatcharr's own Stats screen, and blind request forgery against
+whatever else is reachable on that loopback interface. Capped because
+`run/` is already `IsAdmin`-gated (see "Endpoint access control" above)
+-- unlike the `channel_uuid` bug, which let an admin account reach
+*outside* its own intended scope (`shutil.rmtree` beyond `storage_path`),
+this one doesn't cross a privilege boundary an admin wasn't already on
+the right side of; it's still a genuine, trivially-triggerable defect
+worth fixing, just a narrower one.
+
+**Fixed:** `client_ip` is now validated as a well-formed IP address
+(`ipaddress.ip_address()`) before being used to build the header at all;
+anything else (including any value carrying embedded `\r\n`) is rejected
+with a logged warning, and the buffer still starts normally without
+`X-Real-IP` attribution rather than failing the whole request -- the
+same "don't let a bad optional field break the operation it's attached
+to" posture this function already took for a bad `username`.
+
+Verified: the same IP-validation logic tested standalone confirms a real
+IPv4 (`"1.2.3.4"`) and IPv6 (`"::1"`) address both pass, while the actual
+injection payload (`"1.2.3.4\r\nX-Forged: 1\r\n\r\nGET ... HTTP/1.1\r\n
+Host: 127.0.0.1:9191\r\n"`) and a plain non-IP string are both rejected.
+
+**Confirmed live against a real instance (2026-09-10), fixed plugin
+redeployed.** A `start_buffer` call carrying the exact injection payload
+above as `client_ip` came back a normal `{"status": "ok", ...}` with a
+real `access_token`/`http_port` -- `list_buffers` showed it tracked and
+`stop_buffer` cleaned it up afterward, confirming the malicious value is
+rejected without breaking the request around it (matching the standalone
+test's result, since Dispatcharr's own request-log surface for the
+loopback proxy wasn't accessible from outside to directly confirm no
+forged pipelined request landed -- the entry point closing is what
+mattered here, same reasoning as the `channel_uuid` verification above).
+A second `start_buffer` call with a real IPv4 `client_ip` worked
+identically end-to-end, confirming the fix doesn't break legitimate
+attribution.
