@@ -234,8 +234,45 @@
   earlier macOS sessions) returned "Invalid params" against the new
   client and had to be re-looked-up by channel label instead. Old
   `pvr.dispatcharrai` left in place, disabled, as a rollback path.
-  Still not done: the other two devices (Rocky Linux laptop,
-  ODROID/CoreELEC), or the eventual release cut.
+  **Update: fresh-installed and verified live on the Rocky Linux laptop
+  (2026-09-10) -- third of four platforms, driven directly this time
+  (no more separate Claude Code peer sessions for the remaining
+  platforms).** Persistent build workspace (`~/kodi-linux-build/`)
+  survived from earlier sessions; synced the current branch tip into it
+  via a fresh `git clone` + `rsync -az --delete` (the live-checkout
+  stale-marker gotcha already documented in `docs/BUILDING.md` applied
+  again -- `.installed-native` had to be deleted before the build
+  harness would do anything, even though `pvr.dispatcharr` itself had
+  never been built here before; clearing just that one marker was
+  enough this time, no `*-prefix/` directory existed yet for the new
+  name). Also discovered Kodi wasn't actually running when this started
+  (a stale pid from an earlier check, confirmed via `kodi.log`'s own
+  "Exiting the application..." line) -- relaunched it using the
+  documented display-environment workaround, sourcing
+  `DISPLAY`/`WAYLAND_DISPLAY` from a live session process
+  (`/proc/<pid>/environ`) rather than the launching shell's own
+  (nonexistent) environment. Same settings-carryover approach as the
+  other two platforms: copied `addon_data/pvr.dispatcharrai/settings.xml`
+  verbatim to `addon_data/pvr.dispatcharr/settings.xml`. Installed
+  alongside the old addon, disabled `pvr.dispatcharrai` and enabled
+  `pvr.dispatcharr` via `Addons.SetAddonEnabled`; `PVR.GetClients`
+  confirmed exactly one active client afterward. Real data loaded
+  correctly: `PVR.GetChannels` returned the full 9,080-channel lineup,
+  recordings/timer-rules caches populated with real live counts (47
+  recordings, 11 series rules -- didn't capture a specific "before"
+  baseline on this platform since the old addon was disabled before
+  checking, but the counts are clearly real, non-zero data, and the
+  general order of magnitude matches the other two platforms; small
+  differences between platforms are expected here since recording/timer
+  counts are genuinely live and change over time, not a discrepancy to
+  chase). Live playback smoke-tested end to end on Channel H (same
+  generic-label convention as Channels A-G elsewhere in this file's
+  history): `kodi.log` confirmed the stream genuinely routed through the
+  new addon (`pvr.dispatcharr_68829.pvr`, the same real channel id as
+  the other two platforms), audio decoder opened successfully, only the
+  same already-documented benign startup noise -- no new errors. Old
+  `pvr.dispatcharrai` left in place, disabled, as a rollback path.
+  Still not done: CoreELEC/ODROID, or the eventual release cut.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths
