@@ -1,7 +1,7 @@
 # Recording EDL (Dispatcharr plugin)
 
 Exposes a completed recording's comskip-generated `.edl` file (commercial
-break markers) over Dispatcharr's plugin `run/` API, so `pvr.dispatcharrai`
+break markers) over Dispatcharr's plugin `run/` API, so `pvr.dispatcharr`
 can show skip/highlight markers on Kodi's own seekbar. Also provides
 cleanup for two Dispatcharr-core issues it never handles on its own: `.edl`/
 `.logo.txt` sidecar files and `.dvr_*_hls` staging directories left behind

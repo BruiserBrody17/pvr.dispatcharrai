@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon
-    id="pvr.dispatcharrai"
+    id="pvr.dispatcharr"
     version="0.9.3"
     name="Dispatcharr PVR Client"
     provider-name="BruiserBrody17">

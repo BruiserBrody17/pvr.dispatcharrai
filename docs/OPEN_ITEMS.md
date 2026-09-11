@@ -78,11 +78,11 @@
   cache -- resolved within ~3s and confirmed as the correct, pre-existing
   behavior, not a regression from this change).
 - **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
-  (requested 2026-09-09, not yet started -- user asked for scope/steps
-  first, no action taken pending consent).** Mechanically straightforward
-  in-repo: `git grep -il dispatcharrai` finds 25 files, plus the two
-  directories whose names carry the id
-  (`pvr.dispatcharrai/`/`packaging/coreelec/pvr.dispatcharrai/`). Needs
+  (requested 2026-09-09).** Mechanically straightforward in-repo: `git
+  grep -il dispatcharrai` found 25 files at request time (27 by the time
+  this was actually done, since more docs/tooling had landed by then),
+  plus the two directories whose names carried the id
+  (`pvr.dispatcharrai/`/`packaging/coreelec/pvr.dispatcharrai/`). Needed
   updating: `addon.xml.in`'s `<addon id="...">`, `CMakeLists.txt`'s
   `project()`/`build_addon()`, `.github/workflows/build.yml` (addon-defs
   paths, `ADDONS_TO_BUILD`, artifact/zip names), the CoreELEC
@@ -93,12 +93,16 @@
   (`dispatcharr-plugin/recording_edl`, `dispatcharr-plugin/timeshift_buffer`)
   keep their own unrelated ids but reference `pvr.dispatcharrai` by name
   in READMEs/`plugin.json` `help_url`s/many `plugin.py` comments -- those
-  need updating too. Renaming the GitHub repo itself
+  needed updating too. Renaming the GitHub repo itself
   (`BruiserBrody17/pvr.dispatcharrai`) is a separate, optional decision
   (GitHub auto-redirects the old URL after a rename, but every local
   clone's `origin` -- this Windows workspace, the Rocky Linux build box,
   whatever the macOS peer session set up -- would still want
-  `git remote set-url` eventually for cleanliness).
+  `git remote set-url` eventually for cleanliness) -- not yet decided,
+  so every GitHub URL (repo `<source>`/`PKG_SITE`/`PKG_URL`/`help_url`s/
+  clone commands/README release links) deliberately still points at the
+  real, current repo name; only the addon's own id, directory names, and
+  in-repo local-checkout-directory conventions changed.
   **The real cost isn't the repo, it's that Kodi treats an id change as
   a brand-new addon, not an upgrade.** The addon id is both the
   installed folder name and the `userdata/addon_data/<id>/settings.xml`
@@ -111,12 +115,34 @@
   scratch, still undecided. Also expect to need the same "Settings ->
   PVR & Live TV -> Guide -> Clear data" step already documented above
   (Kodi's EPG database keys off the client id) on every device after the
-  switch. Proposed order once given the go-ahead: rename on a branch ->
-  decide GitHub-repo-rename yes/no -> rebuild + fresh-install Windows
-  first and verify clean -> roll the same fresh-install to Rocky Linux,
+  switch. Proposed order: rename on a branch -> decide
+  GitHub-repo-rename yes/no -> rebuild + fresh-install Windows first and
+  verify clean -> roll the same fresh-install to Rocky Linux,
   ODROID/CoreELEC, and macOS (via the peer session) -> settle the
   settings-carryover question per device -> cut a release under the new
   name once all four platforms are confirmed working.
+  **Update: mechanical in-repo rename done and confirmed compiling
+  (2026-09-10), on branch `rename/pvr-dispatcharr` -- not yet merged,
+  not yet installed anywhere.** All 27 files updated; every GitHub URL
+  deliberately left pointing at the real, current repo name (see above).
+  `PKG_SHA256` in the renamed `package.mk` reset to the all-zeros
+  placeholder, per this file's own versioning convention -- the existing
+  real checksum was computed against the old (un-renamed) `0.9.3` tag's
+  actual tarball content, so it no longer matches anything this renamed
+  source would produce. Verified live: reconfigured the local Windows
+  build workspace with a new `addon-defs/pvr.dispatcharr/` entry
+  (pointing the same `file://` URL at this repo's root) and did a full,
+  from-scratch `cmake`+MSBuild build under the new target name -- built
+  and installed cleanly to `install/pvr.dispatcharr/pvr.dispatcharr.dll`
+  with no errors. `clang-format`/`ruff` both pass (the log-prefix string
+  length change shifted a handful of multi-line `kodi::Log()` calls'
+  wrapping, caught by `clang-format --dry-run -Werror` and fixed).
+  `tools/check_doc_refs.py` also updated (its own hardcoded
+  `resources/settings.xml` path) and still passes clean against the
+  baseline. Not yet done: installing this on this machine's actual
+  running Kodi (would mean losing the current addon_data unless handled
+  carefully), any other device, the GitHub-repo-rename decision, or the
+  eventual release cut -- all still pending.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths

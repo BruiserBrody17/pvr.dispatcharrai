@@ -12,9 +12,9 @@
 # ../../../docs/BUILDING.md for the exact steps, including how to fill in
 # PKG_SHA256 once a release is tagged.
 
-PKG_NAME="pvr.dispatcharrai"
+PKG_NAME="pvr.dispatcharr"
 PKG_VERSION="0.9.3"
-PKG_SHA256="9dff1e87501645bbc125724a3abfa0909b0c73e9b518a4d37374b92502ef06c2"
+PKG_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
 PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL-2.0-or-later"
@@ -28,7 +28,7 @@ PKG_URL="https://github.com/BruiserBrody17/pvr.dispatcharrai/archive/${PKG_VERSI
 # path across every target rather than a CoreELEC-specific one.
 PKG_DEPENDS_TARGET="toolchain curl ${MEDIACENTER}:host"
 PKG_SECTION=""
-PKG_SHORTDESC="pvr.dispatcharrai"
+PKG_SHORTDESC="pvr.dispatcharr"
 PKG_LONGDESC="Kodi Live TV and DVR client for Dispatcharr"
 
 PKG_IS_ADDON="yes"

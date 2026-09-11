@@ -4,7 +4,7 @@ Recording EDL -- a Dispatcharr plugin.
 Exposes a completed recording's comskip-generated .edl file (commercial
 break markers) over Dispatcharr's plugin run/ API, so a client with no
 filesystem access to /data/recordings (this plugin was designed alongside
-pvr.dispatcharrai, a Kodi PVR addon) can still fetch the data and show
+pvr.dispatcharr, a Kodi PVR addon) can still fetch the data and show
 skip/highlight markers on Kodi's own seekbar.
 
 Why this exists as its own plugin rather than reading the file directly
@@ -492,7 +492,7 @@ class Plugin:
             "label": "About",
             "type": "info",
             "description": (
-                "Called by a client (e.g. pvr.dispatcharrai's recording "
+                "Called by a client (e.g. pvr.dispatcharr's recording "
                 "playback) via the plugin run/ API, not usually by hand -- "
                 "the field below is only for manually testing the action "
                 "button."

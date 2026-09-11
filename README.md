@@ -1,4 +1,4 @@
-# pvr.dispatcharrai
+# pvr.dispatcharr
 
 A Kodi PVR (Live TV / DVR) addon for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr),
 built against Dispatcharr's native REST API rather than its Xtream Codes
