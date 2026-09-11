@@ -1,6 +1,6 @@
 # Troubleshooting & known limitations
 
-*(part of the pvr.dispatcharrai notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
+*(part of the pvr.dispatcharr notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
 
 ## Channel switching fails after the first channel (root cause: IPv6)
 
