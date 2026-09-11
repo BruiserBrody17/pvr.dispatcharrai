@@ -159,10 +159,37 @@
   the old repo name -- each needs its own `git remote set-url` (or a
   fresh clone) whenever that device is next touched; not urgent since
   the old URL keeps working via GitHub's redirect, just cleanup.
-  Not yet done: installing this on this machine's actual running Kodi
-  (would mean losing the current addon_data unless handled
-  carefully), any other device, or the eventual release cut -- all still
-  pending.
+  **Update: fresh-installed and verified live on this Windows machine
+  (2026-09-10) -- Windows now confirmed clean, the first of four
+  platforms.** Rather than reconfiguring from scratch, carried over the
+  existing `addon_data/pvr.dispatcharrai/settings.xml` verbatim to a new
+  `addon_data/pvr.dispatcharr/` -- both are just files, no id baked into
+  the content itself, so this preserves host/port/credentials/API key/
+  timezone/padding/timeshift settings exactly. Installed the renamed
+  build alongside the old one (different ids, so no conflict), disabled
+  `pvr.dispatcharrai` and enabled `pvr.dispatcharr` via
+  `Addons.SetAddonEnabled`, confirmed via `PVR.GetClients` that exactly
+  one client (`pvr.dispatcharr`) was active afterward, not both. A burst
+  of `PVR::CPVREpg::Update: ... Client '-1' not found` errors appeared
+  once, right at the enable/disable transition -- Kodi's EPG database
+  cleaning up the old client's now-orphaned tables, a one-time artifact
+  of the switch, not a recurring problem (confirmed: no further
+  occurrences afterward). Everything else came up clean with the carried-
+  over settings: realtime updates connected, background channel/EPG
+  refresh succeeded, recordings/timer-rules caches populated with the
+  real live counts (43 recordings, 11 series rules -- same numbers as
+  under the old addon, confirming the same account), and `PVR.GetChannels`
+  returned the full real 9,080-channel lineup. Live playback smoke-tested
+  end to end, not just data loading: opened a real channel (AMC),
+  confirmed via `kodi.log` the stream URL was genuinely routed through
+  the new addon (`pvr.dispatcharr_68829.pvr`), audio decoder opened
+  successfully, only the same already-documented benign startup noise
+  (`non-existing SPS/PPS referenced`, a transient audio-sync
+  adjustment) -- no new errors. The old `pvr.dispatcharrai` install was
+  left in place, disabled rather than deleted, as a rollback path.
+  Still not done: the other three devices (Rocky Linux laptop,
+  ODROID/CoreELEC, macOS via the peer session), or the eventual release
+  cut.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths
