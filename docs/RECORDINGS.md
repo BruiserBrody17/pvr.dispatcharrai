@@ -978,8 +978,8 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   and fixed *before* trusting any result from it, not after: a cleanup
   pass that omitted `istimerrule` from its `PVR.GetTimers` properties
   request caused a "delete anything non-rule" filter to misfire against
-  the pre-existing recurring-rule timer (`a real sports-recap show`, see
-  `docs/RECURRING_RULES.md`) -- confirmed no actual harm (a full Kodi
+  the pre-existing recurring-rule timer (a real daily sports-recap show,
+  see `docs/RECURRING_RULES.md`) -- confirmed no actual harm (a full Kodi
   restart forced a clean resync from Dispatcharr and the rule was still
   there, untouched), fixed to match by title against the test's own
   broadcasts before deleting anything, and re-verified the real rule was
@@ -1275,8 +1275,8 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
   file), so an unmatched/manual recording gets its own single-item folder
   rather than an empty `Directory`, the same grouping behavior a real
   named show gets. Confirmed live: a real EPG-matched test recording
-  (`"a real crime-drama rerun"`) came back from `PVR.GetRecordingDetails` with
-  `directory: "a real crime-drama rerun"` matching `title: "a real crime-drama rerun"` exactly.
+  (a real crime-drama rerun) came back from `PVR.GetRecordingDetails`
+  with its `directory` matching its `title` exactly.
 - **Recording pre/post padding is now surfaced as two addon settings
   (`recording_pre_offset_minutes`/`recording_post_offset_minutes`) that
   mirror Dispatcharr's own global padding setting directly, rather than
@@ -1924,8 +1924,8 @@ through the actual GUI: navigated Kodi's own recordings list, opened a
 real recording's context menu (which only shows an "Edit" entry once
 `SetSupportsRecordingsRename` is true -- itself a first confirmation
 the capability wired up correctly), and used its rename dialog to
-change a real in-progress-turned-stopped recording's title from
-"its real EPG-sourced show name" to "RENAMETEST". Confirmed two ways: Kodi's own
+change a real in-progress-turned-stopped recording's title from its
+real EPG-sourced show name to "RENAMETEST". Confirmed two ways: Kodi's own
 `PVR.GetRecordings` reported the new title back immediately, and a
 direct check against Dispatcharr's REST API showed exactly the
 expected write -- `custom_properties.program.title` updated,

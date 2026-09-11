@@ -107,7 +107,8 @@ Live TV/EPG category) -- requires `inputstream.ffmpegdirect` to actually
 be installed, same caveat as the two settings that already depend on it.
 
 Verified live against a real instance, both seek directions, several
-times, using a real `a real sports-highlights show` catch-up recording: confirmed via
+times, using a real daily sports-highlights show's catch-up recording:
+confirmed via
 `kodi.log` that this path is genuinely active (`OpenStream() - Num Props:
 1`, only `is_realtime_stream=false` set, no `stream_mode` at all;
 `ffmpegdirect::FFmpegStream::OpenWithCURL`; a real

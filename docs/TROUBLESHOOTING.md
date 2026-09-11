@@ -254,8 +254,9 @@ Dispatcharr server, worth writing down since it's easy to mistake for one:
 
 ## Still unconfirmed (verify before relying on in production)
 
-- The account used to verify this (a standard, non-admin test account) initially got "You do not
-  have permission to perform this action" trying to create a recording or
+- The account used to verify this (a standard, non-admin test account)
+  initially got "You do not have permission to perform this action"
+  trying to create a recording or
   series rule -- same account that could log in, browse channels, and
   stream fine. Raising that account's role in Dispatcharr's admin UI
   resolved it. If you hit the same error, that's a Dispatcharr-side

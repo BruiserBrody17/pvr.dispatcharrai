@@ -396,8 +396,8 @@
   `XBMC.GetInfoLabels` (no GUI screenshot needed for this one -- a real
   Kodi skin infolabel, more direct than the Windows check). Timezone fix
   also confirmed independently on this device: `recurring_rule_timezone`
-  auto-resolved to the real configured zone on first load of the new build (this
-  device's own 0.9.1 install predated the REDACTED_TZ regression
+  auto-resolved to the real configured zone on first load of the new
+  build (this device's own 0.9.1 install predated the REDACTED_TZ regression
   entirely, so this wasn't a regression-recovery test here, just
   first-time-correct confirmation). Basic live-playback smoke check
   (Channel A) also came back clean, no errors in `kodi.log`. Recording
@@ -409,8 +409,8 @@
   **Update: also confirmed on the Rocky Linux laptop (2026-09-09) --
   it had been sitting at `0.9.0`, several releases behind.** Same checks,
   same clean result: `PVR.BackendVersion` read back `0.30.0`,
-  `recurring_rule_timezone` auto-resolved to the real configured zone, live
-  playback of Channel A came back clean with no errors. Hit two build/
+  `recurring_rule_timezone` auto-resolved to the real configured zone,
+  live playback of Channel A came back clean with no errors. Hit two build/
   deploy issues specific to this platform, both now written up in
   `docs/BUILDING.md`: the live-checkout build harness silently no-ops
   against updated source unless two separate stale-marker locations are
@@ -430,8 +430,8 @@
   live-checkout stale-marker gotcha above didn't actually come up this
   time. Same checks, same clean result: addon reports `0.9.2` via
   `Addons.GetAddonDetails`, `PVR.BackendVersion` read back `0.30.0` via
-  `XBMC.GetInfoLabels`, `recurring_rule_timezone` auto-resolved to
-  the real configured zone (this device's install was previously at `0.9.1`,
+  `XBMC.GetInfoLabels`, `recurring_rule_timezone` auto-resolved to the
+  real configured zone (this device's install was previously at `0.9.1`,
   predating the REDACTED_TZ regression, so again first-time-correct
   rather than regression-recovery). Live-playback smoke test needed a
   second attempt: the first channel tried was a placeholder EVENT-type
@@ -483,7 +483,8 @@
   callback calling `DispatcharrClient::RenameRecording()` (new). Tested
   end-to-end via Kodi's own GUI (its rename dialog, not JSON-RPC --
   Kodi has no JSON-RPC method for this at all): renamed a real
-  in-progress-turned-stopped recording from "its real EPG-sourced show name" to "RENAMETEST",
+  in-progress-turned-stopped recording from its real EPG-sourced show
+  name to "RENAMETEST",
   confirmed both through Kodi's own `PVR.GetRecordings` and directly
   against Dispatcharr's REST API -- `custom_properties.program.title`
   updated to the new value, `user_edited: true` set, description left

@@ -140,13 +140,13 @@ rule existed server-side:
    working stream and real EPG; `days_of_week: [3]` for Thursday,
    `start_time`/`end_time` "00:50:00"/"00:52:00", matching what this
    addon's own code would compute for a Kodi timer with weekday bit 3
-   set, `recurring_rule_utc_offset_minutes` at `-300` (confirmed the local zone,
-   the real live offset at the time of testing)). Confirmed the rule's
-   own `perform_create` immediately materialized a real `Recording`
-   (not waiting on the hourly task) with `start_time:
+   set, `recurring_rule_utc_offset_minutes` at `-300` (the real live
+   offset of a DST-observing zone at the time of testing)). Confirmed
+   the rule's own `perform_create` immediately materialized a real
+   `Recording` (not waiting on the hourly task) with `start_time:
    "2026-09-03T05:50:00Z"` -- exactly the expected UTC instant for
-   00:50 the local zone, confirming the offset assumption and Dispatcharr's own
-   interpretation of it match.
+   00:50 local time, confirming the offset assumption and Dispatcharr's
+   own interpretation of it match.
 2. Restarted Kodi and read the rule back through the addon's actual
    `GetTimers()` over JSON-RPC: `weekdays: ["thursday"]` (confirms the
    bitmask round-trip), `starttime`/`endtime`: `"2026-09-03
@@ -289,11 +289,11 @@ Time alongside Eastern/Mountain/Pacific/Alaska conveys nothing about
 any specific user's real setup -- it's exactly as generic as the
 zones already sitting next to it, so restoring the real zone name here
 undoes an accidental functional break, not the privacy fix itself.
-Confirmed live: restarted against a real instance configured to
-the real configured zone, `recurring_rule_timezone` auto-corrected from
-`manual` back to the real configured zone on startup (it had been silently
-stuck on `manual` since the regression, since "REDACTED_TZ" obviously
-never matched the real zone name Dispatcharr reports).
+Confirmed live: restarted against a real instance configured to one of
+the dropdown's real zones, `recurring_rule_timezone` auto-corrected from
+`manual` back to that same real zone name on startup (it had been
+silently stuck on `manual` since the regression, since "REDACTED_TZ"
+obviously never matched the real zone name Dispatcharr reports).
 
 Also added `DispatcharrClient::GetSupportedTimezones()` (the same real
 endpoint), used only in the startup diagnostic when a zone is genuinely
@@ -301,7 +301,7 @@ unrecognized and debug logging is on -- distinguishes "a real IANA
 zone, no DST rule for it yet" from "not a recognized zone at all" in
 the log line, rather than one generic "unrecognized" message for both.
 Confirmed live via a temporary forced-unknown test: correctly
-identified the real configured zone as present in Dispatcharr's real ~440-zone
-list even while its own DST-family lookup was artificially forced to
-fail, proving the endpoint call, auth, and the differentiation logic
-all work end-to-end.
+identified the real instance's actually-configured zone as present in
+Dispatcharr's real ~440-zone list even while its own DST-family lookup
+was artificially forced to fail, proving the endpoint call, auth, and
+the differentiation logic all work end-to-end.
