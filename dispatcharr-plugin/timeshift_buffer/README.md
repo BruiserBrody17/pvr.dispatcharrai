@@ -38,7 +38,7 @@ section for why.
 ## Installing
 
 1. Download `timeshift_buffer.zip` from the
-   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases)'s
+   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharr/releases)'s
    Assets and upload it via Dispatcharr's Plugins page **Import** button
    (**the folder name inside the zip must match `timeshift_buffer`
    exactly**, or every call 404s with "Plugin not found" -- already

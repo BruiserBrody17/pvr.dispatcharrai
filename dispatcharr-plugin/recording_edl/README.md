@@ -14,7 +14,7 @@ in the main repo.
 ## Installing
 
 1. Download `recording_edl.zip` from the
-   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases)'s
+   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharr/releases)'s
    Assets, and upload it via Dispatcharr's Plugins page **Import** button
    -- same mechanism as `timeshift_buffer`, see that plugin's own README
    for the folder-name-must-match-exactly gotcha and the manual-copy

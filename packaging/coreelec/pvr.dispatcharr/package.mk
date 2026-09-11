@@ -18,8 +18,8 @@ PKG_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
 PKG_REV="1"
 PKG_ARCH="any"
 PKG_LICENSE="GPL-2.0-or-later"
-PKG_SITE="https://github.com/BruiserBrody17/pvr.dispatcharrai"
-PKG_URL="https://github.com/BruiserBrody17/pvr.dispatcharrai/archive/${PKG_VERSION}.tar.gz"
+PKG_SITE="https://github.com/BruiserBrody17/pvr.dispatcharr"
+PKG_URL="https://github.com/BruiserBrody17/pvr.dispatcharr/archive/${PKG_VERSION}.tar.gz"
 # pvr.hts (also curl-based, no extra XML/compression libs) uses exactly this
 # depends set; nlohmann-json and pugixml are pulled in by this addon's own
 # CMakeLists.txt via FetchContent at configure time instead of CoreELEC's

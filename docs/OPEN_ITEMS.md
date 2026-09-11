@@ -94,15 +94,15 @@
   keep their own unrelated ids but reference `pvr.dispatcharrai` by name
   in READMEs/`plugin.json` `help_url`s/many `plugin.py` comments -- those
   needed updating too. Renaming the GitHub repo itself
-  (`BruiserBrody17/pvr.dispatcharrai`) is a separate, optional decision
-  (GitHub auto-redirects the old URL after a rename, but every local
-  clone's `origin` -- this Windows workspace, the Rocky Linux build box,
-  whatever the macOS peer session set up -- would still want
-  `git remote set-url` eventually for cleanliness) -- not yet decided,
-  so every GitHub URL (repo `<source>`/`PKG_SITE`/`PKG_URL`/`help_url`s/
-  clone commands/README release links) deliberately still points at the
-  real, current repo name; only the addon's own id, directory names, and
-  in-repo local-checkout-directory conventions changed.
+  (`BruiserBrody17/pvr.dispatcharrai`) was a separate decision, made
+  after the in-repo rename landed -- see the "Update" below for the
+  actual rename and the URL cleanup that followed it. Every GitHub URL
+  (repo `<source>`/`PKG_SITE`/`PKG_URL`/`help_url`s/clone commands/README
+  release links) was deliberately left pointing at the *old* repo name
+  in the initial in-repo-rename commit, specifically because this
+  decision hadn't been made yet at that point -- only the addon's own
+  id, directory names, and in-repo local-checkout-directory conventions
+  changed in that first pass.
   **The real cost isn't the repo, it's that Kodi treats an id change as
   a brand-new addon, not an upgrade.** The addon id is both the
   installed folder name and the `userdata/addon_data/<id>/settings.xml`
@@ -139,10 +139,30 @@
   wrapping, caught by `clang-format --dry-run -Werror` and fixed).
   `tools/check_doc_refs.py` also updated (its own hardcoded
   `resources/settings.xml` path) and still passes clean against the
-  baseline. Not yet done: installing this on this machine's actual
-  running Kodi (would mean losing the current addon_data unless handled
-  carefully), any other device, the GitHub-repo-rename decision, or the
-  eventual release cut -- all still pending.
+  baseline.
+  **Update: GitHub repo renamed too (2026-09-10) -- `BruiserBrody17/
+  pvr.dispatcharrai` is now `BruiserBrody17/pvr.dispatcharr`, decided and
+  executed the same session.** `gh repo rename`, then this Windows
+  workspace's own `origin` updated via `git remote set-url` (confirmed
+  still tracking correctly afterward -- GitHub's redirect made the
+  transition seamless, no re-clone needed). Every GitHub URL this repo's
+  own files deliberately left pointing at the old name in the initial
+  in-repo-rename commit above (repo `<source>`/`PKG_SITE`/`PKG_URL`/
+  `help_url`s/clone commands/README release links, 11 files) was then
+  updated to the new name too, now that the reason to hold off no longer
+  applies -- rather than leaning on GitHub's redirect indefinitely.
+  `docs/BUILDING.md`'s pinned-checksum example URL
+  (`.../archive/0.3.0.tar.gz`) updated the same way; the tag itself
+  (`0.3.0`) didn't change, just which repo name it's addressed through.
+  Still pending: the Rocky Linux laptop, ODROID/CoreELEC, and macOS
+  peer-session workspaces each have their own `origin` still pointing at
+  the old repo name -- each needs its own `git remote set-url` (or a
+  fresh clone) whenever that device is next touched; not urgent since
+  the old URL keeps working via GitHub's redirect, just cleanup.
+  Not yet done: installing this on this machine's actual running Kodi
+  (would mean losing the current addon_data unless handled
+  carefully), any other device, or the eventual release cut -- all still
+  pending.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths

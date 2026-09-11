@@ -23,7 +23,7 @@ automates the Windows/macOS/Linux steps below on every push.
    ```
 2. Clone this addon next to it (any path):
    ```bash
-   git clone https://github.com/BruiserBrody17/pvr.dispatcharrai.git addons/pvr.dispatcharr
+   git clone https://github.com/BruiserBrody17/pvr.dispatcharr.git addons/pvr.dispatcharr
    ```
 3. Register the addon with the harness. `pvr.dispatcharr` isn't in Kodi's
    official addon manifests, so `ADDON_SRC_PREFIX` alone won't find it --
@@ -258,7 +258,7 @@ called out inline so a future rebuild doesn't have to rediscover them.
 2. Compute the tarball's checksum and fill it into
    `packaging/coreelec/pvr.dispatcharr/package.mk`'s `PKG_SHA256`:
    ```bash
-   curl -L https://github.com/BruiserBrody17/pvr.dispatcharrai/archive/0.3.0.tar.gz | sha256sum
+   curl -L https://github.com/BruiserBrody17/pvr.dispatcharr/archive/0.3.0.tar.gz | sha256sum
    ```
    Do this *after* the repo is public, against the real tarball -- doing
    it while the repo is still private silently hashes GitHub's 404 error

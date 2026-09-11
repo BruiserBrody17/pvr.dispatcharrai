@@ -480,7 +480,7 @@ class Plugin:
         "filesystem access to /data/recordings."
     )
     author = "BruiserBrody17"
-    help_url = "https://github.com/BruiserBrody17/pvr.dispatcharrai/tree/master/dispatcharr-plugin/recording_edl"
+    help_url = "https://github.com/BruiserBrody17/pvr.dispatcharr/tree/master/dispatcharr-plugin/recording_edl"
 
     # See timeshift_buffer/plugin.py's own comment on this same pattern:
     # plugin.json's fields/actions are only read for the not-yet-trusted

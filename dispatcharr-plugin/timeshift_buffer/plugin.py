@@ -1321,7 +1321,7 @@ class Plugin:
         "pause/rewind live playback without a local on-device buffer."
     )
     author = "BruiserBrody17"
-    help_url = "https://github.com/BruiserBrody17/pvr.dispatcharrai/tree/master/dispatcharr-plugin/timeshift_buffer"
+    help_url = "https://github.com/BruiserBrody17/pvr.dispatcharr/tree/master/dispatcharr-plugin/timeshift_buffer"
 
     # The single source of truth for fields/actions -- confirmed live that
     # plugin.json's own copies (which Plugins.md's Quick Start example
