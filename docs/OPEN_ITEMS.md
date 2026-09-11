@@ -736,8 +736,9 @@
   still untested.
   **Update: CoreELEC/ODROID N2+ confirmation, clean pass -- and a
   stronger one than the desktop platforms got (2026-09-09).** 12/12
-  live-edge-seek attempts on Channel B (real Channel B channel, not Channel
-  A -- deliberately avoided this run), zero `large audio sync error`
+  live-edge-seek attempts on Channel B (the other real channel used in
+  this investigation, not Channel A -- deliberately avoided this run),
+  zero `large audio sync error`
   lines in any attempt. Notable: the baseline `non-existing PPS 0
   referenced` noise ran much higher here than Channel B's established
   clean baseline on Windows/macOS (10-269 per ~20s attempt window here
