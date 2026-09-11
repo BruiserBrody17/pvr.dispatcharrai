@@ -207,6 +207,27 @@ platform.
   itself risks the two copies drifting apart on a later edit, while a
   past release's notes are already a frozen, one-time snapshot with no
   such risk.
+- **A plugin-only fix that lands after its addon release already
+  shipped needs that release's zip updated, not left stale until the
+  next one, as of 2026-09-11.** Plugins don't get their own tags --
+  their zips only ever get attached to whichever addon-version-scoped
+  tag happens to exist when `package-dispatcharr-plugins` runs. A real
+  case: the `client_ip` header-injection fix (`timeshift_buffer`
+  `0.6.2`) merged the same day as `0.9.4`'s own tag/CI run, but hours
+  after it -- so `0.9.4`'s already-published `timeshift_buffer.zip`
+  kept shipping the vulnerable `0.6.1` code until this was caught.
+  Given the "batch fixes, don't release per fix" convention above, the
+  next real addon release could be a while -- don't wait, especially
+  for anything security-relevant. Rebuild just that plugin's zip from
+  current `master` (same structure
+  `package-dispatcharr-plugins`'s own step produces: the plugin's own
+  directory as the zip's top-level entry) and `gh release upload
+  <tag> <zip> --clobber` onto the existing release -- no new tag, no
+  new addon build, this is a plugin-only exception to the
+  don't-release-per-fix rule above. Then update that release's own
+  notes with a dated addendum inlining the actual fix (per the bullet
+  above), not just a pointer -- and don't leave the original notes'
+  now-false "neither plugin changed" claim standing uncorrected.
 - **The CoreELEC package isn't part of CI** and won't be (see
   `docs/BUILDING.md`'s "GitHub Actions job ... rejected" note --
   CoreELEC's build harness assumes persistent, self-hosted infrastructure
