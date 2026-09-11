@@ -3,5 +3,5 @@
   "version": "0.2.0",
   "description": "Exposes a completed recording's comskip .edl (commercial break markers) over the plugin run/ API, for clients with no direct filesystem access to /data/recordings.",
   "author": "BruiserBrody17",
-  "help_url": "https://github.com/BruiserBrody17/pvr.dispatcharrai/tree/master/dispatcharr-plugin/recording_edl"
+  "help_url": "https://github.com/BruiserBrody17/pvr.dispatcharr/tree/master/dispatcharr-plugin/recording_edl"
 }

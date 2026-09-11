@@ -78,11 +78,11 @@
   cache -- resolved within ~3s and confirmed as the correct, pre-existing
   behavior, not a regression from this change).
 - **Rename the project from `pvr.dispatcharrai` to `pvr.dispatcharr`
-  (requested 2026-09-09, not yet started -- user asked for scope/steps
-  first, no action taken pending consent).** Mechanically straightforward
-  in-repo: `git grep -il dispatcharrai` finds 25 files, plus the two
-  directories whose names carry the id
-  (`pvr.dispatcharrai/`/`packaging/coreelec/pvr.dispatcharrai/`). Needs
+  (requested 2026-09-09).** Mechanically straightforward in-repo: `git
+  grep -il dispatcharrai` found 25 files at request time (27 by the time
+  this was actually done, since more docs/tooling had landed by then),
+  plus the two directories whose names carried the id
+  (`pvr.dispatcharrai/`/`packaging/coreelec/pvr.dispatcharrai/`). Needed
   updating: `addon.xml.in`'s `<addon id="...">`, `CMakeLists.txt`'s
   `project()`/`build_addon()`, `.github/workflows/build.yml` (addon-defs
   paths, `ADDONS_TO_BUILD`, artifact/zip names), the CoreELEC
@@ -93,12 +93,16 @@
   (`dispatcharr-plugin/recording_edl`, `dispatcharr-plugin/timeshift_buffer`)
   keep their own unrelated ids but reference `pvr.dispatcharrai` by name
   in READMEs/`plugin.json` `help_url`s/many `plugin.py` comments -- those
-  need updating too. Renaming the GitHub repo itself
-  (`BruiserBrody17/pvr.dispatcharrai`) is a separate, optional decision
-  (GitHub auto-redirects the old URL after a rename, but every local
-  clone's `origin` -- this Windows workspace, the Rocky Linux build box,
-  whatever the macOS peer session set up -- would still want
-  `git remote set-url` eventually for cleanliness).
+  needed updating too. Renaming the GitHub repo itself
+  (`BruiserBrody17/pvr.dispatcharrai`) was a separate decision, made
+  after the in-repo rename landed -- see the "Update" below for the
+  actual rename and the URL cleanup that followed it. Every GitHub URL
+  (repo `<source>`/`PKG_SITE`/`PKG_URL`/`help_url`s/clone commands/README
+  release links) was deliberately left pointing at the *old* repo name
+  in the initial in-repo-rename commit, specifically because this
+  decision hadn't been made yet at that point -- only the addon's own
+  id, directory names, and in-repo local-checkout-directory conventions
+  changed in that first pass.
   **The real cost isn't the repo, it's that Kodi treats an id change as
   a brand-new addon, not an upgrade.** The addon id is both the
   installed folder name and the `userdata/addon_data/<id>/settings.xml`
@@ -111,12 +115,219 @@
   scratch, still undecided. Also expect to need the same "Settings ->
   PVR & Live TV -> Guide -> Clear data" step already documented above
   (Kodi's EPG database keys off the client id) on every device after the
-  switch. Proposed order once given the go-ahead: rename on a branch ->
-  decide GitHub-repo-rename yes/no -> rebuild + fresh-install Windows
-  first and verify clean -> roll the same fresh-install to Rocky Linux,
+  switch. Proposed order: rename on a branch -> decide
+  GitHub-repo-rename yes/no -> rebuild + fresh-install Windows first and
+  verify clean -> roll the same fresh-install to Rocky Linux,
   ODROID/CoreELEC, and macOS (via the peer session) -> settle the
   settings-carryover question per device -> cut a release under the new
   name once all four platforms are confirmed working.
+  **Update: mechanical in-repo rename done and confirmed compiling
+  (2026-09-10), on branch `rename/pvr-dispatcharr` -- not yet merged,
+  not yet installed anywhere.** All 27 files updated; every GitHub URL
+  deliberately left pointing at the real, current repo name (see above).
+  `PKG_SHA256` in the renamed `package.mk` reset to the all-zeros
+  placeholder, per this file's own versioning convention -- the existing
+  real checksum was computed against the old (un-renamed) `0.9.3` tag's
+  actual tarball content, so it no longer matches anything this renamed
+  source would produce. Verified live: reconfigured the local Windows
+  build workspace with a new `addon-defs/pvr.dispatcharr/` entry
+  (pointing the same `file://` URL at this repo's root) and did a full,
+  from-scratch `cmake`+MSBuild build under the new target name -- built
+  and installed cleanly to `install/pvr.dispatcharr/pvr.dispatcharr.dll`
+  with no errors. `clang-format`/`ruff` both pass (the log-prefix string
+  length change shifted a handful of multi-line `kodi::Log()` calls'
+  wrapping, caught by `clang-format --dry-run -Werror` and fixed).
+  `tools/check_doc_refs.py` also updated (its own hardcoded
+  `resources/settings.xml` path) and still passes clean against the
+  baseline.
+  **Update: GitHub repo renamed too (2026-09-10) -- `BruiserBrody17/
+  pvr.dispatcharrai` is now `BruiserBrody17/pvr.dispatcharr`, decided and
+  executed the same session.** `gh repo rename`, then this Windows
+  workspace's own `origin` updated via `git remote set-url` (confirmed
+  still tracking correctly afterward -- GitHub's redirect made the
+  transition seamless, no re-clone needed). Every GitHub URL this repo's
+  own files deliberately left pointing at the old name in the initial
+  in-repo-rename commit above (repo `<source>`/`PKG_SITE`/`PKG_URL`/
+  `help_url`s/clone commands/README release links, 11 files) was then
+  updated to the new name too, now that the reason to hold off no longer
+  applies -- rather than leaning on GitHub's redirect indefinitely.
+  `docs/BUILDING.md`'s pinned-checksum example URL
+  (`.../archive/0.3.0.tar.gz`) updated the same way; the tag itself
+  (`0.3.0`) didn't change, just which repo name it's addressed through.
+  Still pending: the Rocky Linux laptop, ODROID/CoreELEC, and macOS
+  peer-session workspaces each have their own `origin` still pointing at
+  the old repo name -- each needs its own `git remote set-url` (or a
+  fresh clone) whenever that device is next touched; not urgent since
+  the old URL keeps working via GitHub's redirect, just cleanup.
+  **Update: fresh-installed and verified live on this Windows machine
+  (2026-09-10) -- Windows now confirmed clean, the first of four
+  platforms.** Rather than reconfiguring from scratch, carried over the
+  existing `addon_data/pvr.dispatcharrai/settings.xml` verbatim to a new
+  `addon_data/pvr.dispatcharr/` -- both are just files, no id baked into
+  the content itself, so this preserves host/port/credentials/API key/
+  timezone/padding/timeshift settings exactly. Installed the renamed
+  build alongside the old one (different ids, so no conflict), disabled
+  `pvr.dispatcharrai` and enabled `pvr.dispatcharr` via
+  `Addons.SetAddonEnabled`, confirmed via `PVR.GetClients` that exactly
+  one client (`pvr.dispatcharr`) was active afterward, not both. A burst
+  of `PVR::CPVREpg::Update: ... Client '-1' not found` errors appeared
+  once, right at the enable/disable transition -- Kodi's EPG database
+  cleaning up the old client's now-orphaned tables, a one-time artifact
+  of the switch, not a recurring problem (confirmed: no further
+  occurrences afterward). Everything else came up clean with the carried-
+  over settings: realtime updates connected, background channel/EPG
+  refresh succeeded, recordings/timer-rules caches populated with the
+  real live counts (43 recordings, 11 series rules -- same numbers as
+  under the old addon, confirming the same account), and `PVR.GetChannels`
+  returned the full real 9,080-channel lineup. Live playback smoke-tested
+  end to end, not just data loading: opened a real channel (Channel H,
+  same generic-label convention as Channels A-G elsewhere in this file's
+  history -- see the earlier "Packet corrupt"/EPG-matching entries),
+  confirmed via `kodi.log` the stream URL was genuinely routed through
+  the new addon (`pvr.dispatcharr_68829.pvr`), audio decoder opened
+  successfully, only the same already-documented benign startup noise
+  (`non-existing SPS/PPS referenced`, a transient audio-sync
+  adjustment) -- no new errors. The old `pvr.dispatcharrai` install was
+  left in place, disabled rather than deleted, as a rollback path.
+  Still not done: the other three devices (Rocky Linux laptop,
+  ODROID/CoreELEC, macOS via the peer session), or the eventual release
+  cut.
+  **Update: fresh-installed and verified live on macOS (2026-09-10) --
+  second of four platforms.** No persistent build workspace survived
+  from earlier sessions, so this was a from-scratch setup (fresh Kodi
+  source checkout, a separate local addon copy synced via `rsync -az
+  --delete`, `addon-defs` pointing at it) -- built cleanly on the first
+  attempt. Same settings-carryover approach as Windows: copied
+  `addon_data/pvr.dispatcharrai/settings.xml` verbatim to a new
+  `addon_data/pvr.dispatcharr/settings.xml` (byte-identical, confirmed
+  via `diff`). Installed the renamed build alongside the old one,
+  recorded real baseline counts under the old addon first (9,080
+  channels, 7 recordings, 50 timers via `PVR.GetChannels`/
+  `GetRecordings`/`GetTimers`), then disabled `pvr.dispatcharrai` and
+  enabled `pvr.dispatcharr` via `Addons.SetAddonEnabled`. `PVR.GetClients`
+  confirmed exactly one active client afterward (`pvr.dispatcharr`,
+  clientid 2 -- the old one had been clientid 1). Unlike Windows, no
+  `Client '-1' not found` burst appeared at all here (not a discrepancy --
+  the task description flagged it as "likely", not guaranteed); no
+  errors in `kodi.log` either way. Re-ran the same three counts under
+  the new addon: identical (9,080/7/50), confirming the same account/
+  data, not something broken. EPG also confirmed loading real programme
+  data for a real channel (`PVR.GetBroadcasts` on Channel H returned 112
+  real broadcasts with real, distinct titles -- not placeholder/empty
+  data). Live playback smoke-tested end to end on Channel H: `kodi.log`
+  confirmed the stream
+  genuinely routed through the new addon
+  (`pvr.dispatcharr_68829.pvr`, `CallTimeshiftPluginAction(start_buffer)`
+  logged under the `pvr.dispatcharr` prefix), and a real screenshot
+  confirmed live video actually playing (not just a JSON-RPC state
+  claim -- `Player.GetActivePlayers`/`GetProperties` returned transient
+  empty/`None` responses immediately after `Player.Open` that turned out
+  to be socket-timing noise in the test harness, not a real problem;
+  retrying a few seconds later, and the screenshot, confirmed playback
+  was actually healthy the whole time: `canseek: true, speed: 1`). Only
+  the same already-documented benign startup noise appeared
+  (`non-existing SPS/PPS referenced`, a `-245ms` self-correcting
+  `ActiveAE::SyncStream` adjustment) -- no new errors. One channel-id
+  gotcha worth noting for future sessions: Kodi's PVR `channelid`s are
+  scoped to the active client instance, not stable across a client
+  switch -- a channelid cached from before the switch (752, used in
+  earlier macOS sessions) returned "Invalid params" against the new
+  client and had to be re-looked-up by channel label instead. Old
+  `pvr.dispatcharrai` left in place, disabled, as a rollback path.
+  **Update: fresh-installed and verified live on the Rocky Linux laptop
+  (2026-09-10) -- third of four platforms, driven directly this time
+  (no more separate Claude Code peer sessions for the remaining
+  platforms).** Persistent build workspace (`~/kodi-linux-build/`)
+  survived from earlier sessions; synced the current branch tip into it
+  via a fresh `git clone` + `rsync -az --delete` (the live-checkout
+  stale-marker gotcha already documented in `docs/BUILDING.md` applied
+  again -- `.installed-native` had to be deleted before the build
+  harness would do anything, even though `pvr.dispatcharr` itself had
+  never been built here before; clearing just that one marker was
+  enough this time, no `*-prefix/` directory existed yet for the new
+  name). Also discovered Kodi wasn't actually running when this started
+  (a stale pid from an earlier check, confirmed via `kodi.log`'s own
+  "Exiting the application..." line) -- relaunched it using the
+  documented display-environment workaround, sourcing
+  `DISPLAY`/`WAYLAND_DISPLAY` from a live session process
+  (`/proc/<pid>/environ`) rather than the launching shell's own
+  (nonexistent) environment. Same settings-carryover approach as the
+  other two platforms: copied `addon_data/pvr.dispatcharrai/settings.xml`
+  verbatim to `addon_data/pvr.dispatcharr/settings.xml`. Installed
+  alongside the old addon, disabled `pvr.dispatcharrai` and enabled
+  `pvr.dispatcharr` via `Addons.SetAddonEnabled`; `PVR.GetClients`
+  confirmed exactly one active client afterward. Real data loaded
+  correctly: `PVR.GetChannels` returned the full 9,080-channel lineup,
+  recordings/timer-rules caches populated with real live counts (47
+  recordings, 11 series rules -- didn't capture a specific "before"
+  baseline on this platform since the old addon was disabled before
+  checking, but the counts are clearly real, non-zero data, and the
+  general order of magnitude matches the other two platforms; small
+  differences between platforms are expected here since recording/timer
+  counts are genuinely live and change over time, not a discrepancy to
+  chase). Live playback smoke-tested end to end on Channel H (same
+  generic-label convention as Channels A-G elsewhere in this file's
+  history): `kodi.log` confirmed the stream genuinely routed through the
+  new addon (`pvr.dispatcharr_68829.pvr`, the same real channel id as
+  the other two platforms), audio decoder opened successfully, only the
+  same already-documented benign startup noise -- no new errors. Old
+  `pvr.dispatcharrai` left in place, disabled, as a rollback path.
+  **Update: fresh-installed and verified live on CoreELEC/ODROID N2+
+  (2026-09-10) -- fourth and final platform, driven directly.** No
+  tagged release exists yet for this rename (deliberately deferred until
+  all platform testing is done), and CoreELEC's package.mk convention
+  only supports pointing `PKG_URL` at a resolvable ref, not a live
+  branch -- worked around by pointing it at this branch's exact commit
+  SHA instead of a tag (GitHub serves an archive tarball for any ref,
+  not just tags) and computing the real `PKG_SHA256` for that tarball
+  directly (`curl -L .../archive/<sha>.tar.gz | sha256sum`). This edit
+  was only ever made to the out-of-tree package.mk copy inside the
+  WSL2/Ubuntu CoreELEC build checkout (`~/coreelec-build-21/packages/
+  mediacenter/kodi-binary-addons/pvr.dispatcharr/package.mk`), never to
+  this repo's own tracked `packaging/coreelec/pvr.dispatcharr/
+  package.mk` -- so no revert was needed before this could be part of a
+  merge; the tracked file stayed on the all-zeros `PKG_SHA256` placeholder
+  the whole time. That build machine's persistent toolchain cache
+  survived from earlier sessions, so the cross-compile
+  (`PROJECT=Amlogic-ce ARCH=arm DEVICE=Amlogic-ng ./scripts/create_addon
+  pvr.dispatcharr`) finished in seconds and produced
+  `pvr.dispatcharr-0.9.3.1.zip`. Deployed it alongside the existing
+  `pvr.dispatcharrai` install via `scp`+`unzip` (no in-tree CoreELEC
+  package-manager install path available for an out-of-tree/unreleased
+  build), copied `addon_data/pvr.dispatcharrai/settings.xml` verbatim to
+  `addon_data/pvr.dispatcharr/settings.xml`. Unlike the other three
+  platforms, Kodi was already running before the new addon directory was
+  dropped in, so it needed an explicit restart to discover it --
+  `Application.Quit` via JSON-RPC, then CoreELEC's own systemd unit
+  auto-restarted Kodi (~40s) and the new addon showed up in
+  `Addons.GetAddons`. Disabled `pvr.dispatcharrai` and enabled
+  `pvr.dispatcharr` via `Addons.SetAddonEnabled`; confirmed exactly one
+  active client afterward. Real data loaded correctly: `PVR.GetChannels`
+  returned the full 9,080-channel lineup, and the addon's own
+  recordings/timer-rules cache-refresh log lines reported 47 recordings
+  and 11 series rules -- the same order of magnitude as the other
+  platforms (exact counts drift over time since this is a live account,
+  not a discrepancy to chase). Live playback smoke-tested end to end on
+  Channel H (same generic-label convention as Channels A-G elsewhere in
+  this file's history): `kodi.log` confirmed the stream genuinely routed
+  through the new addon (`pvr.dispatcharr_68829.pvr`, the same real
+  channel id as the other three platforms), `CallTimeshiftPluginAction
+  (start_buffer)` started a new buffer, and `ReadLiveTimeshiftStream`'s
+  catch-up-to-tail loop completed normally across several consecutive
+  segments -- no errors. One harness-only gotcha worth noting for future
+  sessions, not an addon bug: chaining `Player.Open` together with
+  several follow-up JSON-RPC calls in one long `ssh`-piped shell command
+  left the whole chain hanging indefinitely even though the webserver
+  itself stayed responsive to fresh, independent connections the whole
+  time -- switching to one plain, single-purpose SSH command per JSON-RPC
+  call resolved it immediately. Old `pvr.dispatcharrai` left in place,
+  disabled, as a rollback path. All four platforms (Windows, macOS,
+  Rocky Linux, CoreELEC/ODROID) are now fresh-installed and verified live
+  under the renamed addon id. Still not done: merging this branch and
+  cutting the real tagged release (real `PKG_SHA256`, CoreELEC zip
+  attached by hand per `docs/BUILDING.md`), and the deferred git-history
+  purge of the real channel/programme names leaked before the privacy
+  scrub.
 - [x] **Follow-up API survey: three more genuinely implementable findings,
   beyond the recording-management ones below (found 2026-09-08, all
   four resolved by 2026-09-09).** Diffed all ~196 of Dispatcharr's real API paths

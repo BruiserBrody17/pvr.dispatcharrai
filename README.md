@@ -1,4 +1,4 @@
-# pvr.dispatcharrai
+# pvr.dispatcharr
 
 A Kodi PVR (Live TV / DVR) addon for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr),
 built against Dispatcharr's native REST API rather than its Xtream Codes
@@ -54,7 +54,7 @@ Each has its own README with install steps.
 ## Installing
 
 1. Download the zip for your platform from the
-   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharrai/releases).
+   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharr/releases).
 2. In Kodi: **Add-ons -> Install from zip file**, and select the
    downloaded zip.
 3. Enable and configure the addon under **Settings -> PVR & Live TV ->

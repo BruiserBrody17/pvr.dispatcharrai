@@ -56,7 +56,7 @@ jobs:
       - name: Check out addon source
         uses: actions/checkout@v4
         with:
-          path: addons/pvr.dispatcharrai
+          path: addons/pvr.dispatcharr
 
       - name: Check out Kodi (for the binary-addons build harness)
         uses: actions/checkout@v4
@@ -92,15 +92,15 @@ jobs:
 
       - name: Register addon with the build harness
         run: |
-          mkdir -p addon-defs/pvr.dispatcharrai
-          echo "pvr.dispatcharrai file://${{ github.workspace }}/addons/pvr.dispatcharrai" \
-            > addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
+          mkdir -p addon-defs/pvr.dispatcharr
+          echo "pvr.dispatcharr file://${{ github.workspace }}/addons/pvr.dispatcharr" \
+            > addon-defs/pvr.dispatcharr/pvr.dispatcharr.txt
 
       - name: Build addon via Kodi binary-addons harness
         run: |
           cd kodi-source
           make -j"$(getconf _NPROCESSORS_ONLN)" -C tools/depends/target/binary-addons \
-            ADDONS="pvr.dispatcharrai" \
+            ADDONS="pvr.dispatcharr" \
             ADDONS_DEFINITION_DIR="${{ github.workspace }}/addon-defs" \
             PREFIX="${{ github.workspace }}/install" \
             EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON" \
@@ -114,13 +114,13 @@ jobs:
       - name: Collect built zip
         run: |
           mkdir -p dist
-          find kodi-source/tools/depends/target/binary-addons -name 'addon-pvr.dispatcharrai-*.zip' -exec cp {} dist/ \;
+          find kodi-source/tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-*.zip' -exec cp {} dist/ \;
           ls -la dist
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pvr.dispatcharrai-${{ matrix.os }}
+          name: pvr.dispatcharr-${{ matrix.os }}
           path: dist/*.zip
 
       # Actions artifacts (above) aren't reachable from a Release page and
@@ -175,7 +175,7 @@ jobs:
       - name: Check out addon source
         uses: actions/checkout@v4
         with:
-          path: addons/pvr.dispatcharrai
+          path: addons/pvr.dispatcharr
 
       - name: Check out Kodi
         uses: actions/checkout@v4
@@ -188,9 +188,9 @@ jobs:
       - name: Register addon with the build harness
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path addon-defs/pvr.dispatcharrai | Out-Null
-          "pvr.dispatcharrai file:///${{ github.workspace }}/addons/pvr.dispatcharrai" |
-            Out-File -Encoding ascii addon-defs/pvr.dispatcharrai/pvr.dispatcharrai.txt
+          New-Item -ItemType Directory -Force -Path addon-defs/pvr.dispatcharr | Out-Null
+          "pvr.dispatcharr file:///${{ github.workspace }}/addons/pvr.dispatcharr" |
+            Out-File -Encoding ascii addon-defs/pvr.dispatcharr/pvr.dispatcharr.txt
 
       # Windows has no system libcurl, unlike Linux/macOS. Kodi's own
       # cmake/addons/depends/windows project fetches prebuilt archives listed
@@ -233,18 +233,18 @@ jobs:
         shell: pwsh
         run: |
           cmake -S kodi-source/cmake/addons -B build -G "Visual Studio 18 2026" -A x64 `
-            "-DADDONS_TO_BUILD=pvr.dispatcharrai" `
+            "-DADDONS_TO_BUILD=pvr.dispatcharr" `
             "-DADDONS_DEFINITION_DIR=${{ github.workspace }}/addon-defs" `
             "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install" `
             "-DPACKAGE_ZIP=ON" `
             "-DPACKAGE_DIR=${{ github.workspace }}/dist" `
             "-DBUILD_DIR=${{ github.workspace }}/build/build"
-          cmake --build build --config Release --target package-pvr.dispatcharrai
+          cmake --build build --config Release --target package-pvr.dispatcharr
 
       # -DPACKAGE_DIR doesn't take effect here either (same unhonored-variable
       # issue as the Unix harness above) -- on Windows CPack instead drops the
       # zip in the OS temp dir (confirmed via a real run's CPack log: it wrote
-      # to C:\Users\RUNNER~1\AppData\Local\Temp\addon-pvr.dispatcharrai-*.zip,
+      # to C:\Users\RUNNER~1\AppData\Local\Temp\addon-pvr.dispatcharr-*.zip,
       # i.e. $env:TEMP), which the "Upload build artifact" step silently found
       # nothing at ("No files were found with the provided path: dist/*.zip")
       # since dist/ was never created. Copy it out of $env:TEMP explicitly.
@@ -252,7 +252,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $zip = Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharrai-*.zip' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          $zip = Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-*.zip' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $zip) { throw "Could not find built zip under $env:TEMP" }
           Copy-Item $zip.FullName dist/
           Get-ChildItem dist
@@ -260,7 +260,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pvr.dispatcharrai-windows
+          name: pvr.dispatcharr-windows
           path: dist/*.zip
 
       - name: Attach zip to the GitHub release

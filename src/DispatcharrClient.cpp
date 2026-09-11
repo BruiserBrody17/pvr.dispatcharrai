@@ -1123,9 +1123,8 @@ bool DispatcharrClient::CallTimeshiftPluginAction(const std::string& action, con
   // confirming the buffer is genuinely shared per-channel across viewers
   // rather than per-device, not just assumed from reading the plugin's
   // own source.
-  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: CallTimeshiftPluginAction(%s): %s (already_running=%d)",
-            action.c_str(), FieldOr<std::string>(result, "message", "").c_str(),
-            FieldOr(result, "already_running", false) ? 1 : 0);
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: CallTimeshiftPluginAction(%s): %s (already_running=%d)", action.c_str(),
+            FieldOr<std::string>(result, "message", "").c_str(), FieldOr(result, "already_running", false) ? 1 : 0);
 
   playlistUrlOut = "http://" + m_config.host + ":" + std::to_string(httpPort) + playlistRoute;
 
@@ -1279,8 +1278,7 @@ void DispatcharrClient::SendTimeshiftHeartbeat(const std::string& channelUuid, c
   CURLcode res = curl_easy_perform(curl);
   if (res != CURLE_OK)
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: SendTimeshiftHeartbeat: request failed: %s",
-              curl_easy_strerror(res));
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: SendTimeshiftHeartbeat: request failed: %s", curl_easy_strerror(res));
   }
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
@@ -1639,8 +1637,8 @@ std::string DispatcharrClient::ResolveSeriesRuleTvgId(int epgDataId, const std::
   std::string path = std::string(kEpgDataPath) + std::to_string(epgDataId) + "/";
   if (!Request("GET", path, json(), response, error))
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: ResolveSeriesRuleTvgId: lookup failed for epg_data %d: %s",
-              epgDataId, error.c_str());
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: ResolveSeriesRuleTvgId: lookup failed for epg_data %d: %s", epgDataId,
+              error.c_str());
     return fallbackTvgId;
   }
   std::string resolvedTvgId = FieldOr<std::string>(response, "tvg_id", "");
@@ -2310,7 +2308,7 @@ bool DispatcharrClient::RefreshInProgressRecordingManifest(bool force, std::stri
 
   double totalSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - refreshStart).count();
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharrai: RefreshInProgressRecordingManifest: %.3fs total (playlist fetch "
+            "pvr.dispatcharr: RefreshInProgressRecordingManifest: %.3fs total (playlist fetch "
             "%.3fs, %zu new segment probe(s) %.3fs [%zu failed], GetRecordingById %.3fs), "
             "totalBytes=%lld totalDurationMs=%lld finished=%d",
             totalSec, fetchPlaylistSec, newSegmentsProbed, probeSegmentsSec, newSegmentsProbeFailed, getRecordingsSec,
@@ -2364,7 +2362,7 @@ bool DispatcharrClient::OpenInProgressRecordingStream(int recordingId, time_t st
   bool haveSegment = false;
   for (int attempt = 0; attempt < kColdStartMaxAttempts; ++attempt)
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharrai: OpenInProgressRecordingStream: cold-start attempt=%d", attempt);
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: OpenInProgressRecordingStream: cold-start attempt=%d", attempt);
     if (!RefreshInProgressRecordingManifest(/*force=*/true, error))
     {
       m_inProgressRecordingStream = InProgressRecordingStreamState();
@@ -2498,7 +2496,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
 
     double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharrai: ReadInProgressRecordingStream: catch-up loop used %d/%d attempts, "
+              "pvr.dispatcharr: ReadInProgressRecordingStream: catch-up loop used %d/%d attempts, "
               "%.3fs (likelySeekProbe=%d, segmentDurationEstimateMs=%lld), position=%lld totalBytes=%lld "
               "-> %s",
               attemptsUsed, catchUpAttempts, elapsedSec, likelySeekProbe ? 1 : 0,
@@ -2568,7 +2566,7 @@ int DispatcharrClient::ReadInProgressRecordingStream(uint8_t* buffer, unsigned i
       // "likelySeekProbe" the way those are).
       double fetchSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - segmentFetchStart).count();
       kodi::Log(ADDON_LOG_DEBUG,
-                "pvr.dispatcharrai: ReadInProgressRecordingStream: segment body fetch (attempt=%d) "
+                "pvr.dispatcharr: ReadInProgressRecordingStream: segment body fetch (attempt=%d) "
                 "byteSize=%lld took %.3fs, curlResult=%d httpCode=%ld url=%s",
                 attempt, static_cast<long long>(seg->byteSize), fetchSec, static_cast<int>(res), httpCode,
                 seg->url.c_str());
@@ -2640,7 +2638,7 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
   if (newPos < 0)
   {
     kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharrai: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
+              "pvr.dispatcharr: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
               "current=%lld -> computed newPos=%lld < 0, failing",
               static_cast<long long>(position), whence, static_cast<long long>(m_inProgressRecordingStream.position),
               static_cast<long long>(newPos));
@@ -2666,7 +2664,7 @@ int64_t DispatcharrClient::SeekInProgressRecordingStream(int64_t position, int w
     newPos = tailTarget;
 
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharrai: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
+            "pvr.dispatcharr: SeekInProgressRecordingStream(position=%lld, whence=%d) from "
             "current=%lld, totalBytes=%lld -> newPos=%lld%s",
             static_cast<long long>(position), whence, static_cast<long long>(m_inProgressRecordingStream.position),
             static_cast<long long>(m_inProgressRecordingStream.totalBytes), static_cast<long long>(newPos),
@@ -3318,7 +3316,7 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
       {
         m_liveTimeshiftStream.fatal = true;
         kodi::Log(ADDON_LOG_ERROR,
-                  "pvr.dispatcharrai: ReadLiveTimeshiftStream: timeshift buffer reported fatal "
+                  "pvr.dispatcharr: ReadLiveTimeshiftStream: timeshift buffer reported fatal "
                   "mid-playback, giving up: %s",
                   refreshError.c_str());
         break;
@@ -3340,7 +3338,7 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
 
     double elapsedSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - catchUpStart).count();
     kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharrai: ReadLiveTimeshiftStream: catch-up-to-tail loop used %d/%d "
+              "pvr.dispatcharr: ReadLiveTimeshiftStream: catch-up-to-tail loop used %d/%d "
               "attempts, %.3fs (budget %.1fs off ~%lldms/segment estimate), position=%lld "
               "totalBytes=%lld -> %s",
               attemptsUsed, catchUpAttempts, elapsedSec, catchUpAttempts * kCatchUpSleepMs / 1000.0,
@@ -3362,7 +3360,7 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   if (!seg)
   {
     kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharrai: ReadLiveTimeshiftStream: position=%lld is a gap (totalBytes=%lld, "
+              "pvr.dispatcharr: ReadLiveTimeshiftStream: position=%lld is a gap (totalBytes=%lld, "
               "segments=%zu, first seg byteOffset=%lld, last seg end=%lld)",
               static_cast<long long>(m_liveTimeshiftStream.position),
               static_cast<long long>(m_liveTimeshiftStream.totalBytes), m_liveTimeshiftStream.segments.size(),
@@ -3454,7 +3452,7 @@ int DispatcharrClient::ReadLiveTimeshiftStream(uint8_t* buffer, unsigned int siz
   if (serverReportedTotal >= 0 && serverReportedTotal != seg->byteSize)
   {
     kodi::Log(ADDON_LOG_ERROR,
-              "pvr.dispatcharrai: ReadLiveTimeshiftStream: segment %s (sequence %lld) real size "
+              "pvr.dispatcharr: ReadLiveTimeshiftStream: segment %s (sequence %lld) real size "
               "(%lld, from Content-Range) disagrees with the manifest-reported size this "
               "session cached (%lld) -- every later segment's computed offset may already be "
               "misaligned; giving up on this stream rather than risk silent corruption",
@@ -3506,7 +3504,7 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
   if (clampedNegative)
   {
     kodi::Log(ADDON_LOG_DEBUG,
-              "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
+              "pvr.dispatcharr: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
               "current=%lld -> computed newPos=%lld < 0, failing",
               static_cast<long long>(position), whence, static_cast<long long>(m_liveTimeshiftStream.position),
               static_cast<long long>(newPos));
@@ -3555,7 +3553,7 @@ int64_t DispatcharrClient::SeekLiveTimeshiftStream(int64_t position, int whence)
     newPos = tailTarget;
 
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharrai: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
+            "pvr.dispatcharr: SeekLiveTimeshiftStream(position=%lld, whence=%d) from "
             "current=%lld, totalBytes=%lld -> newPos=%lld%s",
             static_cast<long long>(position), whence, static_cast<long long>(m_liveTimeshiftStream.position),
             static_cast<long long>(m_liveTimeshiftStream.totalBytes), static_cast<long long>(newPos),
