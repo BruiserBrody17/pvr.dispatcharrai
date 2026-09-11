@@ -1,0 +1,88 @@
+name: Bug report
+description: Something in the addon or a companion plugin isn't working right
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. There's no automated
+        test suite for this project, so the detail below is what
+        actually lets a report get investigated and fixed rather than
+        stalling for lack of information -- please fill in as much as
+        you genuinely have.
+
+        **Before reporting a security issue here:** don't -- see
+        [SECURITY.md](https://github.com/BruiserBrody17/pvr.dispatcharr/blob/master/SECURITY.md)
+        for how to report that privately instead.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which piece is affected?
+      options:
+        - The addon (pvr.dispatcharr, installed in Kodi)
+        - timeshift_buffer plugin (installed on Dispatcharr)
+        - recording_edl plugin (installed on Dispatcharr)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: component-version
+    attributes:
+      label: Version of that piece
+      description: >-
+        For the addon: Kodi's Add-ons -> My add-ons -> PVR clients ->
+        Dispatcharr PVR Client. For a plugin: Dispatcharr's own Plugins
+        page.
+      placeholder: "e.g. 0.9.4"
+    validations:
+      required: true
+
+  - type: input
+    id: dispatcharr-version
+    attributes:
+      label: Dispatcharr version
+      description: Dispatcharr's own Settings page shows this.
+      placeholder: "e.g. 0.30.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Where Kodi is running, and its version.
+      placeholder: "e.g. Windows 11, Kodi 21.2 / CoreELEC on an ODROID N2+"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: As exact as you can make them. If it's intermittent, say so.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log excerpt
+      description: >-
+        Kodi's own `kodi.log` for an addon issue, or Dispatcharr's own
+        logs for a plugin issue. Turning on Kodi's debug logging
+        (Settings -> System -> Logging) before reproducing usually
+        gets much more useful detail. Please don't paste your actual
+        Dispatcharr host, IP address, or account details along with
+        the log -- redact those if they appear.
+      render: text
+    validations:
+      required: false

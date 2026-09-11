@@ -7,6 +7,13 @@ directly onto Dispatcharr's own backend and settings.
 
 **Platforms**: Windows, macOS, Linux, and CoreELEC (tested on an ODROID N2+).
 
+**Status**: pre-1.0 and actively developed by a single maintainer --
+expect occasional rough edges. Verified against Dispatcharr `0.30.0`;
+Dispatcharr's own REST API has changed shape across releases before,
+so a real incompatibility against a different version is possible and
+not guaranteed to be caught yet. Bug reports (with the detail requested
+in the issue template) are genuinely useful for exactly this reason.
+
 ## Features
 
 - Channel and channel-group listing, with EPG (posters, New/Premiere/Live
