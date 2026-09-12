@@ -2,11 +2,11 @@
 Timeshift Buffer -- a Dispatcharr plugin.
 
 Records a rolling, per-channel HLS-style buffer to disk so a client (this
-plugin was designed alongside pvr.dispatcharr, a Kodi PVR addon) can
+plugin was designed alongside pvr.dispatcharr-unofficial, a Kodi PVR addon) can
 pause/rewind live TV without needing a local, on-device buffer the way
 inputstream.ffmpegdirect's own timeshift mode provides today.
 
-Design notes (see docs/API_NOTES.md in pvr.dispatcharr and the
+Design notes (see docs/API_NOTES.md in pvr.dispatcharr-unofficial and the
 conversation that produced this draft for the full reasoning):
 
 - Reads from Dispatcharr's own live proxy (/proxy/ts/stream/<uuid>) rather
@@ -68,7 +68,7 @@ conversation that produced this draft for the full reasoning):
   the stream.
 
 Verified live end-to-end against a real Dispatcharr instance and a real
-pvr.dispatcharr build: buffer capture, this plugin's own HTTP serving,
+pvr.dispatcharr-unofficial build: buffer capture, this plugin's own HTTP serving,
 and a real channel opening and playing cleanly are all confirmed working.
 
 This plugin originally routed live playback through
@@ -78,7 +78,7 @@ finite, `ENDLIST`-terminated playlist a client could seek within, since
 Kodi gates `canseek` on a known duration a perpetually-growing live
 playlist can never have) as a workaround for that route's own seeking,
 which turned out to be broken outright, not just imprecise. That whole
-approach is **superseded**: pvr.dispatcharr now exposes the buffer via
+approach is **superseded**: pvr.dispatcharr-unofficial now exposes the buffer via
 Kodi's own `OpenLiveStream`/`ReadLiveStream`/`SeekLiveStream` API instead,
 using Kodi's native internal demuxer directly -- real seeking within the
 growing live buffer itself, no snapshot needed at all. That needed two
@@ -92,7 +92,7 @@ rolling window advances. Confirmed live: real pause/rewind/fast-forward/
 live-follow from plain Play, including a 95-second rewind spanning
 several manifest refreshes. `snapshot_buffer` and the ffmpegdirect route
 it existed for have both been removed entirely as a result -- see
-pvr.dispatcharr's own docs/TIMESHIFT.md for the full investigation this
+pvr.dispatcharr-unofficial's own docs/TIMESHIFT.md for the full investigation this
 summary compresses, including the exact `av_seek_frame` failure signature
 that motivated moving off ffmpegdirect in the first place.
 """
@@ -247,7 +247,7 @@ class _BufferRequestHandler(BaseHTTPRequestHandler):
     own) previously meant readability. No directory listing, no write
     support. Does support Range requests
     (added for the growing-live-buffer byte-stream path -- see
-    get_live_manifest below and pvr.dispatcharr's DispatcharrClient,
+    get_live_manifest below and pvr.dispatcharr-unofficial's DispatcharrClient,
     which mirrors its already-proven recording-playback Range-read pattern
     against individual segment files here instead of one Dispatcharr-served
     recording file)."""
@@ -443,7 +443,7 @@ class _BufferHTTPServer(ThreadingHTTPServer):
     later dies or gets recycled (routine for a WSGI server under normal
     operation), port 9192 goes completely unserved until some other
     worker happens to retry and win the now-open race -- and confirmed
-    live that this window lines up with a real pvr.dispatcharr
+    live that this window lines up with a real pvr.dispatcharr-unofficial
     live-timeshift stall (its HTTP reads against this server fail outright
     for as long as nothing is listening).
 
@@ -538,7 +538,7 @@ def _stream_attribution_headers(params: dict, logger):
        connection registers with user=None, and StreamConnectionCard.jsx
        (frontend) shows any uid that's falsy or the string '0' as
        'Anonymous'. `params["username"]` is the Dispatcharr account
-       pvr.dispatcharr (or whichever client called start_buffer) is
+       pvr.dispatcharr-unofficial (or whichever client called start_buffer) is
        already configured with -- generating a token for it directly via
        rest_framework_simplejwt (this plugin runs in-process with Django)
        avoids a second login flow.
@@ -616,7 +616,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     # has headroom before ffmpeg overwrites that same filename in place --
     # the same class of "don't reveal/rely on something about to move under
     # you" caution this project already applied to its own gradual-cap fix
-    # for in-progress-recording playback (see pvr.dispatcharr's
+    # for in-progress-recording playback (see pvr.dispatcharr-unofficial's
     # docs/RECORDINGS.md -- that mechanism has since been replaced by a
     # native-demuxer approach that doesn't need a cap at all, but the same
     # underlying caution still applies here), just via a size margin here
@@ -644,7 +644,7 @@ def _start_ffmpeg(channel_uuid: str, params: dict, settings_dict: dict, logger) 
     # single segment's local PTS space actually contains. Continuous
     # timestamps across segments (matching how real-world HLS packagers do
     # it) are what a byte-domain seek needs to resolve to a real position at
-    # all, which is just as true for pvr.dispatcharr's own native-demuxer
+    # all, which is just as true for pvr.dispatcharr-unofficial's own native-demuxer
     # seeking today -- kept removed for that reason, not merely inherited
     # from the old client's own requirement.
     attribution_headers = _stream_attribution_headers(params, logger)
@@ -733,7 +733,7 @@ def _stop_ffmpeg(state: dict, logger):
     # Give it a moment to exit cleanly (flush the segment list/moov, etc.)
     # before escalating -- mirrors this project's own Plugins.md-documented
     # stop() pattern (track a pid, SIGTERM it, log the outcome). 2s, not the
-    # 5s this used to be: confirmed live (pvr.dispatcharr's own
+    # 5s this used to be: confirmed live (pvr.dispatcharr-unofficial's own
     # CloseLiveTimeshiftStream() now waits on this call synchronously, so
     # its own duration is directly what a user feels as "how long does
     # Stop take") that ffmpeg here can take close to the full deadline to
@@ -902,7 +902,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
     one growing, seekable byte stream (Range-reading individual segment
     files directly, see _BufferRequestHandler's Range support) instead of
     going through inputstream.ffmpegdirect's HLS-seek machinery, which
-    pvr.dispatcharr's docs/TIMESHIFT.md documents as confirmed broken for
+    pvr.dispatcharr-unofficial's docs/TIMESHIFT.md documents as confirmed broken for
     this kind of buffer.
 
     Always reflects the current state of live.m3u8 -- never stale -- but
@@ -916,7 +916,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
     sequence number is never reused for the life of *one buffer instance*
     (HLS media sequence is monotonic, even though -segment_wrap does
     recycle filenames), so a cache hit by sequence is guaranteed to be the
-    exact same bytes, the same invariant pvr.dispatcharr's own
+    exact same bytes, the same invariant pvr.dispatcharr-unofficial's own
     RefreshLiveManifest() already relies on client-side -- with two
     deliberate exceptions, both confirmed live to matter, not just
     theoretical:
@@ -966,7 +966,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
     The rolling window means "byte offset 0" in THIS response corresponds
     to whatever's currently oldest -- a later call's "byte offset 0" will
     be different content once the window has advanced. A client that wants
-    a stable address space across repeated calls (pvr.dispatcharr does,
+    a stable address space across repeated calls (pvr.dispatcharr-unofficial does,
     to avoid its own position bookkeeping going stale mid-playback) can't
     just concatenate offsets naively; each segment also carries an absolute
     `sequence` number (HLS's own #EXT-X-MEDIA-SEQUENCE plus its position in
@@ -999,7 +999,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
         # reading from -- ffmpeg has no -reconnect flag set here, so it
         # just exits rather than retrying forever). Checking whether the
         # tracked pid is still alive distinguishes them cheaply, so a
-        # caller (pvr.dispatcharr's own OpenLiveTimeshiftStream() cold
+        # caller (pvr.dispatcharr-unofficial's own OpenLiveTimeshiftStream() cold
         # -start retry loop) can fail fast on the second case instead of
         # retrying for its full ~15s budget against something that will
         # never succeed.
@@ -1045,7 +1045,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
     # completely wrong size for a same-named, same-sequenced, but
     # genuinely different segment (confirmed live: a channel switched away
     # from and back produced exactly this, "Packet corrupt" within
-    # seconds of the fresh buffer starting, caught by pvr.dispatcharr's
+    # seconds of the fresh buffer starting, caught by pvr.dispatcharr-unofficial's
     # own Content-Range cross-check -- see docs/TIMESHIFT.md's "1.0.7
     # follow-up #2").
     #
@@ -1147,7 +1147,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
                 # should assume -- a size sampled on that very first call
                 # could plausibly race a not-yet-fully-flushed write.
                 # Before this cache existed, that risk was harmless: the
-                # *next* manifest call (of which pvr.dispatcharr's own
+                # *next* manifest call (of which pvr.dispatcharr-unofficial's own
                 # cold-start retry loop issues several before ever reading
                 # a byte) would simply re-stat and self-correct. Caching
                 # turned a harmless, self-healing transient into a size
@@ -1155,7 +1155,7 @@ def _get_live_manifest(state: dict, logger) -> dict:
                 # segment's time in the window -- exactly the shape of a
                 # real, reproducible corrupt-playback report on a freshly
                 # opened live-timeshift stream, which starts right at the
-                # live edge (see pvr.dispatcharr's own
+                # live edge (see pvr.dispatcharr-unofficial's own
                 # kLiveEdgeMarginSegments) where the newest segment is
                 # most likely to still be this fresh. Re-verifying just
                 # the one newest entry costs at most one extra stat() per
@@ -1339,7 +1339,9 @@ class Plugin:
         "pause/rewind live playback without a local on-device buffer."
     )
     author = "BruiserBrody17"
-    help_url = "https://github.com/BruiserBrody17/pvr.dispatcharr/tree/master/dispatcharr-plugin/timeshift_buffer"
+    help_url = (
+        "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/tree/master/dispatcharr-plugin/timeshift_buffer"
+    )
 
     # The single source of truth for fields/actions -- confirmed live that
     # plugin.json's own copies (which Plugins.md's Quick Start example
@@ -1357,7 +1359,7 @@ class Plugin:
             "type": "info",
             "description": (
                 "Started/stopped per channel by a client (e.g. "
-                "pvr.dispatcharr's live-timeshift setting) via the plugin "
+                "pvr.dispatcharr-unofficial's live-timeshift setting) via the plugin "
                 "run/ API, not usually by hand. The buttons below are for "
                 "manual testing and emergency cleanup."
             ),
@@ -1414,7 +1416,7 @@ class Plugin:
                 "Stop, which tears the buffer down immediately regardless. "
                 "Kept short so an abandoned buffer doesn't occupy one of a "
                 "provider's concurrent-stream slots for long. See "
-                "pvr.dispatcharr's docs/TIMESHIFT.md for details."
+                "pvr.dispatcharr-unofficial's docs/TIMESHIFT.md for details."
             ),
         },
         {
@@ -1507,7 +1509,7 @@ class Plugin:
             "description": (
                 "Returns a byte-addressable manifest (segment filenames, byte sizes, durations, "
                 "cumulative offsets) of the buffer's currently-listed segments (params: channel_uuid, "
-                "required -- start_buffer must already be running). Used by pvr.dispatcharr to treat "
+                "required -- start_buffer must already be running). Used by pvr.dispatcharr-unofficial to treat "
                 "the rolling live buffer as one growing, seekable byte stream via Range reads against "
                 "individual segments, instead of routing through inputstream.ffmpegdirect's HLS-seek "
                 "path (confirmed broken for this kind of buffer, see docs/TIMESHIFT.md)."

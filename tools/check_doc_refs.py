@@ -41,7 +41,7 @@ DOCS_DIR = REPO_ROOT / "docs"
 DOC_FILES = sorted(DOCS_DIR.glob("*.md")) + [REPO_ROOT / "CHANGELOG.md"]
 SRC_DIR = REPO_ROOT / "src"
 PLUGIN_FILES = sorted((REPO_ROOT / "dispatcharr-plugin").glob("*/plugin.py"))
-SETTINGS_XML = REPO_ROOT / "pvr.dispatcharr" / "resources" / "settings.xml"
+SETTINGS_XML = REPO_ROOT / "pvr.dispatcharr-unofficial" / "resources" / "settings.xml"
 BASELINE_PATH = Path(__file__).resolve().parent / "doc_refs_baseline.txt"
 
 SECTION_TITLE_RE = re.compile(r'"([^"]{4,100})"\s+section')

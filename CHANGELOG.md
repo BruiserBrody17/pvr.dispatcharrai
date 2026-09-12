@@ -10,6 +10,26 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
+## [0.9.5] - 2026-09-11
+
+Addon only -- neither companion plugin changed for this pass.
+
+**The addon's Kodi id changed from `pvr.dispatcharr` to
+`pvr.dispatcharr-unofficial`.** Same situation as the previous
+`pvr.dispatcharrai` -> `pvr.dispatcharr` rename: Kodi treats an addon-id
+change as a brand-new addon, not an in-place upgrade, so this is not a
+seamless update -- install the new addon, copy your old `settings.xml`
+over by hand (its format is unchanged), then disable the old addon once
+the new one is confirmed working. See [README.md](README.md) for the
+exact steps. The GitHub repository itself was also renamed to match
+(`BruiserBrody17/pvr.dispatcharr-unofficial`); old repo URLs redirect
+automatically.
+
+The addon's name and description now explicitly say "Unofficial" and
+state that this project isn't affiliated with, endorsed by, or
+supported by the Dispatcharr project -- visible in Kodi's own add-on
+browser at install time, not just in this repo's own docs.
+
 ## `timeshift_buffer` [0.6.2] - 2026-09-11
 
 Plugin only -- the addon and `recording_edl` didn't change for this fix.

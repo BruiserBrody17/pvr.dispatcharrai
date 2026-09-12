@@ -1,4 +1,4 @@
-# Building pvr.dispatcharr
+# Building pvr.dispatcharr-unofficial
 
 Kodi binary addons aren't built standalone in the usual CMake sense --
 they're built through Kodi's own addon build harness so the resulting
@@ -23,16 +23,16 @@ automates the Windows/macOS/Linux steps below on every push.
    ```
 2. Clone this addon next to it (any path):
    ```bash
-   git clone https://github.com/BruiserBrody17/pvr.dispatcharr.git addons/pvr.dispatcharr
+   git clone https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial.git addons/pvr.dispatcharr-unofficial
    ```
-3. Register the addon with the harness. `pvr.dispatcharr` isn't in Kodi's
+3. Register the addon with the harness. `pvr.dispatcharr-unofficial` isn't in Kodi's
    official addon manifests, so `ADDON_SRC_PREFIX` alone won't find it --
    the harness needs an explicit definition file pointing at the local
    checkout via a `file://` URL:
    ```bash
-   mkdir -p addon-defs/pvr.dispatcharr
-   echo "pvr.dispatcharr file://$(pwd)/addons/pvr.dispatcharr" \
-     > addon-defs/pvr.dispatcharr/pvr.dispatcharr.txt
+   mkdir -p addon-defs/pvr.dispatcharr-unofficial
+   echo "pvr.dispatcharr-unofficial file://$(pwd)/addons/pvr.dispatcharr-unofficial" \
+     > addon-defs/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial.txt
    ```
 4. Run the addon build harness. `PREFIX` is required even for a native
    (non-cross-compiling) build -- point it at any writable install
@@ -40,7 +40,7 @@ automates the Windows/macOS/Linux steps below on every push.
    ```bash
    cd kodi-source
    make -j$(nproc) -C tools/depends/target/binary-addons \
-     ADDONS="pvr.dispatcharr" \
+     ADDONS="pvr.dispatcharr-unofficial" \
      ADDONS_DEFINITION_DIR="$(pwd)/../addon-defs" \
      PREFIX="$(pwd)/../install" \
      EXTRA_CMAKE_ARGS="-DPACKAGE_ZIP=ON" \
@@ -65,7 +65,7 @@ automates the Windows/macOS/Linux steps below on every push.
    and leaves the old binary in place. Confirmed the fix needs *two*
    things removed, not just one: `.installed-native` itself, and the
    addon's own stale ExternalProject state,
-   `tools/depends/target/binary-addons/native/pvr.dispatcharr-prefix/`
+   `tools/depends/target/binary-addons/native/pvr.dispatcharr-unofficial-prefix/`
    (its stamp files are what the *inner* CMake target checks, one layer
    below the outer marker) -- deleting only one of the two still no-op'd.
    A version bump alone doesn't fix this either, since the file:// URL
@@ -77,9 +77,9 @@ automates the Windows/macOS/Linux steps below on every push.
    `PACKAGE_ZIP=ON` alone is what makes CPack build it at all, so find it
    afterward instead of trusting `PACKAGE_DIR`:
    ```bash
-   find tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-*.zip'
+   find tools/depends/target/binary-addons -name 'addon-pvr.dispatcharr-unofficial-*.zip'
    ```
-   That zip (named e.g. `addon-pvr.dispatcharr-0.1.0-osx-arm64.zip`) is
+   That zip (named e.g. `addon-pvr.dispatcharr-unofficial-0.1.0-osx-arm64.zip`) is
    what you install via Kodi's
    "install from zip file" option, or publish in a self-hosted repository
    (see the "Distribution" section below).
@@ -130,7 +130,7 @@ check what you actually have (Visual Studio Installer, or `vswhere -all`)
 rather than assuming either one.
 
 1. Clone Kodi and this addon exactly as in steps 1-2 above (Omega branch,
-   this repo checked out under `addons/pvr.dispatcharr`), and register the
+   this repo checked out under `addons/pvr.dispatcharr-unofficial`), and register the
    addon exactly as in step 3.
 2. Fetch curl and its own dependencies. Windows has no system libcurl, and
    the prebuilt curl Kodi's own dependency mirror serves needs OpenSSL and
@@ -159,17 +159,17 @@ rather than assuming either one.
 3. Configure and build the addon itself. Quote every `-D` argument as one
    token (`"-DFOO=bar"`, not `-DFOO=bar` split across a line continuation) --
    PowerShell's backtick line continuation can otherwise truncate a value at
-   the first `.` it contains, which silently turns `pvr.dispatcharr` into
+   the first `.` it contains, which silently turns `pvr.dispatcharr-unofficial` into
    just `pvr`:
    ```powershell
    cmake -S kodi-source\cmake\addons -B build -G "Visual Studio 18 2026" -A x64 `
-     "-DADDONS_TO_BUILD=pvr.dispatcharr" `
+     "-DADDONS_TO_BUILD=pvr.dispatcharr-unofficial" `
      "-DADDONS_DEFINITION_DIR=$pwd\addon-defs" `
      "-DCMAKE_INSTALL_PREFIX=$pwd\install" `
      "-DPACKAGE_ZIP=ON" `
      "-DPACKAGE_DIR=$pwd\dist" `
      "-DBUILD_DIR=$pwd\build\build"
-   cmake --build build --config Release --target package-pvr.dispatcharr
+   cmake --build build --config Release --target package-pvr.dispatcharr-unofficial
    ```
    Don't pass a custom `-DCMAKE_PREFIX_PATH` here even if you're tempted to
    point it at a separate curl install location: `cmake/addons/CMakeLists.txt`
@@ -181,14 +181,14 @@ rather than assuming either one.
 4. `-DPACKAGE_DIR` doesn't actually redirect CPack's output here either (same
    as the Linux/macOS harness above) -- confirmed via a real run's CPack log,
    it instead drops the zip in the OS temp dir (`$env:TEMP`, e.g.
-   `addon-pvr.dispatcharr-0.1.0-windows-x86_64.zip` under
+   `addon-pvr.dispatcharr-unofficial-0.1.0-windows-x86_64.zip` under
    `C:\Users\<runner>\AppData\Local\Temp`). Find it there rather than in
    `dist`:
    ```powershell
-   Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-*.zip' -Recurse
+   Get-ChildItem -Path $env:TEMP -Filter 'addon-pvr.dispatcharr-unofficial-*.zip' -Recurse
    ```
    That zip bundles `libcurl.dll` and `zlib.dll` alongside
-   `pvr.dispatcharr.dll` (see `CMakeLists.txt`'s `DISPATCHARR_ADDITIONAL_BINARY`),
+   `pvr.dispatcharr-unofficial.dll` (see `CMakeLists.txt`'s `DISPATCHARR_ADDITIONAL_BINARY`),
    since a standalone Windows install can't assume those are already present
    the way Kodi's own bundled curl, or Linux's system libcurl, would be.
 
@@ -224,19 +224,19 @@ every in-tree example (confirmed by reading CoreELEC/CoreELEC's real
 `pvr.hts` and `pvr.iptvsimple` package.mk files) points `PKG_URL` at a
 tagged release tarball with a pinned `PKG_SHA256`. A package definition for
 this addon following that same pattern is checked in at
-[`packaging/coreelec/pvr.dispatcharr/package.mk`](../packaging/coreelec/pvr.dispatcharr/package.mk).
+[`packaging/coreelec/pvr.dispatcharr-unofficial/package.mk`](../packaging/coreelec/pvr.dispatcharr-unofficial/package.mk).
 
 **This whole path -- package.mk, checksum, branch, device, arch -- has now
 been confirmed by an actual successful cross-compile** (`0.3.0`, against a
 real WSL2/Ubuntu build machine): `ALL ADDONS BUILT SUCCESSFULLY`, producing
-a genuine `pvr.dispatcharr-0.3.0.1.zip` whose `.so` is a real stripped
+a genuine `pvr.dispatcharr-unofficial-0.3.0.1.zip` whose `.so` is a real stripped
 ELF binary, and every specific claim below (branch, device, arch, output
 path) reflects what that run actually did, not documentation guesswork.
 Several real problems surfaced and were fixed along the way -- they're
 called out inline so a future rebuild doesn't have to rediscover them.
 
 1. Tag and publish a GitHub release matching the version in
-   `pvr.dispatcharr/addon.xml.in` (e.g. `0.4.0`, no `v` prefix -- CoreELEC's
+   `pvr.dispatcharr-unofficial/addon.xml.in` (e.g. `0.4.0`, no `v` prefix -- CoreELEC's
    own package.mk files use the tag name verbatim in the archive URL, and
    keeping it identical to `PKG_VERSION` avoids a mismatch):
    ```bash
@@ -250,15 +250,15 @@ called out inline so a future rebuild doesn't have to rediscover them.
    existence" response to an unauthenticated request against a private
    repo). Confirmed live: this addon's own repo was still private from an
    earlier session, the cross-compile's very last step
-   (`pvr.dispatcharr:target`, after the entire toolchain had already
+   (`pvr.dispatcharr-unofficial:target`, after the entire toolchain had already
    built successfully) failed on exactly this 404, and switching the repo
    to public (`gh repo edit <repo> --visibility public
    --accept-visibility-change-consequences`) immediately fixed it -- no
    package.mk or build-harness change needed.
 2. Compute the tarball's checksum and fill it into
-   `packaging/coreelec/pvr.dispatcharr/package.mk`'s `PKG_SHA256`:
+   `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk`'s `PKG_SHA256`:
    ```bash
-   curl -L https://github.com/BruiserBrody17/pvr.dispatcharr/archive/0.3.0.tar.gz | sha256sum
+   curl -L https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/archive/0.3.0.tar.gz | sha256sum
    ```
    Do this *after* the repo is public, against the real tarball -- doing
    it while the repo is still private silently hashes GitHub's 404 error
@@ -291,9 +291,9 @@ called out inline so a future rebuild doesn't have to rediscover them.
    build. This is the branch that actually built successfully:
    ```bash
    git clone --branch coreelec-21 --depth 1 https://github.com/CoreELEC/CoreELEC.git
-   mkdir -p CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr
-   cp packaging/coreelec/pvr.dispatcharr/package.mk \
-     CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr/
+   mkdir -p CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr-unofficial
+   cp packaging/coreelec/pvr.dispatcharr-unofficial/package.mk \
+     CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr-unofficial/
    ```
    **If this file was edited on Windows and copied into a WSL/Linux
    checkout, strip CRLF line endings before building** (confirmed live,
@@ -303,12 +303,12 @@ called out inline so a future rebuild doesn't have to rediscover them.
    (`create_addon`'s `verify_addon`/`get_addons`) then compares against
    the literal string `"yes\r"`, not `"yes"` -- it fails silently (no
    error, `&>/dev/null`-suppressed), and the addon is simply missing from
-   every listing (`create_addon pvr.dispatcharr` and even `create_addon
+   every listing (`create_addon pvr.dispatcharr-unofficial` and even `create_addon
    --show-only binary` both just omit it, with no indication why).
    Confirmed via `bash -x` tracing into `verify_addon`, which showed
    exactly this comparison failing. Fix:
    ```bash
-   sed -i 's/\r$//' CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr/package.mk
+   sed -i 's/\r$//' CoreELEC/packages/mediacenter/kodi-binary-addons/pvr.dispatcharr-unofficial/package.mk
    ```
 4. Build it. Both the device name *and* the arch value have changed across
    CoreELEC branches -- don't assume either is stable across branches, and
@@ -335,7 +335,7 @@ called out inline so a future rebuild doesn't have to rediscover them.
      avoids the confusion:
    ```bash
    cd CoreELEC
-   PROJECT=Amlogic-ce ARCH=arm DEVICE=Amlogic-ng ./scripts/create_addon pvr.dispatcharr
+   PROJECT=Amlogic-ce ARCH=arm DEVICE=Amlogic-ng ./scripts/create_addon pvr.dispatcharr-unofficial
    ```
    Two more real, confirmed-live failure modes to expect and how they were
    fixed, in case a future build hits them again (both are about *fetching
@@ -372,19 +372,19 @@ called out inline so a future rebuild doesn't have to rediscover them.
      above.
    Per CoreELEC's own wiki, the result lands under `target/addons/`; this
    is now confirmed against a real run -- exact path is
-   `target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr/`,
-   e.g. `target/addons/Amlogic-ng/21.3/arm/pvr.dispatcharr/pvr.dispatcharr-0.3.0.1.zip`
+   `target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/`,
+   e.g. `target/addons/Amlogic-ng/21.3/arm/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-0.3.0.1.zip`
    for this build (the `.1` is CoreELEC's own `PKG_REV`, not part of this
    addon's own version).
 5. Install the resulting zip on the N2+ via Kodi's "install from zip file"
    option, or copy it over SSH and extract into
-   `/storage/.kodi/addons/pvr.dispatcharr/` directly, then restart Kodi.
+   `/storage/.kodi/addons/pvr.dispatcharr-unofficial/` directly, then restart Kodi.
 6. This build isn't automated in CI (see the "GitHub Actions job ...
    rejected" note above) -- if this is a real tagged release, also attach
    the zip to the GitHub Release by hand so CoreELEC users have something
    to download instead of having to build it themselves:
    ```bash
-   gh release upload <tag> target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr/pvr.dispatcharr-<version>.zip
+   gh release upload <tag> target/addons/<DEVICE>/<KODI_MAJOR_VERSION>/<ARCH>/pvr.dispatcharr-unofficial/pvr.dispatcharr-unofficial-<version>.zip
    ```
 
 For later releases, only steps 1-2 and the `cp`/build in steps 3-4 need
@@ -403,7 +403,7 @@ details above; not `Amlogic-no`/`aarch64`, which was true of an older,
 no-longer-recommended branch), matching their exact GCC version and the
 Kodi commit their release is built from, then copy the
 resulting `.so` and a rendered `addon.xml` into
-`/storage/.kodi/addons/pvr.dispatcharr/` over SSH and restart Kodi. This
+`/storage/.kodi/addons/pvr.dispatcharr-unofficial/` over SSH and restart Kodi. This
 is more fragile than the package.mk route above (nothing pins the toolchain
 version for you), so prefer that unless you specifically need to test a
 build that isn't tagged.

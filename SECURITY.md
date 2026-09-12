@@ -12,7 +12,7 @@ security fixes. There's no backport policy for older releases.
 **Please don't open a public GitHub issue for a security report.**
 
 Use GitHub's private vulnerability reporting for this repo instead:
-[Report a vulnerability](https://github.com/BruiserBrody17/pvr.dispatcharr/security/advisories/new)
+[Report a vulnerability](https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/security/advisories/new)
 (also reachable from the repo's "Security" tab). If that's not
 available for some reason, open a regular issue asking for a private
 contact channel rather than describing the issue itself.

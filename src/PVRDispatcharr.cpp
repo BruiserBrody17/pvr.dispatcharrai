@@ -84,7 +84,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
       m_backendVersion = version;
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: could not read Dispatcharr's server version: %s",
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: could not read Dispatcharr's server version: %s",
                 versionError.c_str());
     }
   }
@@ -92,7 +92,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
   std::string error;
   if (!m_client.EnsureAuthenticated(error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: initial login failed: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: initial login failed: %s", error.c_str());
   }
   else if (!m_client.HasApiKey())
   {
@@ -106,7 +106,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     if (m_client.GenerateApiKey(key, error))
       kodi::addon::SetSettingString("api_key", key);
     else
-      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to generate API key: %s", error.c_str());
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to generate API key: %s", error.c_str());
   }
 
   // Dispatcharr's recording pre/post padding is genuinely global-only --
@@ -134,7 +134,7 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: could not read Dispatcharr's DVR padding settings: %s",
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: could not read Dispatcharr's DVR padding settings: %s",
                 offsetError.c_str());
     }
   }
@@ -191,14 +191,15 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
                                       "-- falling back to manual offset entry";
           }
         }
-        kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: setting recurring_rule_timezone=%s (%s)",
+        kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: setting recurring_rule_timezone=%s (%s)",
                   desiredZoneSetting.c_str(), zoneKindNote.c_str());
         kodi::addon::SetSettingString("recurring_rule_timezone", desiredZoneSetting);
       }
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: could not read Dispatcharr's system timezone: %s", tzError.c_str());
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: could not read Dispatcharr's system timezone: %s",
+                tzError.c_str());
     }
   }
 
@@ -245,7 +246,8 @@ PVRDispatcharr::PVRDispatcharr(const kodi::addon::IInstanceInfo& instance)
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: could not check Dispatcharr admin status: %s", adminError.c_str());
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: could not check Dispatcharr admin status: %s",
+                adminError.c_str());
     }
   }
 
@@ -321,7 +323,7 @@ ADDON_STATUS PVRDispatcharr::OnAddonSettingChanged(const std::string& settingNam
           std::string offsetError;
           if (!m_client.SetDvrOffsetMinutes(pre, post, offsetError))
           {
-            kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to update Dispatcharr's DVR padding: %s",
+            kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to update Dispatcharr's DVR padding: %s",
                       offsetError.c_str());
           }
         })
@@ -481,12 +483,12 @@ void PVRDispatcharr::RenewRecurringRules()
     std::string extendError;
     if (!m_client.ExtendRecurringRuleEndDate(rule.id, newEndDate, extendError))
     {
-      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to renew recurring rule %d: %s", rule.id,
+      kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to renew recurring rule %d: %s", rule.id,
                 extendError.c_str());
     }
     else if (m_debugLogging)
     {
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: renewed recurring rule %d end_date forward", rule.id);
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: renewed recurring rule %d end_date forward", rule.id);
     }
   }
 }
@@ -506,14 +508,14 @@ void PVRDispatcharr::StartChannelEpgRefreshThread()
           if (EnsureChannelsLoaded())
           {
             if (m_debugLogging)
-              kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: background thread refreshed channels/groups");
+              kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: background thread refreshed channels/groups");
             TriggerChannelGroupsUpdate();
             TriggerChannelUpdate();
           }
           if (EnsureEpgLoaded())
           {
             if (m_debugLogging)
-              kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: background thread refreshed EPG");
+              kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: background thread refreshed EPG");
             // No bulk/whole-guide equivalent exists in Kodi's PVR API --
             // TriggerEpgUpdate() is per-channel only (confirmed in
             // kodi-dev-kit's PVR.h). Channel/EPG refreshes are already coarse
@@ -565,7 +567,7 @@ void PVRDispatcharr::HandleRealtimeUpdateMessage(const std::string& message)
       return;
 
     if (m_debugLogging)
-      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr: realtime update received: %s", eventType.c_str());
+      kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime update received: %s", eventType.c_str());
     InvalidateAndTriggerRecordingUpdate();
     InvalidateAndTriggerTimerUpdate();
   }
@@ -604,7 +606,7 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
                            config.timeoutSeconds, error))
             {
               if (m_debugLogging)
-                kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr: realtime updates: connected");
+                kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime updates: connected");
               backoffSeconds = kInitialBackoffSeconds; // reset now that a connection actually worked
 
               while (!shouldStop())
@@ -616,7 +618,7 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
                 else if (result < 0)
                 {
                   if (m_debugLogging)
-                    kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr: realtime updates: %s", error.c_str());
+                    kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime updates: %s", error.c_str());
                   break; // reconnect
                 }
                 // result == 0: just a read timeout with nothing new -- loop and
@@ -626,12 +628,13 @@ void PVRDispatcharr::StartRealtimeUpdateThread()
             }
             else if (m_debugLogging)
             {
-              kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr: realtime updates: connect failed: %s", error.c_str());
+              kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime updates: connect failed: %s",
+                        error.c_str());
             }
           }
           else if (m_debugLogging)
           {
-            kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr: realtime updates: could not get an access token: %s",
+            kodi::Log(ADDON_LOG_INFO, "pvr.dispatcharr-unofficial: realtime updates: could not get an access token: %s",
                       error.c_str());
           }
 
@@ -759,14 +762,14 @@ bool PVRDispatcharr::EnsureChannelsLoaded()
   bool ok = m_client.GetChannels(channels, error);
   if (!ok)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to load channels: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to load channels: %s", error.c_str());
     return false;
   }
 
   // Groups are best-effort: a channel list is still useful without them.
   std::string groupsError;
   if (!m_client.GetChannelGroups(groups, groupsError))
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to load channel groups: %s", groupsError.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to load channel groups: %s", groupsError.c_str());
 
   // Dispatcharr's /api/channels/groups/ returns every group that has ever
   // existed, regardless of whether it's currently enabled for any M3U
@@ -801,14 +804,14 @@ bool PVRDispatcharr::EnsureEpgLoaded()
   std::string xml, error;
   if (!m_client.GetXmlTvGuide(xml, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to fetch XMLTV guide: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to fetch XMLTV guide: %s", error.c_str());
     return false;
   }
 
   std::unordered_map<std::string, std::vector<EpgEntry>> parsed;
   if (!XmlTvParser::Parse(xml, parsed, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to parse XMLTV guide: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to parse XMLTV guide: %s", error.c_str());
     return false;
   }
 
@@ -830,12 +833,13 @@ bool PVRDispatcharr::EnsureRecordingsLoaded()
   std::string error;
   if (!m_client.GetRecordings(recordings, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to load recordings: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to load recordings: %s", error.c_str());
     return false;
   }
 
   if (m_debugLogging)
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: recordings cache refreshed (%zu recording(s))", recordings.size());
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: recordings cache refreshed (%zu recording(s))",
+              recordings.size());
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_cachedRecordings = std::move(recordings);
   m_recordingsCachedAt = now;
@@ -861,8 +865,8 @@ bool PVRDispatcharr::EnsureTimerRulesLoaded()
   m_client.GetRecurringRules(recurringRules, error);
 
   if (m_debugLogging)
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: timer-rules cache refreshed (%zu series, %zu recurring)", rules.size(),
-              recurringRules.size());
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: timer-rules cache refreshed (%zu series, %zu recurring)",
+              rules.size(), recurringRules.size());
   std::lock_guard<std::mutex> lock(m_dataMutex);
   m_cachedTimerRules = std::move(rules);
   m_cachedRecurringRules = std::move(recurringRules);
@@ -1057,10 +1061,11 @@ PVR_ERROR PVRDispatcharr::GetChannelStreamProperties(const kodi::addon::PVRChann
   }
   if (m_debugLogging)
   {
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: GetChannelStreamProperties: returning %zu properties",
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: GetChannelStreamProperties: returning %zu properties",
               properties.size());
     for (const auto& p : properties)
-      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr:   prop %s = %s", p.GetName().c_str(), p.GetValue().c_str());
+      kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial:   prop %s = %s", p.GetName().c_str(),
+                p.GetValue().c_str());
   }
   return PVR_ERROR_NO_ERROR;
 }
@@ -1086,7 +1091,7 @@ bool PVRDispatcharr::OpenLiveStream(const kodi::addon::PVRChannel& channel)
   if (!m_client.OpenLiveTimeshiftStream(channelUuid, error))
   {
     kodi::Log(ADDON_LOG_ERROR,
-              "pvr.dispatcharr: failed to open server-side timeshift stream for channel %s: "
+              "pvr.dispatcharr-unofficial: failed to open server-side timeshift stream for channel %s: "
               "%s (confirm the timeshift_buffer Dispatcharr plugin is installed and enabled, and "
               "that this addon's configured account is a Dispatcharr admin)",
               channelUuid.c_str(), error.c_str());
@@ -1133,7 +1138,7 @@ bool PVRDispatcharr::IsRealTimeStream()
 PVR_ERROR PVRDispatcharr::GetStreamTimes(kodi::addon::PVRStreamTimes& times)
 {
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharr: GetStreamTimes called: liveTimeshiftOpen=%d inProgressOpen=%d "
+            "pvr.dispatcharr-unofficial: GetStreamTimes called: liveTimeshiftOpen=%d inProgressOpen=%d "
             "durationMs=%lld",
             m_client.IsLiveTimeshiftStreamOpen() ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0,
             static_cast<long long>(m_client.GetInProgressRecordingStreamDurationMs()));
@@ -1433,7 +1438,7 @@ PVR_ERROR PVRDispatcharr::GetEPGTagStreamProperties(const kodi::addon::PVREPGTag
   std::string playbackUrl, error;
   if (!m_client.CreateCatchupSession(channelUuid, tag.GetStartTime(), durationMinutes, playbackUrl, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to create catch-up session: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to create catch-up session: %s", error.c_str());
     return PVR_ERROR_FAILED;
   }
 
@@ -1685,7 +1690,7 @@ PVR_ERROR PVRDispatcharr::DeleteRecording(const kodi::addon::PVRRecording& recor
   std::string error;
   if (!m_client.DeleteRecording(id, error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to delete recording %d: %s", id, error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to delete recording %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   InvalidateAndTriggerRecordingUpdate();
@@ -1698,7 +1703,7 @@ PVR_ERROR PVRDispatcharr::RenameRecording(const kodi::addon::PVRRecording& recor
   std::string error;
   if (!m_client.RenameRecording(id, recording.GetTitle(), error))
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to rename recording %d: %s", id, error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to rename recording %d: %s", id, error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   InvalidateAndTriggerRecordingUpdate();
@@ -1718,7 +1723,7 @@ PVR_ERROR PVRDispatcharr::GetRecordingEdl(const kodi::addon::PVRRecording& recor
     // one has no setting gating it, so most installs simply won't have
     // it) -- log at DEBUG rather than ERROR so declining to install an
     // optional plugin doesn't read as a real problem in the log.
-    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: no EDL for recording %d: %s", id, error.c_str());
+    kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: no EDL for recording %d: %s", id, error.c_str());
     return PVR_ERROR_NO_ERROR; // empty edl -- not a failure, just nothing to show
   }
   for (const auto& entry : entries)
@@ -1770,16 +1775,16 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
   bool useGrowingBuffer = inProgress || hlsDirStillPresent;
 
   kodi::Log(ADDON_LOG_DEBUG,
-            "pvr.dispatcharr: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
+            "pvr.dispatcharr-unofficial: OpenRecordedStream: rawId=%s parsedId=%d inProgress=%d "
             "hlsDirStillPresent=%d",
             recording.GetRecordingId().c_str(), id, inProgress ? 1 : 0, hlsDirStillPresent ? 1 : 0);
   bool opened = useGrowingBuffer ? m_client.OpenInProgressRecordingStream(id, recording.GetRecordingTime(), error)
                                  : m_client.OpenRecordingStream(id, error);
-  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d", opened ? 1 : 0,
-            m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: OpenRecordedStream: opened=%d isInProgressStreamOpen=%d",
+            opened ? 1 : 0, m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (!opened)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to open recording %d: %s", id, error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to open recording %d: %s", id, error.c_str());
     return false;
   }
   // OpenRecordingStream()/OpenInProgressRecordingStream() may have silently
@@ -1799,7 +1804,7 @@ bool PVRDispatcharr::OpenRecordedStream(const kodi::addon::PVRRecording& recordi
 
 void PVRDispatcharr::CloseRecordedStream()
 {
-  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr: CloseRecordedStream: isInProgressStreamOpen=%d",
+  kodi::Log(ADDON_LOG_DEBUG, "pvr.dispatcharr-unofficial: CloseRecordedStream: isInProgressStreamOpen=%d",
             m_client.IsInProgressRecordingStreamOpen() ? 1 : 0);
   if (m_client.IsInProgressRecordingStreamOpen())
     m_client.CloseInProgressRecordingStream();
@@ -2156,7 +2161,7 @@ PVR_ERROR PVRDispatcharr::AddTimer(const kodi::addon::PVRTimer& timer)
 
   if (!ok)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to create timer: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to create timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   InvalidateAndTriggerTimerUpdate();
@@ -2266,7 +2271,7 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
       Recording rec;
       if (!FindRecordingById(id, rec))
       {
-        kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to update timer: recording %d not found", id);
+        kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to update timer: recording %d not found", id);
         return PVR_ERROR_SERVER_ERROR;
       }
       time_t currentEndTime = rec.endTime;
@@ -2279,7 +2284,7 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
         // time here just means they didn't actually intend to extend
         // anything.
         kodi::Log(ADDON_LOG_ERROR,
-                  "pvr.dispatcharr: failed to update timer: new end time is not later than the current one");
+                  "pvr.dispatcharr-unofficial: failed to update timer: new end time is not later than the current one");
         return PVR_ERROR_INVALID_PARAMETERS;
       }
       int extraMinutes = static_cast<int>((deltaSeconds + 59) / 60);
@@ -2298,7 +2303,7 @@ PVR_ERROR PVRDispatcharr::UpdateTimer(const kodi::addon::PVRTimer& timer)
 
   if (!ok)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to update timer: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to update timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   InvalidateAndTriggerTimerUpdate();
@@ -2362,7 +2367,7 @@ PVR_ERROR PVRDispatcharr::DeleteTimer(const kodi::addon::PVRTimer& timer, bool f
 
   if (!ok)
   {
-    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr: failed to delete timer: %s", error.c_str());
+    kodi::Log(ADDON_LOG_ERROR, "pvr.dispatcharr-unofficial: failed to delete timer: %s", error.c_str());
     return PVR_ERROR_SERVER_ERROR;
   }
   InvalidateAndTriggerTimerUpdate();

@@ -1,4 +1,4 @@
-*(part of the pvr.dispatcharr notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
+*(part of the pvr.dispatcharr-unofficial notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
 
 # Live TV pause/rewind ("timeshift")
 
@@ -1654,7 +1654,7 @@ the plugin has no way to attribute one to a specific caller). The
 `heartbeat` action already existed but was previously undifferentiated
 (refreshed only the buffer-wide timestamp); extended to also accept an
 optional `viewer_id` and refresh that viewer's own entry. The addon side
-(`pvr.dispatcharr`) now calls it periodically -- every 10s, piggybacked
+(`pvr.dispatcharr-unofficial`) now calls it periodically -- every 10s, piggybacked
 on `ReadLiveTimeshiftStream()` rather than a dedicated thread, since
 that function already runs continuously for as long as playback
 continues -- comfortably under the 30s default `idle_timeout_seconds`,
@@ -1709,7 +1709,7 @@ retrofitted the next time `start_buffer` reattaches to it, rather than
 being permanently unreachable -- self-healing across an upgrade, the
 same design principle as the crashed-viewer fix above.
 
-Addon-side (`pvr.dispatcharr`), the token comes back in
+Addon-side (`pvr.dispatcharr-unofficial`), the token comes back in
 `StartTimeshiftBuffer()`'s own response (`CallTimeshiftPluginAction()`),
 gets appended to the playlist URL there, cached on
 `LiveTimeshiftStreamState::accessToken`, and reused for every later
@@ -1738,7 +1738,7 @@ call already found. At this plugin's own defaults (`buffer_minutes=60`,
 `segment_seconds=2`), the visible window is 1800 segments -- so a call
 that found nothing new still cost up to 1800 `stat()` syscalls plus a
 full playlist re-parse, and this function is called far more often than
-the buffer could possibly have grown: pvr.dispatcharr's own catch-up-
+the buffer could possibly have grown: pvr.dispatcharr-unofficial's own catch-up-
 to-tail loop and throttled length checks (`RefreshLiveManifest()`) call
 it repeatedly while waiting, not just once per new segment. Notably, the
 *client*-side counterpart of this exact function (the addon's own
@@ -2556,7 +2556,7 @@ fourth time within seconds of a fresh `Player.Open` (-89426.23ms then
 -89426.56ms, landing just 4 seconds after this same session's own
 `ActiveAE::SyncStream` event below). Purely informational,
 addon-independent (this is Kodi-core's own audio clock bootstrap, not
-anything `pvr.dispatcharr` does), not chased further.
+anything `pvr.dispatcharr-unofficial` does), not chased further.
 
 ### A periodic, self-correcting ~8.6s `ActiveAE::SyncStream` spike -- resolved, not actually periodic
 
