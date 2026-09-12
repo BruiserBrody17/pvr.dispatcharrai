@@ -39,7 +39,7 @@
   (now "Dispatcharr PVR Client (Unofficial)") and `<description>` --
   visible in Kodi's own add-on browser at install time, not just in
   this repo -- plus `README.md`'s opening paragraph.
-  Addon version bumped to `0.9.5` (id change is a real,
+  Addon version bumped to `0.10.0` (id change is a real,
   addon-version-scoped change, same reasoning as the first rename);
   `PKG_SHA256` reset to the all-zeros placeholder per the usual
   convention until a real tag exists.

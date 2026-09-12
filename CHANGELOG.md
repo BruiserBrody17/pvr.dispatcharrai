@@ -10,7 +10,7 @@ Versions before `0.2.0` aren't itemized here -- that was this project's
 initial scaffold and buildout, before it had any tagged releases to
 compare against.
 
-## [0.9.5] - 2026-09-11
+## [0.10.0] - 2026-09-11
 
 Addon only -- neither companion plugin changed for this pass.
 
@@ -27,8 +27,9 @@ automatically.
 
 The addon's name and description now explicitly say "Unofficial" and
 state that this project isn't affiliated with, endorsed by, or
-supported by the Dispatcharr project -- visible in Kodi's own add-on
-browser at install time, not just in this repo's own docs.
+supported by the Dispatcharr project or by Kodi/Team Kodi -- visible in
+Kodi's own add-on browser at install time, not just in this repo's own
+docs.
 
 ## `timeshift_buffer` [0.6.2] - 2026-09-11
 

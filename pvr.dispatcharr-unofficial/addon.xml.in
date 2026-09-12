@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon
     id="pvr.dispatcharr-unofficial"
-    version="0.9.5"
+    version="0.10.0"
     name="Dispatcharr PVR Client (Unofficial)"
     provider-name="BruiserBrody17">
   <requires>
