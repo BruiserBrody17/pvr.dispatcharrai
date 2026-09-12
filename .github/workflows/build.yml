@@ -172,6 +172,22 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
+      # Needed before any git clone happens on this runner, including the
+      # internal one CMake's FetchContent runs later for nlohmann-json --
+      # that dependency's own repo has some historical test-report
+      # filenames nested deep enough that the *addon's own build-directory
+      # path* (which embeds this addon's id, itself lengthened by both the
+      # rename to pvr.dispatcharr-unofficial and the matching GitHub repo
+      # rename) pushes the combined path past Windows' 260-char MAX_PATH,
+      # confirmed live: a docs-only push failed here right after the repo
+      # rename with a real "Filename too long" git-clone error, immediately
+      # after the rename PR's own CI run had passed against the shorter
+      # pre-repo-rename checkout path. git's own core.longpaths setting
+      # makes it use Windows' extended-length path syntax internally,
+      # sidestepping MAX_PATH without needing an OS-level opt-in.
+      - name: Enable git long paths (Windows MAX_PATH workaround)
+        run: git config --system core.longpaths true
+
       - name: Check out addon source
         uses: actions/checkout@v7
         with:

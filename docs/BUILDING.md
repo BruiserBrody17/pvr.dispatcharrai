@@ -129,6 +129,28 @@ machine may well still have VS2022 (`"Visual Studio 17 2022"`) instead --
 check what you actually have (Visual Studio Installer, or `vswhere -all`)
 rather than assuming either one.
 
+**Enable git's long-path support before cloning anything, or a deeply
+nested dependency clone can fail outright.** `git config --global
+core.longpaths true` (or `--system`, for CI). Confirmed live: CI's
+`build-windows` job failed with a real `Filename too long` error cloning
+`nlohmann-json` (a `FetchContent` dependency) -- some of that repo's own
+historical test-report filenames are long enough that the *addon's own
+build-directory path* nested above them (which embeds this addon's id)
+pushed the combined path past Windows' 260-char `MAX_PATH`, and it got
+12 characters worse twice over from the `pvr.dispatcharr` ->
+`pvr.dispatcharr-unofficial` rename: once in the addon id itself
+(appearing multiple times in the nested `<id>-prefix`/`<id>-build`
+directory names CMake's `ExternalProject` generates), and again in the
+GitHub repo name forming the root of CI's own checkout path
+(`D:\a\<repo>\<repo>\...`). The exact same commit's CI run had passed
+minutes earlier, before the repo got renamed -- the shorter
+pre-rename checkout path was still just under the limit. A local build
+can hit this too depending on how deep the workspace path already is;
+this project's own `kodi-win-work` example workspace was only 7
+characters under the limit for this exact file even before accounting
+for the rename, so treat this as something to fix once globally on any
+Windows build machine, not just a CI-specific patch.
+
 1. Clone Kodi and this addon exactly as in steps 1-2 above (Omega branch,
    this repo checked out under `addons/pvr.dispatcharr-unofficial`), and register the
    addon exactly as in step 3.
