@@ -43,10 +43,31 @@
   addon-version-scoped change, same reasoning as the first rename);
   `PKG_SHA256` reset to the all-zeros placeholder per the usual
   convention until a real tag exists.
-  Not yet done: verify the build under the new id, open the PR, rename
-  the GitHub repo, fresh-install and verify across the platforms
-  already running the `pvr.dispatcharr` build, and cut the actual
-  release.
+  **Update: build verified and PR merged (2026-09-11).** Full
+  from-scratch Windows build under the renamed target succeeded
+  (curl/openssl/zlib deps reused from the existing workspace); hit the
+  same "stale ExternalProject state" gotcha the first rename's own
+  Linux/CoreELEC builds already documented, just on the Windows/
+  ExternalProject harness this time -- deleting the addon's own
+  `<build-dir>/pvr.dispatcharr-unofficial-prefix/` directory (the
+  Windows-harness equivalent of `.installed-native`/the `*-prefix/`
+  directory already called out for the Linux case) forced a real
+  reconfigure and fixed it. Rendered `addon.xml` inspected directly
+  from the built zip to confirm id/version/name/description/disclaimer
+  all correct before merging. PR #23 merged via squash, same as the
+  first rename.
+  **Update: GitHub repo renamed too (2026-09-11), decided upfront this
+  time rather than deferred.** `BruiserBrody17/pvr.dispatcharr` is now
+  `BruiserBrody17/pvr.dispatcharr-unofficial`. `gh repo rename`, then
+  this Windows workspace's own `origin` updated via `git remote
+  set-url` -- confirmed still tracking correctly afterward, same
+  redirect-makes-it-seamless result as the first rename's repo-rename
+  step. A repo-wide sweep for leftover GitHub URLs still pointing at
+  the old repo name found none outside the deliberately-preserved
+  historical text describing the *first* rename's own repo-rename
+  event.
+  Not yet done: fresh-install and verify across the platforms already
+  running the `pvr.dispatcharr` build, and cut the actual release.
 - [x] **Three real recordings/timers hot-path inefficiencies, found via a
   full-codebase Efficiency review (2026-09-10, not yet applied -- would
   need live-hardware verification this pass didn't have).**
