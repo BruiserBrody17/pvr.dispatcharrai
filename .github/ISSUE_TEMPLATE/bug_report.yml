@@ -12,7 +12,7 @@ body:
         you genuinely have.
 
         **Before reporting a security issue here:** don't -- see
-        [SECURITY.md](https://github.com/BruiserBrody17/pvr.dispatcharr/blob/master/SECURITY.md)
+        [SECURITY.md](https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/blob/master/SECURITY.md)
         for how to report that privately instead.
 
   - type: dropdown
@@ -20,7 +20,7 @@ body:
     attributes:
       label: Which piece is affected?
       options:
-        - The addon (pvr.dispatcharr, installed in Kodi)
+        - The addon (pvr.dispatcharr-unofficial, installed in Kodi)
         - timeshift_buffer plugin (installed on Dispatcharr)
         - recording_edl plugin (installed on Dispatcharr)
         - Not sure

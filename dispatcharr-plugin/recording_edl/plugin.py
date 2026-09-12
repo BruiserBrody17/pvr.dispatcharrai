@@ -4,7 +4,7 @@ Recording EDL -- a Dispatcharr plugin.
 Exposes a completed recording's comskip-generated .edl file (commercial
 break markers) over Dispatcharr's plugin run/ API, so a client with no
 filesystem access to /data/recordings (this plugin was designed alongside
-pvr.dispatcharr, a Kodi PVR addon) can still fetch the data and show
+pvr.dispatcharr-unofficial, a Kodi PVR addon) can still fetch the data and show
 skip/highlight markers on Kodi's own seekbar.
 
 Why this exists as its own plugin rather than reading the file directly
@@ -480,7 +480,9 @@ class Plugin:
         "filesystem access to /data/recordings."
     )
     author = "BruiserBrody17"
-    help_url = "https://github.com/BruiserBrody17/pvr.dispatcharr/tree/master/dispatcharr-plugin/recording_edl"
+    help_url = (
+        "https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/tree/master/dispatcharr-plugin/recording_edl"
+    )
 
     # See timeshift_buffer/plugin.py's own comment on this same pattern:
     # plugin.json's fields/actions are only read for the not-yet-trusted
@@ -492,7 +494,7 @@ class Plugin:
             "label": "About",
             "type": "info",
             "description": (
-                "Called by a client (e.g. pvr.dispatcharr's recording "
+                "Called by a client (e.g. pvr.dispatcharr-unofficial's recording "
                 "playback) via the plugin run/ API, not usually by hand -- "
                 "the field below is only for manually testing the action "
                 "button."

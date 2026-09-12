@@ -1,4 +1,4 @@
-# Contributing to pvr.dispatcharr
+# Contributing to pvr.dispatcharr-unofficial
 
 Thanks for looking at this. A few things worth knowing before you open
 a PR -- this project is pre-1.0, single-maintainer, and has no
@@ -27,7 +27,7 @@ here.
 ## Where things live
 
 - `src/` -- the addon's C++ source.
-- `pvr.dispatcharr/` -- addon metadata Kodi actually loads
+- `pvr.dispatcharr-unofficial/` -- addon metadata Kodi actually loads
   (`addon.xml.in`, `resources/settings.xml`, the language file).
 - `dispatcharr-plugin/timeshift_buffer/`, `dispatcharr-plugin/recording_edl/`
   -- the two server-side Python plugins, independent of the addon and

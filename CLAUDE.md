@@ -1,4 +1,8 @@
-# pvr.dispatcharr
+# pvr.dispatcharr-unofficial
+
+Unofficial, community-maintained -- not affiliated with the Dispatcharr
+project (see README.md's top note). Keep that distinction clear in
+anything user-facing you write.
 
 A Kodi PVR binary addon (C++) for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr),
 plus two optional Python plugins that install on the Dispatcharr server
@@ -12,7 +16,7 @@ is the shorter, more direct version of what's below.
 - `src/` -- the addon's C++ source (`DispatcharrClient` talks to
   Dispatcharr's REST/JSON-RPC API, `PVRDispatcharr` implements Kodi's PVR
   API surface, `XmlTvParser`/`WebSocketClient` are self-contained helpers).
-- `pvr.dispatcharr/` -- addon metadata Kodi actually loads: `addon.xml.in`
+- `pvr.dispatcharr-unofficial/` -- addon metadata Kodi actually loads: `addon.xml.in`
   (version lives here), `resources/settings.xml`,
   `resources/language/resource.language.en_gb/strings.po`.
 - `dispatcharr-plugin/timeshift_buffer/`, `dispatcharr-plugin/recording_edl/`
@@ -174,8 +178,8 @@ platform.
   ongoing policy). Whichever piece(s) you *are* bumping, all of that
   piece's own version locations still need to move together -- it's easy
   to miss one:
-  - Addon: `pvr.dispatcharr/addon.xml.in` (`<addon version="...">`) and
-    `packaging/coreelec/pvr.dispatcharr/package.mk` (`PKG_VERSION`,
+  - Addon: `pvr.dispatcharr-unofficial/addon.xml.in` (`<addon version="...">`) and
+    `packaging/coreelec/pvr.dispatcharr-unofficial/package.mk` (`PKG_VERSION`,
     with `PKG_SHA256` reset to the all-zeros placeholder until the tag
     exists and the real checksum can be computed) move together -- CoreELEC
     packages the addon binary, not either plugin, so this pair only moves

@@ -4,6 +4,49 @@
 
 ## Ongoing (more will likely come up)
 
+- **Rename the project a second time, from `pvr.dispatcharr` to
+  `pvr.dispatcharr-unofficial`, plus add an explicit non-affiliation
+  disclaimer (requested 2026-09-11, shortly after first sharing the
+  project with a few people under the `pvr.dispatcharr` name).** Same
+  mechanical shape as the first rename (`pvr.dispatcharrai` ->
+  `pvr.dispatcharr`): directories, `addon.xml.in`'s `<addon id="...">`,
+  `CMakeLists.txt`, the CI workflow's addon-defs paths/`ADDONS_TO_BUILD`/
+  artifact names, the CoreELEC `package.mk`, and the `~50` hardcoded
+  `"pvr.dispatcharr: "` log-prefix strings in `src/*.cpp` all moved to
+  the new id. The GitHub repo itself is being renamed to match this
+  time (decided upfront, not deferred as a separate question the way it
+  was for the first rename).
+  **A real mistake caught before committing, worth recording so it
+  doesn't repeat:** a blind find-and-replace of every `pvr.dispatcharr`
+  occurrence also rewrote *frozen historical records* --
+  `CHANGELOG.md`'s dated, version-numbered entries and
+  `docs/OPEN_ITEMS.md`'s own blow-by-blow account of the *first*
+  rename's platform-by-platform verification -- to falsely claim those
+  past events happened under the `-unofficial` id, which didn't exist
+  yet at the time. Reverted both files entirely and added fresh, forward
+  -dated entries instead, leaving the historical record of the first
+  rename exactly as it happened. `docs/BUILDING.md` was deliberately
+  *not* reverted -- it's a living how-to (its own instructions need to
+  stay executable against the current id), not a dated ledger, and it
+  was already treated that way through the first rename without
+  complaint. The plugins' `README.md`/`plugin.py` mentions of the
+  addon's id were also left renamed -- they're present-tense
+  architecture descriptions ("the addon now exposes..."), not dated
+  version-specific claims, so updating them doesn't misrepresent
+  anything that already shipped.
+  Added an explicit "this is unofficial, not affiliated with
+  Dispatcharr" disclaimer in three places: `addon.xml.in`'s `<name>`
+  (now "Dispatcharr PVR Client (Unofficial)") and `<description>` --
+  visible in Kodi's own add-on browser at install time, not just in
+  this repo -- plus `README.md`'s opening paragraph.
+  Addon version bumped to `0.9.5` (id change is a real,
+  addon-version-scoped change, same reasoning as the first rename);
+  `PKG_SHA256` reset to the all-zeros placeholder per the usual
+  convention until a real tag exists.
+  Not yet done: verify the build under the new id, open the PR, rename
+  the GitHub repo, fresh-install and verify across the platforms
+  already running the `pvr.dispatcharr` build, and cut the actual
+  release.
 - [x] **Three real recordings/timers hot-path inefficiencies, found via a
   full-codebase Efficiency review (2026-09-10, not yet applied -- would
   need live-hardware verification this pass didn't have).**

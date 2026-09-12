@@ -1,7 +1,7 @@
 # Timeshift Buffer (Dispatcharr plugin)
 
 Server-side rolling live-TV buffer per channel, held by Dispatcharr
-itself. `pvr.dispatcharr` uses it to give live TV real pause, rewind,
+itself. `pvr.dispatcharr-unofficial` uses it to give live TV real pause, rewind,
 fast-forward, and live-follow -- no extra step, just plain Play.
 
 The seeking architecture (why this exists, what didn't work first, how
@@ -18,7 +18,7 @@ to `http_port`) rather than Django's `MEDIA_ROOT` route (unreachable
 here due to a routing-order issue in Dispatcharr's own `urls.py`).
 `get_live_manifest` returns the current segment list with a stable
 sequence number; the file server answers HTTP Range requests against
-them, letting `pvr.dispatcharr` treat the buffer as one growing,
+them, letting `pvr.dispatcharr-unofficial` treat the buffer as one growing,
 byte-seekable stream. Viewers are reference-counted -- the ffmpeg
 process stops as soon as the last one deregisters -- with a background
 reaper (leader-elected across worker processes) as the backstop for
@@ -28,7 +28,7 @@ force-quit), reaping anything idle past `idle_timeout_seconds`.
 Multiple devices watching the same channel share this one buffer
 process -- Dispatcharr opens a single upstream connection per channel
 regardless of viewer count. That sharing doesn't extend to rewind
-depth: `pvr.dispatcharr` trims what it exposes locally to a small
+depth: `pvr.dispatcharr-unofficial` trims what it exposes locally to a small
 near-live-edge window on every fresh channel open, so a device can only
 rewind into what it's personally watched since opening the channel,
 never another device's earlier viewing. See
@@ -38,7 +38,7 @@ section for why.
 ## Installing
 
 1. Download `timeshift_buffer.zip` from the
-   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharr/releases)'s
+   [latest release](https://github.com/BruiserBrody17/pvr.dispatcharr-unofficial/releases)'s
    Assets and upload it via Dispatcharr's Plugins page **Import** button
    (**the folder name inside the zip must match `timeshift_buffer`
    exactly**, or every call 404s with "Plugin not found" -- already

@@ -1,4 +1,4 @@
-*(part of the pvr.dispatcharr notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
+*(part of the pvr.dispatcharr-unofficial notes -- see [API_NOTES.md](API_NOTES.md) for the index)*
 
 # Recordings/timers: confirmed end-to-end against real data
 
@@ -1023,7 +1023,7 @@ manager (`PVR.GetTimers`/`PVR.DeleteTimer` via JSON-RPC) -- confirming:
 - Unrelated discovery while testing the fix above: Kodi can reject
   `PVR.AddTimer` outright with "The PVR backend does not allow to record
   this event" for some EPG broadcasts and not others, with **zero** log
-  output from this addon (confirmed: no `AddOnLog: pvr.dispatcharr`
+  output from this addon (confirmed: no `AddOnLog: pvr.dispatcharr-unofficial`
   line at all) -- meaning the rejection happens entirely in Kodi core,
   before ever reaching `AddTimer()`. Not investigated further (out of
   scope, and the exact same broadcastid succeeded cleanly and instantly
