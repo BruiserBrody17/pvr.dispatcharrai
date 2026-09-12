@@ -66,8 +66,23 @@
   the old repo name found none outside the deliberately-preserved
   historical text describing the *first* rename's own repo-rename
   event.
+  **Update: `0.10.0` tagged and released (2026-09-11), relabeled from
+  the never-shipped `0.9.5` pending bump rather than adding a separate
+  changelog entry for the same work.** Release notes pulled from
+  `CHANGELOG.md`; CoreELEC zip built via the cached WSL toolchain and
+  attached by hand, real `PKG_SHA256` filled in same as every prior
+  release. Caught and fixed one real regression along the way: CI's
+  `build-windows` job failed on the very next push after this rename
+  (a docs-only commit, no code change) with a genuine `Filename too
+  long` error cloning `nlohmann-json` -- both this rename and the
+  matching GitHub repo rename each added 12 characters to the
+  checkout/build path, pushing an already-deeply-nested dependency
+  file past Windows' 260-char `MAX_PATH`. Fixed by enabling git's
+  `core.longpaths` in CI (and on this local machine, whose own build
+  had survived by only 7 characters of margin even before this rename)
+  -- full account in `docs/BUILDING.md`'s Windows section.
   Not yet done: fresh-install and verify across the platforms already
-  running the `pvr.dispatcharr` build, and cut the actual release.
+  running the `pvr.dispatcharr` build.
 - [x] **Three real recordings/timers hot-path inefficiencies, found via a
   full-codebase Efficiency review (2026-09-10, not yet applied -- would
   need live-hardware verification this pass didn't have).**
