@@ -41,7 +41,7 @@
       series recordings) using Dispatcharr's own backend, not a
       third-party compatibility layer. This is an unofficial,
       community-maintained addon; it is not affiliated with, endorsed
-      by, or supported by the Dispatcharr project.
+      by, or supported by the Dispatcharr project or by Kodi/Team Kodi.
     </description>
     <platform>@PLATFORM@</platform>
     <license>GPL-2.0-or-later</license>

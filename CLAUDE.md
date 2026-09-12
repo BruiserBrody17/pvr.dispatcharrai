@@ -1,8 +1,8 @@
 # pvr.dispatcharr-unofficial
 
 Unofficial, community-maintained -- not affiliated with the Dispatcharr
-project (see README.md's top note). Keep that distinction clear in
-anything user-facing you write.
+project or with Kodi/Team Kodi (see README.md's top note). Keep that
+distinction clear in anything user-facing you write.
 
 A Kodi PVR binary addon (C++) for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr),
 plus two optional Python plugins that install on the Dispatcharr server

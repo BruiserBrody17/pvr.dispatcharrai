@@ -2,10 +2,11 @@
 
 **This is an unofficial, community-maintained addon.** It is not
 affiliated with, endorsed by, or supported by the
-[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) project --
-it's a third-party client built against Dispatcharr's public API. Please
-don't file addon bugs on Dispatcharr's own issue tracker, and don't
-expect Dispatcharr's maintainers to support this addon.
+[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) project, nor
+by Kodi/Team Kodi -- it's a third-party client built against
+Dispatcharr's public API, using Kodi's public addon interface. Please
+don't file addon bugs on Dispatcharr's or Kodi's own issue trackers,
+and don't expect either project's maintainers to support this addon.
 
 A Kodi PVR (Live TV / DVR) addon for [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr),
 built against Dispatcharr's native REST API rather than its Xtream Codes
